@@ -109,7 +109,7 @@ public final class StoryTarget {
   public static final String MAVEN_MIRROR_PREFIX = "/artifacts/maven/central";
 
   /** …and its npmjs pull-through. */
-  public static final String NPM_MIRROR_PREFIX = "/artifacts/npm/npmjs";
+  public static final String NPM_MIRROR_PREFIX = "/npm/npmjs";
 
   // --- what a generated value becomes in a label -------------------------------------------------
 

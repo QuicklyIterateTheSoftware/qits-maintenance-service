@@ -833,7 +833,7 @@ environment without a rebuild.
 | `qits.maintenance.registries.npm-url` | `http://qits-artifacts:8080/artifacts/npm/npm` | internal npm |
 | `qits.maintenance.registries.oci-url` | `http://qits-artifacts:8080/v2` | internal images |
 | `qits.maintenance.mirror.maven-url` | `http://qits-platform-mirror:8080/artifacts/maven/central` | Maven Central, cached |
-| `qits.maintenance.mirror.npm-url` | `http://qits-platform-mirror:8080/artifacts/npm/npmjs` | npmjs, cached |
+| `qits.maintenance.mirror.npm-url` | `http://qits-platform-mirror:8080/npm/npmjs` | npmjs, cached |
 | `qits.maintenance.call-timeout` | `PT60S` | how long one peer call may take |
 | `qits.maintenance.internal.maven-groups` | `eu.wohlben.qits` | which maven groups this platform publishes |
 | `qits.maintenance.internal.npm-scopes` | `@qits` | which npm scopes it publishes |
