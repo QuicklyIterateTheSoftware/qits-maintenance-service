@@ -833,7 +833,6 @@ environment without a rebuild.
 | `qits.maintenance.registries.npm-url` | `http://qits-artifacts:8080/artifacts/npm/npm` | internal npm |
 | `qits.maintenance.registries.oci-url` | `http://qits-artifacts:8080/v2` | internal images |
 | `qits.maintenance.mirror.maven-url` | `http://qits-platform-mirror:8080/artifacts/maven/central` | Maven Central, cached |
-| `qits.maintenance.mirror.npm-url` | `http://qits-platform-mirror:8080/npm/npmjs` | npmjs, cached |
 | `qits.maintenance.call-timeout` | `PT60S` | how long one peer call may take |
 | `qits.maintenance.internal.maven-groups` | `eu.wohlben.qits` | which maven groups this platform publishes |
 | `qits.maintenance.internal.npm-scopes` | `@qits` | which npm scopes it publishes |
@@ -859,6 +858,13 @@ environment without a rebuild.
 and the prefix names the repository row it serves. Moving a row is then a deployment's decision.
 **`targets.artifacts-url` deliberately does not**: `/artifacts/sboms/…` is qits-artifacts' own API
 rather than a mount, so its whole path belongs to the caller and lives in the code.
+
+**The npmjs cache has no key at all.** `qits.maintenance.mirror.npm-url` is gone (qits-472): its
+address is derived in code (`PeerTarget.NPM_MIRROR`) as
+`http://${QITS_ENVIRONMENT:dev}-qits-platform-mirror:8080/npm/npmjs`, so a deployment still setting
+`QITS_MAINTENANCE_MIRROR_NPM_URL` sets something nothing reads. It stays on the internal alias
+rather than the public edge because the edge wants Basic with a client pair or a `qits_tok_`, and
+every call from here carries the `qits` client's minted bearer instead.
 
 **`bump.enabled` stops the button as well as the schedule**, which is the point: a platform that
 wants to watch what *would* change for a week reads the inventory and pushes nothing.

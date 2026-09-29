@@ -28,8 +28,8 @@
 #     clients: `qits` mints for every peer, and those blocks are deleted.
 #   * QUARKUS_OIDC_CLIENT_PROJECTS_GRANT_OPTIONS_CLIENT_AUDIENCE. The `qits` client does not fall
 #     back to it: its audience is fixed to `qits-platform` in the shipped config.
-#   * QUARKUS_OIDC_CLIENT_PROJECTS_AUTH_SERVER_URL, QUARKUS_OIDC_AUTH_SERVER_URL,
-#     QITS_MAINTENANCE_MIRROR_MAVEN_URL and QITS_MAINTENANCE_MIRROR_NPM_URL. Every one of them names
+#   * QUARKUS_OIDC_CLIENT_PROJECTS_AUTH_SERVER_URL, QUARKUS_OIDC_AUTH_SERVER_URL and
+#     QITS_MAINTENANCE_MIRROR_MAVEN_URL. Every one of them names
 #     a peer — qits-platform-idp or qits-platform-mirror — whose address the shipped config DERIVES:
 #     `http://${QITS_ENVIRONMENT:dev}-<application>:8080`, and QITS_ENVIRONMENT is injected into
 #     every container by qits-deployments. It is a per-environment fact and this process already
@@ -40,6 +40,8 @@
 #     for the whole estate with one address estate-wide. The plane is deleted and they are ordinary
 #     environment applications, so the address moved AND stopped being worth storing in the same
 #     change.
+#   * QITS_MAINTENANCE_MIRROR_NPM_URL, which is not even a key any more (qits-472): the npmjs
+#     cache's address is derived in code (PeerTarget.NPM_MIRROR), so an entry for it is dead.
 
 keys:
   # --- the peers this service calls ------------------------------------------------------------

@@ -3,8 +3,8 @@ package eu.wohlben.qits.maintenance.peer;
 /**
  * Every address this service reads or writes.
  *
- * <p><b>Nine targets, one credential.</b> A target is an ADDRESS — a configured base url a path is
- * appended to. There used to be five oidc clients, one per peer SERVICE, because a token used to be
+ * <p><b>Nine targets, one credential.</b> A target is an ADDRESS — a base url a path is appended
+ * to; configured for eight of them, derived in code for {@link #NPM_MIRROR}. There used to be five oidc clients, one per peer SERVICE, because a token used to be
  * cut FOR one service's own audience; service-client-identity-plan.md's C4 replaced all five with
  * one named client, {@code qits}, addressed to the one platform audience every receiver now accepts.
  * {@link PeerTokens} mints through it for every target below — the three registry targets on
@@ -58,8 +58,28 @@ public enum PeerTarget {
   /** qits-platform-mirror's Maven Central pull-through. */
   MAVEN_MIRROR("qits.maintenance.mirror.maven-url"),
 
-  /** qits-platform-mirror's npmjs pull-through. */
-  NPM_MIRROR("qits.maintenance.mirror.npm-url");
+  /**
+   * qits-platform-mirror's npmjs pull-through — and the one target that is NOT configuration.
+   *
+   * <p><b>No key, on purpose (qits-472).</b> There used to be {@code qits.maintenance.mirror.npm-url},
+   * and all it ever held was {@code http://${QITS_ENVIRONMENT:dev}-qits-platform-mirror:8080/npm/npmjs}
+   * — a fact this process can work out and no deployment decides. So the address is derived here, in
+   * {@link #derivedBase}, and a deployment row still setting {@code QITS_MAINTENANCE_MIRROR_NPM_URL}
+   * is dead: nothing reads it.
+   *
+   * <p><b>The internal alias, not the public edge.</b> The platform is moving callers onto
+   * {@code https://mirror.qits.<QITS_DOMAIN>}, but the edge admits HTTP Basic with a client pair or a
+   * {@code qits_tok_} token, and every call from here carries the {@code qits} client's minted bearer
+   * (see {@link PeerClient#send}). Sending this one target a different credential is new plumbing,
+   * so it stays on the wire alias until that exists.
+   */
+  NPM_MIRROR(null);
+
+  /** Where qits-platform-mirror serves its npmjs cache, at the root of its host. */
+  static final String NPM_MIRROR_PATH = "/npm/npmjs";
+
+  /** The environment a container that was told none is in — the shipped config's own default. */
+  static final String DEFAULT_ENVIRONMENT = "dev";
 
   private final String urlKey;
 
@@ -67,8 +87,23 @@ public enum PeerTarget {
     this.urlKey = urlKey;
   }
 
-  /** The config key holding this target's base url. */
+  /** The config key holding this target's base url, or null for a target derived in code. */
   public String urlKey() {
     return urlKey;
+  }
+
+  /**
+   * The base url of a target that has no key, for the environment this process runs in.
+   *
+   * @param environment {@code QITS_ENVIRONMENT} as qits-deployments injected it, or null/blank for
+   *     none — which means {@code dev}, as it does everywhere else in the shipped config
+   */
+  public String derivedBase(String environment) {
+    if (this != NPM_MIRROR) {
+      throw new IllegalStateException(this + " is configured, not derived: " + urlKey);
+    }
+    String env =
+        environment == null || environment.isBlank() ? DEFAULT_ENVIRONMENT : environment.trim();
+    return "http://" + env + "-qits-platform-mirror:8080" + NPM_MIRROR_PATH;
   }
 }

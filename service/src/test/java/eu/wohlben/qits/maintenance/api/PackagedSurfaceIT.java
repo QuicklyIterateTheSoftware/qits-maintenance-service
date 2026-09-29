@@ -136,7 +136,6 @@ public class PackagedSurfaceIT {
           Map.entry("qits.maintenance.registries.npm-url", dead),
           Map.entry("qits.maintenance.registries.oci-url", dead),
           Map.entry("qits.maintenance.mirror.maven-url", dead),
-          Map.entry("qits.maintenance.mirror.npm-url", dead),
           Map.entry("qits.maintenance.targets.configuration-url", dead),
           // A dead peer answers instantly, but the shipped timeout is a minute — bound the wait so
           // a broken assumption fails the IT rather than hanging it.

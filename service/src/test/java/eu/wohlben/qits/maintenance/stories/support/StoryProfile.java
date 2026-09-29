@@ -3,6 +3,7 @@ package eu.wohlben.qits.maintenance.stories.support;
 import eu.wohlben.qits.maintenance.api.PackagedSurfaceIT;
 import eu.wohlben.qits.maintenance.testdb.EmbeddedPg;
 import eu.wohlben.qits.servicemock.idp.MockIdp;
+import java.net.URI;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -157,8 +158,15 @@ public class StoryProfile extends PackagedSurfaceIT.PackagedUnderTarget {
     overrides.put(
         "qits.maintenance.mirror.maven-url",
         url(StoryTarget.MIRROR, StoryTarget.MAVEN_MIRROR_PREFIX));
-    overrides.put(
-        "qits.maintenance.mirror.npm-url", url(StoryTarget.MIRROR, StoryTarget.NPM_MIRROR_PREFIX));
+    // THE npm MIRROR HAS NO KEY TO POINT (qits-472): the launched process derives
+    // http://dev-qits-platform-mirror:8080/npm/npmjs itself. So the stand-in is reached the way the
+    // derived address really goes out — as the JVM's plain-http proxy, which the JDK HttpClient
+    // honours by default. Every other peer above is on 127.0.0.1, which the default
+    // http.nonProxyHosts exempts, so only the one host no loopback stub could answer as is
+    // proxied, and the request the stub records is the absolute-form one the derivation produced.
+    URI mirror = URI.create(url(StoryTarget.MIRROR));
+    overrides.put("http.proxyHost", mirror.getHost());
+    overrides.put("http.proxyPort", String.valueOf(mirror.getPort()));
     overrides.put("qits.maintenance.call-timeout", "PT5S");
 
     // The clock. See the class comment: the sweep is what closes a bump, so the scheduler is on and
