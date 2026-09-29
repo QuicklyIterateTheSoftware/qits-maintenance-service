@@ -55,9 +55,9 @@
              five come from qits-integrations-quarkus except qits-userflows, which publishes itself.
              The url is a property so the image build can point it at the address the builder
              container can actually reach — see docker/Dockerfile and .qits-maven-settings.xml. -->
-        <qits.db-core.version>2026.917.65806</qits.db-core.version>
-        <qits.auth-core.version>2026.917.65806</qits.auth-core.version>
-        <qits.arch-rules.version>2026.917.65806</qits.arch-rules.version>
+        <qits.db-core.version>2026.929.140626</qits.db-core.version>
+        <qits.auth-core.version>2026.929.140626</qits.auth-core.version>
+        <qits.arch-rules.version>2026.929.140626</qits.arch-rules.version>
         <!-- The user-story framework (test scope, service/ only). The five story classes under
              service/src/test/.../stories/ plus TokenValidationBootstrapIT are userflows, so a
              `mvn verify -DskipITs=false -Dit.test=<the list>` also regenerates
@@ -76,7 +76,7 @@
         <!-- The recording service mocks the story catalogue boots against (the generic MockService
              plus idp.MockIdp), published by qits-integrations-quarkus beside qits-auth-core and
              qits-arch-rules. -->
-        <qits.service-mock.version>2026.917.65806</qits.service-mock.version>
+        <qits.service-mock.version>2026.929.140626</qits.service-mock.version>
         <!-- THE PLATFORM EVENT BUS (qits-eventstream), released out of
              components/qits-eventstream/qits-eventstream-javalib into the same platform Maven
              repository as the four jars above. This service SUBSCRIBES and publishes nothing: two
@@ -93,7 +93,7 @@
              lineage and the durable-consumer tables — so joining it added
              `postgresql:eventstream:qits_platform_maintenance_eventstream` to
              .config/qits/deployments.yml. See service/pom.xml. -->
-        <qits.eventstream.version>2026.924.141456</qits.eventstream.version>
+        <qits.eventstream.version>2026.929.142419</qits.eventstream.version>
         <qits.maven.repository.url>http://registry.dev.localhost:8080/artifacts/maven/maven</qits.maven.repository.url>
         <maven.compiler.release>25</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
