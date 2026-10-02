@@ -142,9 +142,6 @@ public class BumpService {
   /** What a BASELINES bump puts in {@code group_name}: a label, like {@link #TARGETED_GROUP}. */
   public static final String BASELINES_GROUP = "baselines";
 
-  /** The payload's {@code job} for a BASELINES bump; the pipeline's baselines step runs only for it. */
-  public static final String BASELINES_JOB = "screenshot-baselines";
-
   /** The branch a release request's baselines are pushed to, before the request id. */
   public static final String BASELINES_BRANCH_PREFIX = "maintenance/baselines/";
 
@@ -725,13 +722,13 @@ public class BumpService {
     store.bumpStartHead(bump.id, branchHead(repository.get(), bump.branch));
 
     Map<String, String> extra = new LinkedHashMap<>();
-    extra.put("job", BASELINES_JOB);
     extra.put("releaseRequest", bump.releaseRequestId);
     if (bump.workItem != null) {
       extra.put("workItem", bump.workItem);
     }
     CiClient.TriggerResult result =
         ci.trigger(
+            CiClient.BASELINES_EVENT_NAME,
             bump.id.toString(),
             bump.repository,
             bump.groupName,

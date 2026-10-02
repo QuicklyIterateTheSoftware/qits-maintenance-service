@@ -632,7 +632,7 @@ class MaintenanceApiTest {
         .body("trigger", equalTo("MANUAL"))
         .body("ciRunId", equalTo("run-1"))
         .body("ciRunStatus", equalTo("SUCCESS"))
-        .body("configPath", containsString("ci-platform-event-maintenance-bump.yml"))
+        .body("configPath", containsString("platform-pipelines/maintenance-bump.yml"))
         // The `dependencies` group is the INTERNAL half: the eventstream property, the outside
         // parent, qits-arch-rules, the @qits npm package and the internal build image. The quarkus
         // BOM is external and rides on its own branch; @angular/core belongs to `angular`; and the

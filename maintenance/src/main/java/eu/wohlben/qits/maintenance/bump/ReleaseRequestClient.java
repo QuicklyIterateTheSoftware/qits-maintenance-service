@@ -325,7 +325,7 @@ public class ReleaseRequestClient {
    * The commit subject a bump's own commits carry, reused as the release summary.
    *
    * <p><b>{@code bump(<group>): <n> dependencies}</b> — the literal shape {@code
-   * .config/qits/ci-platform-event-maintenance-bump.yml} prints, word for word, the plural never
+   * .config/qits/platform-pipelines/maintenance-bump.yml} (in qits-ci) prints, word for word, the plural never
    * singularised. Reusing it means the release request, the branch and the commits on it all read
    * the same in a listing.
    *

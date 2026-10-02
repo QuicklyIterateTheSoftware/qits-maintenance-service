@@ -42,18 +42,25 @@ import java.util.Optional;
 @ApplicationScoped
 public class CiClient {
 
-  /** The event name the platform-level pipeline selects on. */
+  /** The event name the bump pipeline selects on. */
   public static final String EVENT_NAME = "MaintenanceBump";
+
+  /** The event name the screenshot-baselines pipeline selects on. */
+  public static final String BASELINES_EVENT_NAME = "ScreenshotBaselines";
 
   public static final String TRIGGER_PATH = "/ci/api/events/trigger";
 
   /** Everything qits-ci has accepted and not finished, across every repository. */
   public static final String ACTIVE_RUNS_PATH = "/ci/api/runs/active";
 
-  /** The file in the wrapper repository that declares the pipeline. qits-ci records it as a run's
-   * {@code configPath}, and it is the same for every bump, so the bump detail carries it as a
-   * constant rather than reading it back per run. */
-  public static final String CONFIG_PATH = ".config/qits/ci-platform-event-maintenance-bump.yml";
+  /** The bump pipeline, packaged into qits-ci under this path. qits-ci records it as a run's {@code
+   * configPath}, and it is the same for every bump, so the bump detail carries it as a constant
+   * rather than reading it back per run. */
+  public static final String CONFIG_PATH = ".config/qits/platform-pipelines/maintenance-bump.yml";
+
+  /** The screenshot-baselines pipeline, packaged into qits-ci beside the bump pipeline. */
+  public static final String BASELINES_CONFIG_PATH =
+      ".config/qits/platform-pipelines/screenshot-baselines.yml";
 
   private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -91,12 +98,25 @@ public class CiClient {
     return trigger(bumpId, repository, group, branch, baseRef, changes, Map.of());
   }
 
+  /** The same trigger with extra top-level payload fields, for the bump pipeline. */
+  public TriggerResult trigger(
+      String bumpId,
+      String repository,
+      String group,
+      String branch,
+      String baseRef,
+      List<Change> changes,
+      Map<String, String> extra) {
+    return trigger(EVENT_NAME, bumpId, repository, group, branch, baseRef, changes, extra);
+  }
+
   /**
-   * The same trigger with extra top-level payload fields. A {@code BASELINES} bump sends {@code
-   * job} and {@code subject} here: the dependency steps read neither and skip a payload with no
-   * changes of their ecosystem, and the baselines step runs only for its own {@code job}.
+   * The trigger, naming the event and so the qits-ci pipeline that answers it: {@link #EVENT_NAME}
+   * for a bump, {@link #BASELINES_EVENT_NAME} for screenshot baselines. {@code extra} adds
+   * top-level payload fields, such as a baselines bump's {@code workItem}.
    */
   public TriggerResult trigger(
+      String eventName,
       String bumpId,
       String repository,
       String group,
@@ -113,7 +133,7 @@ public class CiClient {
     extra.forEach(payload::put);
 
     ObjectNode body = JSON.createObjectNode();
-    body.put("name", EVENT_NAME);
+    body.put("name", eventName);
     body.put("eventId", bumpId);
     body.set("payload", payload);
 
@@ -141,7 +161,7 @@ public class CiClient {
           TriggerResult.Outcome.FAILED,
           eventId(result, bumpId),
           List.of(),
-          "no run recorded for " + EVENT_NAME
+          "no run recorded for " + eventName
               + " (repository unreadable or no platform pipeline)");
     }
     return new TriggerResult(TriggerResult.Outcome.ACCEPTED, eventId(result, bumpId), runIds, null);

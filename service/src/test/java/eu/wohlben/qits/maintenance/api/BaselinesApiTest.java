@@ -97,7 +97,10 @@ class BaselinesApiTest {
     return id;
   }
 
-  /** The run starts from the fold, names its job, and a moved branch is joined to the request. */
+  /**
+   * The run is qits-ci's screenshot-baselines pipeline, started from the fold, and a moved branch
+   * is joined to the request.
+   */
   @Test
   void aRunThatPushedIsJoinedToTheRequest() {
     String id = open("{\"workItem\":\"qits-112\"}");
@@ -105,7 +108,8 @@ class BaselinesApiTest {
     List<String> triggers = peers.bodiesFor("/ci/api/events/trigger");
     assertEquals(1, triggers.size());
     String payload = triggers.get(0);
-    assertTrue(payload.contains("\"job\":\"screenshot-baselines\""), payload);
+    assertTrue(payload.contains("\"name\":\"ScreenshotBaselines\""), payload);
+    assertTrue(!payload.contains("\"job\""), payload);
     assertTrue(payload.contains("\"baseRef\":\"release/" + REQUEST + "\""), payload);
     assertTrue(payload.contains("\"branch\":\"" + BRANCH + "\""), payload);
     assertTrue(payload.contains("\"workItem\":\"qits-112\""), payload);

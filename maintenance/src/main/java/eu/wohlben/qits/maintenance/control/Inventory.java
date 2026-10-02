@@ -407,7 +407,10 @@ public class Inventory {
         row.ciRunId == null || row.ciRunId.isBlank()
             ? List.of()
             : List.of(row.ciRunId.split(",")),
-        eu.wohlben.qits.maintenance.bump.CiClient.CONFIG_PATH,
+        eu.wohlben.qits.maintenance.model.BumpMode.of(row.mode)
+                == eu.wohlben.qits.maintenance.model.BumpMode.BASELINES
+            ? eu.wohlben.qits.maintenance.bump.CiClient.BASELINES_CONFIG_PATH
+            : eu.wohlben.qits.maintenance.bump.CiClient.CONFIG_PATH,
         row.ciRunStatus,
         row.startedAt,
         row.finishedAt,
