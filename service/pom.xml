@@ -143,6 +143,12 @@
             <scope>test</scope>
         </dependency>
         <dependency>
+            <!-- ConsumerPactVerificationTest: verifies the consumer pacts this provider pins. -->
+            <groupId>au.com.dius.pact.provider</groupId>
+            <artifactId>junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <groupId>io.rest-assured</groupId>
             <artifactId>rest-assured</artifactId>
             <scope>test</scope>

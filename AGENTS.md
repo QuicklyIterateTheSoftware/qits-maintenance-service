@@ -849,3 +849,27 @@ Each is a decision, not an omission:
   pushed.
 - **A second environment.** Every bump row records the environment it ran in, so a second one is a
   config entry — but the routing that would pick between two CIs is not written.
+
+## OpenAPI document, pact provider and golden masters (epic qits-112)
+
+`docs/openapi.yml` is written by `OpenApiSchemaExportTest` from the running app; commit it with
+any API change. `BumpController`'s reads carry `operationId`s (`listBumps`, `getBumpWindow`,
+`getBump`), which generated clients name their functions after.
+
+qits-maintenance is a pact provider, set up like qits-githost-service and qits-events-service.
+The test package `service/src/test/java/eu/wohlben/qits/maintenance/contracts/` holds it:
+
+- `ProviderStates`: "pending bumps" (five bump rows in the year 2100, so they are the newest:
+  requested, running, green and waiting for its release request, released, failed) and "no
+  pending bumps". The rows are written straight to `mt_bump` and deleted again (`cleanUp()`), so
+  the dispatcher and the other suites never see them.
+- `GoldenMasterRecordingTest` records `listBumps` with `?limit=20` into `golden-masters/`. The
+  answer is a bare array, so its filtered list is the root (`listFilteredTo: "$"`). It compares by
+  default; `-Dgolden.update=true` rewrites.
+- `ConsumerPactVerificationTest` verifies `pacts/*_qits-maintenance-service.json` on the test
+  classpath. It passes with no pact until the first consumer pact jar is pinned; then drop
+  `@IgnoreNoPactsToVerify` and set `ClasspathPactLoader.REQUIRED = true`.
+
+`.config/qits/release.yml` declares the golden masters as a contract, so the platform publishes
+`eu.wohlben.qits:qits-maintenance-golden-masters` and `@qits/maintenance-golden-masters` when they
+change.

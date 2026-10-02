@@ -46,6 +46,9 @@
     </modules>
 
     <properties>
+        <!-- pact-jvm's JUnit 5 provider, for ConsumerPactVerificationTest: the version every
+             provider on the estate verifies with, so a consumer's pact is read the same way. -->
+        <pact.version>4.6.21</pact.version>
         <!-- THE PLATFORM'S OWN MAVEN REPOSITORY, and this repo's artifacts from it: qits-db-core
              (PatientPgDriver, which the datasource opens every connection through, and
              DbRetry.inNewTx, which every write path runs in), qits-auth-core (the forward-auth
@@ -159,6 +162,12 @@
                 <version>${quarkus.platform.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site. -->
+                <groupId>au.com.dius.pact.provider</groupId>
+                <artifactId>junit5</artifactId>
+                <version>${pact.version}</version>
             </dependency>
             <dependency>
                 <!-- Which postgres the embedded binaries ARE — 18.4.0, the tag the platform's own

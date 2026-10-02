@@ -64,7 +64,9 @@ public class BumpController {
    */
   @GET
   @jakarta.ws.rs.Path("/window")
-  @Operation(summary = "The bump dispatch window and everything owed a bump")
+  @Operation(
+      operationId = "getBumpWindow",
+      summary = "The bump dispatch window and everything owed a bump")
   @APIResponse(responseCode = "200", description = "The window, or the reason there is none")
   @RolesAllowed({"qits:admin", "qits:system", "qits:agent"})
   public BumpWindowDto window() {
@@ -107,7 +109,9 @@ public class BumpController {
   }
 
   @GET
-  @Operation(summary = "The newest bumps, of one repository or of all of them")
+  @Operation(
+      operationId = "listBumps",
+      summary = "The newest bumps, of one repository or of all of them")
   @APIResponse(responseCode = "200", description = "The bumps")
   @RolesAllowed({"qits:admin", "qits:system", "qits:agent"})
   public List<BumpDto> bumps(
@@ -124,7 +128,7 @@ public class BumpController {
    */
   @GET
   @jakarta.ws.rs.Path("/{id}")
-  @Operation(summary = "One bump with the changes it sent")
+  @Operation(operationId = "getBump", summary = "One bump with the changes it sent")
   @APIResponse(responseCode = "200", description = "The bump")
   @APIResponse(responseCode = "404", description = "No such bump")
   @RolesAllowed({"qits:admin", "qits:system", "qits:agent"})
