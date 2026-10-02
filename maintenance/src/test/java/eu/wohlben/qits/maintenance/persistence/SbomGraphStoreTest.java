@@ -518,4 +518,92 @@ class SbomGraphStoreTest {
         read.stream().anyMatch(row -> Ecosystem.DAEMON_WIRE_NAME.equals(row.ecosystem)),
         "the binary and the coordinate whose version names it are one release");
   }
+
+  // --- V15: pre-section contract rows are classified -------------------------------------------
+
+  /**
+   * <b>V15 classifies exactly the contract-shaped rows a null section left ambiguous, and nothing
+   * else.</b> Flyway has already run it against an empty schema at boot, so it is replayed here —
+   * the shipped file, read off the classpath — against rows written the way a pre-qits-666
+   * announcement did (no section at all), beside a software row that must stay null and a row
+   * already classified that must not move.
+   */
+  @Test
+  void theMigrationClassifiesOnlyPreSectionContractRowsAsContracts() throws Exception {
+    String suffix = UUID.randomUUID().toString();
+    UUID mavenGoldenMasters =
+        store.upsertArtifact(
+            Ecosystem.MAVEN,
+            "eu.wohlben.qits:qits-projects-" + suffix + "-golden-masters",
+            "1",
+            "r",
+            Instant.now());
+    UUID npmGoldenMasters =
+        store.upsertArtifact(
+            Ecosystem.NPM, "@qits/projects-" + suffix + "-golden-masters", "1", "r", Instant.now());
+    UUID mavenPacts =
+        store.upsertArtifact(
+            Ecosystem.MAVEN,
+            "eu.wohlben.qits:qits-landing-" + suffix + "-pacts-qits-projects",
+            "1",
+            "r",
+            Instant.now());
+    UUID npmPacts =
+        store.upsertArtifact(
+            Ecosystem.NPM,
+            "@qits/landing-" + suffix + "-pacts-qits-projects",
+            "1",
+            "r",
+            Instant.now());
+    UUID software =
+        store.upsertArtifact(
+            Ecosystem.MAVEN, "eu.wohlben.qits:qits-auth-core-" + suffix, "1", "r", Instant.now());
+    UUID npmSoftware =
+        store.upsertArtifact(Ecosystem.NPM, "@qits/angular-" + suffix, "1", "r", Instant.now());
+    UUID dockerSoftware =
+        store.upsertArtifact(
+            Ecosystem.DOCKER, "qits/qits-landing-" + suffix, "1", "r", Instant.now());
+    UUID alreadySoftware =
+        store.upsertArtifact(
+            Ecosystem.MAVEN,
+            "eu.wohlben.qits:qits-ci-" + suffix + "-golden-masters",
+            "1",
+            "r",
+            Instant.now(),
+            new eu.wohlben.qits.maintenance.model.ReleaseOrigin("p", "artifacts", UUID.randomUUID()));
+
+    String sql;
+    try (var in =
+        getClass()
+            .getClassLoader()
+            .getResourceAsStream(
+                "db/maintenance/migration/V15__classify_presection_contracts.sql")) {
+      assertNotNull(in, "the migration ships on the classpath");
+      sql = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+    }
+    // Over the raw JDBC connection, as Flyway runs it: the file's comments carry apostrophes and
+    // colons that Hibernate's native-query parameter parsing has no business reading.
+    eu.wohlben.qits.db.DbRetry.runInNewTx(
+        "replay V15",
+        () ->
+            store
+                .getEntityManager()
+                .unwrap(org.hibernate.Session.class)
+                .doWork(
+                    connection -> {
+                      try (var statement = connection.createStatement()) {
+                        statement.executeUpdate(sql);
+                      }
+                    }));
+    detached();
+
+    assertEquals("contracts", store.artifact(mavenGoldenMasters).orElseThrow().section);
+    assertEquals("contracts", store.artifact(npmGoldenMasters).orElseThrow().section);
+    assertEquals("contracts", store.artifact(mavenPacts).orElseThrow().section);
+    assertEquals("contracts", store.artifact(npmPacts).orElseThrow().section);
+    assertNull(store.artifact(software).orElseThrow().section);
+    assertNull(store.artifact(npmSoftware).orElseThrow().section);
+    assertNull(store.artifact(dockerSoftware).orElseThrow().section);
+    assertEquals("artifacts", store.artifact(alreadySoftware).orElseThrow().section);
+  }
 }
