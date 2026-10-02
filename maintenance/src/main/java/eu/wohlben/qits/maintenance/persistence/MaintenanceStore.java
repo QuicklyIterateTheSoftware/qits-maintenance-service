@@ -14,6 +14,9 @@ import eu.wohlben.qits.maintenance.entity.MtPin;
 import eu.wohlben.qits.maintenance.entity.MtRelease;
 import eu.wohlben.qits.maintenance.entity.MtReleasePin;
 import eu.wohlben.qits.maintenance.entity.MtRepository;
+import eu.wohlben.qits.maintenance.entity.MtSbomCheckRun;
+import eu.wohlben.qits.maintenance.entity.MtSbomTicket;
+import eu.wohlben.qits.maintenance.entity.MtSbomTicketVersion;
 import eu.wohlben.qits.maintenance.entity.MtScan;
 import eu.wohlben.qits.maintenance.error.BumpAlreadyActiveException;
 import eu.wohlben.qits.maintenance.latest.LatestLookup;
@@ -27,6 +30,7 @@ import eu.wohlben.qits.maintenance.model.BumpTrigger;
 import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.GroupSource;
 import eu.wohlben.qits.maintenance.model.PinKind;
+import eu.wohlben.qits.maintenance.model.ReleaseOrigin;
 import eu.wohlben.qits.maintenance.model.RepositoryStatus;
 import eu.wohlben.qits.maintenance.model.SbomStatus;
 import eu.wohlben.qits.maintenance.model.ScanScope;
@@ -1184,7 +1188,28 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
       String version,
       String repository,
       Instant occurredAt) {
-    return upsertArtifact(ecosystem.wireName(), name, version, repository, occurredAt);
+    return upsertArtifact(
+        ecosystem.wireName(), name, version, repository, occurredAt, ReleaseOrigin.NONE);
+  }
+
+  /**
+   * The same, with where the release came from — the project, the release.yml section and the run
+   * the SBOM check reads (V14).
+   *
+   * <p><b>Those three are the one exception to "a known coordinate is left alone", and only ever
+   * from null.</b> They are facts about the release, not readings of its document, so a redelivered
+   * frame that names one the row does not hold yet fills it in; a value already stored is never
+   * overwritten.
+   */
+  @ActivateRequestContext
+  public UUID upsertArtifact(
+      Ecosystem ecosystem,
+      String name,
+      String version,
+      String repository,
+      Instant occurredAt,
+      ReleaseOrigin origin) {
+    return upsertArtifact(ecosystem.wireName(), name, version, repository, occurredAt, origin);
   }
 
   /**
@@ -1211,16 +1236,47 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
   @ActivateRequestContext
   public UUID upsertDaemonArtifact(
       String name, String version, String repository, Instant occurredAt) {
-    return upsertArtifact(Ecosystem.DAEMON_WIRE_NAME, name, version, repository, occurredAt);
+    return upsertDaemonArtifact(name, version, repository, occurredAt, ReleaseOrigin.NONE);
+  }
+
+  /** The same, with where the release came from. See the {@link ReleaseOrigin} overload above. */
+  @ActivateRequestContext
+  public UUID upsertDaemonArtifact(
+      String name, String version, String repository, Instant occurredAt, ReleaseOrigin origin) {
+    return upsertArtifact(
+        Ecosystem.DAEMON_WIRE_NAME, name, version, repository, occurredAt, origin);
   }
 
   private UUID upsertArtifact(
-      String type, String name, String version, String repository, Instant occurredAt) {
+      String type,
+      String name,
+      String version,
+      String repository,
+      Instant occurredAt,
+      ReleaseOrigin origin) {
+    ReleaseOrigin from = origin == null ? ReleaseOrigin.NONE : origin;
     return DbRetry.inNewTx(
         "record the released artifact " + name + " " + version,
         () -> {
           MtArtifact row = artifactRow(type, name, version);
           if (row != null) {
+            // Left alone — except the release's own origin, filled in where it is still null.
+            boolean filled = false;
+            if (row.projectId == null && from.projectId() != null) {
+              row.projectId = from.projectId();
+              filled = true;
+            }
+            if (row.section == null && from.section() != null) {
+              row.section = from.section();
+              filled = true;
+            }
+            if (row.runId == null && from.runId() != null) {
+              row.runId = from.runId();
+              filled = true;
+            }
+            if (filled) {
+              getEntityManager().flush();
+            }
             return row.id;
           }
           row = new MtArtifact();
@@ -1231,6 +1287,9 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
           row.repository = repository;
           row.occurredAt = occurredAt;
           row.sbomStatus = SbomStatus.PENDING.name();
+          row.projectId = from.projectId();
+          row.section = from.section();
+          row.runId = from.runId();
           row.persist();
           getEntityManager().flush();
           return row.id;
@@ -1609,6 +1668,184 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
     return DbRetry.inNewTx(
         "read the edges of one artifact",
         () -> MtArtifactEdge.find("artifactId = ?1", artifactId).list());
+  }
+
+  /** One artifact row by its stored wire type — how a {@code daemon} row is looked up. */
+  @ActivateRequestContext
+  public Optional<MtArtifact> artifact(String type, String name, String version) {
+    return DbRetry.inNewTx(
+        "read one artifact by type and coordinate",
+        () -> Optional.ofNullable(artifactRow(type, name, version)));
+  }
+
+  // --- the daily sbom check (V14) ----------------------------------------------------------------
+
+  /**
+   * Every row the SBOM check might count: one of the given types, from the {@code artifacts}
+   * section (or from before sections existed), and not INGESTED. The pending grace and the presence
+   * probe are the caller's — the first is a clock, the second a peer.
+   *
+   * <p><b>No cut-off, on purpose.</b> Every released version still in the store counts, however
+   * old; the GC is what retires an old one, and the check follows it there.
+   */
+  @ActivateRequestContext
+  public List<MtArtifact> sbomCheckCandidates(Collection<String> types) {
+    if (types == null || types.isEmpty()) {
+      return List.of();
+    }
+    return DbRetry.inNewTx(
+        "read the artifacts the sbom check may count",
+        () ->
+            MtArtifact.find(
+                    "ecosystem in ?1 and (section is null or section = ?2) and sbomStatus in ?3",
+                    Sort.by("ecosystem").and("name").and("occurredAt"),
+                    List.copyOf(types),
+                    "artifacts",
+                    List.of(
+                        SbomStatus.MISSING.name(),
+                        SbomStatus.FAILED.name(),
+                        SbomStatus.PENDING.name()))
+                .list());
+  }
+
+  /** Stores one check run and its report. */
+  @ActivateRequestContext
+  public void recordSbomCheckRun(UUID id, Instant ranAt, boolean filed, String report) {
+    DbRetry.runInNewTx(
+        "record an sbom check run",
+        () -> {
+          MtSbomCheckRun row = new MtSbomCheckRun();
+          row.id = id;
+          row.ranAt = ranAt;
+          row.filed = filed;
+          row.report = report;
+          row.persist();
+          getEntityManager().flush();
+        });
+  }
+
+  /** The newest check run, if any has run. */
+  @ActivateRequestContext
+  public Optional<MtSbomCheckRun> latestSbomCheckRun() {
+    return DbRetry.inNewTx(
+        "read the newest sbom check run",
+        () ->
+            MtSbomCheckRun.<MtSbomCheckRun>findAll(Sort.by("ranAt", Sort.Direction.Descending))
+                .firstResultOptional());
+  }
+
+  /** The current ticket row of one {@code (project, ecosystem, name)}, open or closed. */
+  @ActivateRequestContext
+  public Optional<MtSbomTicket> sbomTicket(String projectId, String ecosystem, String name) {
+    return DbRetry.inNewTx(
+        "read the sbom ticket of " + name,
+        () ->
+            MtSbomTicket.<MtSbomTicket>find(
+                    "projectId = ?1 and ecosystem = ?2 and name = ?3", projectId, ecosystem, name)
+                .firstResultOptional());
+  }
+
+  /** Every ticket row the check has not finished with. */
+  @ActivateRequestContext
+  public List<MtSbomTicket> openSbomTickets() {
+    return DbRetry.inNewTx(
+        "read the open sbom tickets",
+        () ->
+            MtSbomTicket.<MtSbomTicket>find(
+                    "closedAt is null", Sort.by("projectId").and("ecosystem").and("name"))
+                .list());
+  }
+
+  /** The versions reported on one ticket row, oldest report first. */
+  @ActivateRequestContext
+  public List<MtSbomTicketVersion> sbomTicketVersions(UUID ticketRow) {
+    return DbRetry.inNewTx(
+        "read the versions of one sbom ticket",
+        () ->
+            MtSbomTicketVersion.<MtSbomTicketVersion>find(
+                    "ticketRow = ?1", Sort.by("reportedAt").and("version"), ticketRow)
+                .list());
+  }
+
+  /**
+   * The ticket a group is now reported on: a new row, or the existing one REPLACED — new ticket id
+   * and slug, reopened, and its versions deleted, since they were reported on a ticket that is not
+   * this one. One transaction, so the unique key never names a ticket half-swapped.
+   *
+   * @return the row's id
+   */
+  @ActivateRequestContext
+  public UUID openSbomTicket(
+      String projectId,
+      String ecosystem,
+      String name,
+      UUID ticketId,
+      String ticketSlug,
+      Instant now) {
+    return DbRetry.inNewTx(
+        "open the sbom ticket of " + name,
+        () -> {
+          MtSbomTicket row =
+              MtSbomTicket.<MtSbomTicket>find(
+                      "projectId = ?1 and ecosystem = ?2 and name = ?3",
+                      projectId,
+                      ecosystem,
+                      name)
+                  .firstResult();
+          if (row == null) {
+            row = new MtSbomTicket();
+            row.id = UUID.randomUUID();
+            row.projectId = projectId;
+            row.ecosystem = ecosystem;
+            row.name = name;
+            row.ticketId = ticketId;
+            row.ticketSlug = ticketSlug;
+            row.openedAt = now;
+            row.persist();
+          } else {
+            MtSbomTicketVersion.delete("ticketRow", row.id);
+            row.ticketId = ticketId;
+            row.ticketSlug = ticketSlug;
+            row.openedAt = now;
+            row.closedAt = null;
+          }
+          getEntityManager().flush();
+          return row.id;
+        });
+  }
+
+  /** Records that one version was reported on a ticket row. A second record of it is a no-op. */
+  @ActivateRequestContext
+  public void recordSbomTicketVersion(UUID ticketRow, String version, String reason, Instant now) {
+    DbRetry.runInNewTx(
+        "record a version on an sbom ticket",
+        () -> {
+          if (MtSbomTicketVersion.findById(new MtSbomTicketVersion.Key(ticketRow, version))
+              != null) {
+            return;
+          }
+          MtSbomTicketVersion row = new MtSbomTicketVersion();
+          row.ticketRow = ticketRow;
+          row.version = version;
+          row.reason = reason;
+          row.reportedAt = now;
+          row.persist();
+          getEntityManager().flush();
+        });
+  }
+
+  /** The check is done with this ticket row. */
+  @ActivateRequestContext
+  public void closeSbomTicket(UUID ticketRow, Instant now) {
+    DbRetry.runInNewTx(
+        "close an sbom ticket row",
+        () -> {
+          MtSbomTicket row = MtSbomTicket.findById(ticketRow);
+          if (row != null) {
+            row.closedAt = now;
+            getEntityManager().flush();
+          }
+        });
   }
 
   // --- the release ledger -----------------------------------------------------------------------

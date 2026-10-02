@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import eu.wohlben.qits.eventstream.control.EventFrame;
 import eu.wohlben.qits.maintenance.latest.VersionOrder;
 import eu.wohlben.qits.maintenance.model.Ecosystem;
+import eu.wohlben.qits.maintenance.model.ReleaseOrigin;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import eu.wohlben.qits.maintenance.sbom.SbomIngestService;
 import java.time.Instant;
@@ -103,14 +104,20 @@ class SoftwareReleaseListenerTest {
         String name,
         String version,
         String repository,
-        Instant occurredAt) {}
+        Instant occurredAt,
+        ReleaseOrigin origin) {}
 
     final List<Announced> announced = new ArrayList<>();
 
     @Override
     public UUID announced(
-        Ecosystem ecosystem, String name, String version, String repository, Instant occurredAt) {
-      announced.add(new Announced(ecosystem, name, version, repository, occurredAt));
+        Ecosystem ecosystem,
+        String name,
+        String version,
+        String repository,
+        Instant occurredAt,
+        ReleaseOrigin origin) {
+      announced.add(new Announced(ecosystem, name, version, repository, occurredAt, origin));
       return UUID.randomUUID();
     }
 
@@ -122,8 +129,8 @@ class SoftwareReleaseListenerTest {
      */
     @Override
     public UUID announcedDaemon(
-        String name, String version, String repository, Instant occurredAt) {
-      announced.add(new Announced(null, name, version, repository, occurredAt));
+        String name, String version, String repository, Instant occurredAt, ReleaseOrigin origin) {
+      announced.add(new Announced(null, name, version, repository, occurredAt, origin));
       return UUID.randomUUID();
     }
   }
@@ -403,6 +410,49 @@ class SoftwareReleaseListenerTest {
 
     assertTrue(sboms.announced.isEmpty());
     assertTrue(store.writes.isEmpty());
+  }
+
+  // --- the release's origin: what the daily SBOM check reads (qits-668) ---------------------------
+
+  /** Project, section and run ride from the frame onto the row, on the ordinary arm and the daemon's. */
+  @Test
+  void theProjectSectionAndRunOfTheReleaseReachTheRow() {
+    UUID run = UUID.randomUUID();
+    listener.onFrame(
+        frame(
+            "SoftwareRelease",
+            ForeignEventContractTest.softwareReleasePayload(
+                "maven", "eu.wohlben.qits:qits-eventstream", "2026.901.1", "qits", "Contracts", run)));
+    listener.onFrame(
+        frame(
+            "SoftwareRelease",
+            ForeignEventContractTest.softwareReleasePayload(
+                "daemon", "qits-platform-access-cli", "2026.901.1", "qits", "artifacts", run)));
+
+    assertEquals(2, sboms.announced.size());
+    assertEquals(new ReleaseOrigin("qits", "contracts", run), sboms.announced.get(0).origin());
+    assertEquals(new ReleaseOrigin("qits", "artifacts", run), sboms.announced.get(1).origin());
+  }
+
+  /** A frame from a qits-ci without the fields carries no origin, and is recorded all the same. */
+  @Test
+  void aFrameWithoutTheOriginFieldsIsRecordedWithNone() {
+    release("maven", "eu.wohlben.qits:qits-eventstream", "2026.901.1");
+
+    assertEquals(ReleaseOrigin.NONE, sboms.announced.get(0).origin());
+  }
+
+  /** A run id that is not a uuid is dropped, never a reason to lose the release. */
+  @Test
+  void aRunIdThatIsNotAUuidIsDroppedRatherThanFailingTheDecode() {
+    String payload =
+        ForeignEventContractTest.softwareReleasePayload(
+                "maven", "eu.wohlben.qits:qits-eventstream", "2026.901.1", "qits", null, null)
+            .replace("\"projectId\"", "\"runId\":\"not-a-uuid\",\"projectId\"");
+    listener.onFrame(frame("SoftwareRelease", payload));
+
+    assertEquals(1, sboms.announced.size());
+    assertEquals(new ReleaseOrigin("qits", null, null), sboms.announced.get(0).origin());
   }
 
   // --- the daemon arm: a row, and no column --------------------------------------------------------

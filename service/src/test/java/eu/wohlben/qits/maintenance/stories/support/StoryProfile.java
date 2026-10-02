@@ -179,6 +179,8 @@ public class StoryProfile extends PackagedSurfaceIT.PackagedUnderTarget {
     // an ingest, and a sweep firing on the hour mid-catalogue would draw an artifacts arrow into
     // whichever story happened to be draining.
     overrides.put("qits.maintenance.sbom.sweep-cron", "off");
+    // The daily SBOM check probes qits-artifacts and would draw its arrows into a story too.
+    overrides.put("qits.maintenance.sbom.check.cron", "off");
     overrides.put("qits.maintenance.bump.poll-interval", "1s");
     // AND THE DISPATCHER IS OFF, at the shipped key that turns the clock's half of bumping off.
     // It used to be silent here by accident: it did nothing at all until a 02:00 cron opened a

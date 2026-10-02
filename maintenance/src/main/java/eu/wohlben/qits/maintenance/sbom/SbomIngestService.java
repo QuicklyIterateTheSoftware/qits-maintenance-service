@@ -2,6 +2,7 @@ package eu.wohlben.qits.maintenance.sbom;
 
 import eu.wohlben.qits.maintenance.entity.MtArtifact;
 import eu.wohlben.qits.maintenance.model.Ecosystem;
+import eu.wohlben.qits.maintenance.model.ReleaseOrigin;
 import eu.wohlben.qits.maintenance.model.SbomStatus;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import eu.wohlben.qits.maintenance.work.WorkQueue;
@@ -62,7 +63,23 @@ public class SbomIngestService {
    */
   public UUID announced(
       Ecosystem ecosystem, String name, String version, String repository, Instant occurredAt) {
-    UUID id = store.upsertArtifact(ecosystem, name, version, repository, occurredAt);
+    return announced(ecosystem, name, version, repository, occurredAt, ReleaseOrigin.NONE);
+  }
+
+  /**
+   * The same, with where the release came from — the project, release.yml section and run the
+   * daily SBOM check reads off the row.
+   *
+   * @return the artifact row's id
+   */
+  public UUID announced(
+      Ecosystem ecosystem,
+      String name,
+      String version,
+      String repository,
+      Instant occurredAt,
+      ReleaseOrigin origin) {
+    UUID id = store.upsertArtifact(ecosystem, name, version, repository, occurredAt, origin);
     // Outside the transaction above, which has committed. The queue is what takes the call.
     queue.submit("ingest the sbom of " + name + " " + version, () -> ingest(id));
     return id;
@@ -89,7 +106,13 @@ public class SbomIngestService {
    */
   public UUID announcedDaemon(
       String name, String version, String repository, Instant occurredAt) {
-    UUID id = store.upsertDaemonArtifact(name, version, repository, occurredAt);
+    return announcedDaemon(name, version, repository, occurredAt, ReleaseOrigin.NONE);
+  }
+
+  /** The same, with where the release came from. */
+  public UUID announcedDaemon(
+      String name, String version, String repository, Instant occurredAt, ReleaseOrigin origin) {
+    UUID id = store.upsertDaemonArtifact(name, version, repository, occurredAt, origin);
     queue.submit("ingest the sbom of " + name + " " + version, () -> ingest(id));
     return id;
   }

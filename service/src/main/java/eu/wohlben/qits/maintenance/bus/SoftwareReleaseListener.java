@@ -4,6 +4,7 @@ import eu.wohlben.qits.eventstream.QitsDurableEventListener;
 import eu.wohlben.qits.eventstream.control.CanonicalJson;
 import eu.wohlben.qits.eventstream.control.EventFrame;
 import eu.wohlben.qits.maintenance.model.Ecosystem;
+import eu.wohlben.qits.maintenance.model.ReleaseOrigin;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import eu.wohlben.qits.maintenance.sbom.SbomIngestService;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -11,6 +12,7 @@ import jakarta.inject.Inject;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import org.jboss.logging.Logger;
 
 /**
@@ -165,7 +167,43 @@ public class SoftwareReleaseListener implements QitsDurableEventListener {
    * contract test can name it.
    */
   public record SoftwareReleasePayload(
-      String repository, String version, String packageType, String packageName) {}
+      String repository,
+      String version,
+      String packageType,
+      String packageName,
+      String projectId,
+      String section,
+      String runId) {
+
+    /**
+     * The three facts the daily SBOM check reads off the row: the project a ticket is filed in, the
+     * release.yml section ({@code artifacts}|{@code contracts}), and the qits-ci run. All three are
+     * optional on the wire — a frame from a qits-ci that predates {@code section} and {@code runId}
+     * leaves the keys out and binds them null — and a {@code runId} that is not a uuid is dropped
+     * rather than failing the decode, because one malformed optional field must not make a whole
+     * release unreadable.
+     */
+    ReleaseOrigin origin() {
+      return new ReleaseOrigin(trimmed(projectId), normalizedSection(), uuid(runId));
+    }
+
+    private String normalizedSection() {
+      String value = trimmed(section);
+      return value == null ? null : value.toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private static UUID uuid(String value) {
+      String text = trimmed(value);
+      if (text == null) {
+        return null;
+      }
+      try {
+        return UUID.fromString(text);
+      } catch (IllegalArgumentException notAUuid) {
+        return null;
+      }
+    }
+  }
 
   @Inject MaintenanceStore store;
 
@@ -254,7 +292,7 @@ public class SoftwareReleaseListener implements QitsDurableEventListener {
     // redelivered for ever, and this listener's watermark would sit behind it. The row IS the
     // outbox — see SbomIngestService.
     sboms.announced(
-        ecosystem, name, version, repository(release), occurredAt(frame));
+        ecosystem, name, version, repository(release), occurredAt(frame), release.origin());
   }
 
   /**
@@ -281,7 +319,8 @@ public class SoftwareReleaseListener implements QitsDurableEventListener {
    */
   private void daemon(
       EventFrame frame, SoftwareReleasePayload release, String name, String version) {
-    sboms.announcedDaemon(name, version, repository(release), occurredAt(frame));
+    sboms.announcedDaemon(
+        name, version, repository(release), occurredAt(frame), release.origin());
     LOG.infof(
         "%s %s released the daemon binary %s %s; it is recorded so a pin of its co-released"
             + " artifact can keep it",

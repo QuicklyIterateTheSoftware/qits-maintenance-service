@@ -83,4 +83,24 @@ public class MtArtifact extends PanacheEntityBase {
   /** When the document was last read successfully. Null until one was. */
   @Column(name = "ingested_at")
   public Instant ingestedAt;
+
+  /**
+   * The qits-projects project the release belongs to, off {@code SoftwareRelease.projectId} (V14).
+   * Where the SBOM check files a ticket about this artifact; null on rows written before the
+   * listener read it, and a null is a warning in the check's report, never a guessed project.
+   */
+  @Column(name = "project_id", length = 64)
+  public String projectId;
+
+  /**
+   * The release.yml section the entry came from — {@code artifacts} or {@code contracts} — off
+   * {@code SoftwareRelease.section} (V14). Null on rows from before qits-ci carried it, which the
+   * SBOM check reads as {@code artifacts}; a contract is never counted.
+   */
+  @Column(length = 16)
+  public String section;
+
+  /** The qits-ci release run that published it, off {@code SoftwareRelease.runId} (V14). */
+  @Column(name = "run_id")
+  public UUID runId;
 }

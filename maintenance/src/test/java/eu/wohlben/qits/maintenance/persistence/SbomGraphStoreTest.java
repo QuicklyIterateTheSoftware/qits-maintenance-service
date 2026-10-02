@@ -388,6 +388,37 @@ class SbomGraphStoreTest {
         "a daemon row nobody has read yet is in the queue the sweep re-offers");
   }
 
+  /**
+   * The release's ORIGIN (V14) is the one thing a redelivered frame may still write onto a known
+   * row — and only into a column that is null. A value already stored is never overwritten.
+   */
+  @Test
+  void theOriginOfARereleasedRowIsFilledWhereNullAndNeverOverwritten() {
+    String name = "eu.wohlben.qits:origin-" + UUID.randomUUID();
+    UUID run = UUID.randomUUID();
+    UUID id = store.upsertArtifact(Ecosystem.MAVEN, name, "1", "r", Instant.now());
+    store.upsertArtifact(
+        Ecosystem.MAVEN,
+        name,
+        "1",
+        "r",
+        Instant.now(),
+        new eu.wohlben.qits.maintenance.model.ReleaseOrigin("qits", "artifacts", run));
+    store.upsertArtifact(
+        Ecosystem.MAVEN,
+        name,
+        "1",
+        "r",
+        Instant.now(),
+        new eu.wohlben.qits.maintenance.model.ReleaseOrigin("other", "contracts", UUID.randomUUID()));
+    detached();
+
+    MtArtifact row = store.artifact(id).orElseThrow();
+    assertEquals("qits", row.projectId);
+    assertEquals("artifacts", row.section);
+    assertEquals(run, row.runId);
+  }
+
   // --- V13: the rows the old rule wrote terminal are re-queued -------------------------------------
 
   /** The sentence the old rule wrote — {@code MaintenanceStore.DAEMON_SBOM_UNREAD}, now deleted. */

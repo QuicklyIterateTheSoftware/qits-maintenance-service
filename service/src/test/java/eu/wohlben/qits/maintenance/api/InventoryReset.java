@@ -11,6 +11,9 @@ import eu.wohlben.qits.maintenance.entity.MtPin;
 import eu.wohlben.qits.maintenance.entity.MtRelease;
 import eu.wohlben.qits.maintenance.entity.MtReleasePin;
 import eu.wohlben.qits.maintenance.entity.MtRepository;
+import eu.wohlben.qits.maintenance.entity.MtSbomCheckRun;
+import eu.wohlben.qits.maintenance.entity.MtSbomTicket;
+import eu.wohlben.qits.maintenance.entity.MtSbomTicketVersion;
 import eu.wohlben.qits.maintenance.entity.MtScan;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.transaction.Transactional;
@@ -34,6 +37,10 @@ public class InventoryReset {
     // The graph first: mt_artifact_component and mt_artifact_edge are the only rows in this schema
     // with a real foreign key, and it points at mt_artifact. (The release trains' node table held
     // the other one; V8 dropped both of their tables when the feature was retired.)
+    // The SBOM check's tables first: versions point at their ticket row, the only other foreign key.
+    MtSbomTicketVersion.deleteAll();
+    MtSbomTicket.deleteAll();
+    MtSbomCheckRun.deleteAll();
     MtArtifactEdge.deleteAll();
     MtArtifactComponent.deleteAll();
     MtArtifact.deleteAll();

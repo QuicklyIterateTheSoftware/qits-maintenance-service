@@ -14,6 +14,7 @@ import eu.wohlben.qits.maintenance.dto.PinSourceDto;
 import eu.wohlben.qits.maintenance.dto.RepositoryDependentsDto;
 import eu.wohlben.qits.maintenance.dto.RepositoryDetailDto;
 import eu.wohlben.qits.maintenance.dto.RepositoryDto;
+import eu.wohlben.qits.maintenance.dto.SbomCheckReportDto;
 import eu.wohlben.qits.maintenance.dto.ScanDto;
 import eu.wohlben.qits.maintenance.dto.TransitiveDto;
 import eu.wohlben.qits.maintenance.pending.Change;
@@ -83,7 +84,12 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
       DownstreamDto.EntryDto.class,
       AdoptionJourneyDto.class,
       AdoptionJourneyDto.PackageDto.class,
-      AdoptionJourneyDto.AdopterDto.class
+      AdoptionJourneyDto.AdopterDto.class,
+      // The daily SBOM check's report: the POST /sbom-check/runs 202 carries it in a
+      // Response.entity, and the same records are read back out of mt_sbom_check_run's JSON.
+      SbomCheckReportDto.class,
+      SbomCheckReportDto.EntryDto.class,
+      SbomCheckReportDto.TicketDto.class
     })
 final class ApiWireReflection {
 

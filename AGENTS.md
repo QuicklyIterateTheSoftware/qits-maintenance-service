@@ -360,7 +360,36 @@ this context's own tables in this context's own database, and a component has no
 apart from the artifact it was read out of. **`mt_release_pin.release_id` is deliberately NOT a
 third one** — the same part-of shape, but those rows are rewritten by a delete keyed on that column
 inside the transaction that replaces the release row, so the constraint would buy nothing the writer
-does not already guarantee, and the sentence above stays true.
+does not already guarantee. **`mt_sbom_ticket_version.ticket_row` (V14) is the third**, for the same
+part-of reason the graph's two are: a reported version means nothing apart from the ticket row it
+was reported on, and both ends are this context's own.
+
+## The daily SBOM check
+
+**`sbomcheck/SbomCheckService` (V14), on `schedule/SbomCheckSchedule` at 02:15, and SHIPPED
+REPORT-ONLY** (`qits.maintenance.sbom.check.file-tickets=false`): a run computes which released
+artifact still in qits-artifacts has no usable SBOM, stores the report in `mt_sbom_check_run`, and
+calls NOTHING in qits-projects. With the key on it files one MAINTENANCE ticket per `(project,
+ecosystem, name)` and drops it again once every listed version is INGESTED or collected — the
+semantics of qits-projects' `TicketUnattendedGateTickets`, which is the precedent.
+
+**No cut-off; the GC is the retirement.** Every row counts however old, so an old version pinned
+somewhere is a finding until the pin moves and the GC collects it — at which point it stops counting
+and its ticket closes itself.
+
+**The presence probe must never RECORD AN ACCESS**, which is why it reads listings
+(`maven-metadata.xml`, the packument, `tags/list`, the daemon browse listing) and never a
+version-addressed GET or HEAD: qits-artifacts moves `accessed_at` on every one of those, and a daily
+probe that touched what it reports would keep those versions alive for ever. A 404 is "collected";
+anything else that is not a listing FAILS THE RUN rather than guessing either way, and every probe is
+made before anything is written.
+
+**A null `project_id` is a warning, never a ticket into a guessed project.** Rows written before
+the listener stored `SoftwareRelease.projectId` (V14) carry none.
+
+**The ticket doors admit `qits:admin`/`qits:agent` in qits-projects today, and this service presents
+`qits:system`** — so filing answers 403 until that is settled. Harmless report-only; it is the first
+thing to fix before the key is flipped.
 
 ## The release ledger
 
@@ -611,8 +640,9 @@ on and no audience configured.
   — a read now runs in its own transaction like a write does — but keep the shape: it is the one
   that says what a test means, and it costs nothing.
 - **`InventoryReset` empties the store between methods, after `WorkQueue.awaitIdle`.** The graph
-  goes first there — `mt_artifact_component` and `mt_artifact_edge` are the only rows in this schema
-  with a foreign key, and it points at `mt_artifact`. The ledger pair goes with it, pins before
+  goes first there — `mt_artifact_component` and `mt_artifact_edge` carry a foreign key to
+  `mt_artifact`, and the SBOM check's `mt_sbom_ticket_version` one to `mt_sbom_ticket`, so those go
+  before what they point at. The ledger pair goes with it, pins before
   releases: nothing enforces that order (see "The release ledger"), but the two read as unrelated
   tables written the other way round. Flyway's
   `clean-at-start` runs per Quarkus start, not per test, and an active bump row holds its branch's

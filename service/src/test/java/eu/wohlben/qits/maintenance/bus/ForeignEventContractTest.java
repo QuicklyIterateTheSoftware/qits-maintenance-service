@@ -3,6 +3,7 @@ package eu.wohlben.qits.maintenance.bus;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -72,14 +73,25 @@ class ForeignEventContractTest {
    * <p>The NAME is transcribed too, which is what makes the signature assertion below say anything:
    * {@code signature()} is the simple class name, so this record has to be spelled exactly as qits-ci
    * spells it.
+   *
+   * <p><b>{@code section} and {@code runId} are transcribed AHEAD of the publisher</b> (qits-621 /
+   * qits-668): qits-ci is adding them, appended last and nullable, in the same campaign. Nullable on
+   * the wire means absent — {@code CanonicalJson} leaves a null key out — so every helper below that
+   * passes null for them is also the proof that a frame from a qits-ci without the fields decodes.
    */
   record SoftwareRelease(
       UUID eventId,
       String repository,
+      String projectId,
+      String repoId,
+      String repoName,
       String version,
       String packageType,
       String packageName,
-      Instant occurredAt)
+      Instant occurredAt,
+      String priority,
+      String section,
+      UUID runId)
       implements QitsEvent {}
 
   /**
@@ -171,7 +183,42 @@ class ForeignEventContractTest {
       String repository, String packageType, String packageName, String version) {
     return CanonicalJson.payload(
         new SoftwareRelease(
-            UUID.randomUUID(), repository, version, packageType, packageName, WHEN));
+            UUID.randomUUID(),
+            repository,
+            null,
+            null,
+            null,
+            version,
+            packageType,
+            packageName,
+            WHEN,
+            null,
+            null,
+            null));
+  }
+
+  /** A frame carrying all three facts the SBOM check reads: project, section and run. */
+  static String softwareReleasePayload(
+      String packageType,
+      String packageName,
+      String version,
+      String projectId,
+      String section,
+      UUID runId) {
+    return CanonicalJson.payload(
+        new SoftwareRelease(
+            UUID.randomUUID(),
+            "qits-eventstream-javalib",
+            projectId,
+            "storage-1",
+            "qits-eventstream-javalib",
+            version,
+            packageType,
+            packageName,
+            WHEN,
+            "NORMAL",
+            section,
+            runId));
   }
 
   static String scmReleasePayload(String repositoryName, String branch, String version) {
@@ -271,6 +318,38 @@ class ForeignEventContractTest {
     // binding.
     JsonNode json = MAPPER.readTree(payload);
     for (String field : List.of("repository", "version", "packageType", "packageName")) {
+      assertTrue(json.has(field), "the canonical payload carries no " + field);
+    }
+
+    // A publisher that states no project, section or run leaves the keys OUT, and the record still
+    // binds — the three are optional, and absence reads as null rather than as a refusal.
+    for (String field : List.of("projectId", "section", "runId")) {
+      assertFalse(json.has(field), "a null " + field + " is absent on the wire");
+    }
+    assertNull(read.projectId());
+    assertNull(read.section());
+    assertNull(read.runId());
+  }
+
+  /**
+   * The three facts the daily SBOM check reads (qits-668): the project a ticket is filed in, the
+   * release.yml section, and the release run — bound by name from the publisher's own components.
+   */
+  @Test
+  void aSoftwareReleaseCarryingProjectSectionAndRunBindsThemToo() throws Exception {
+    UUID run = UUID.randomUUID();
+    String payload =
+        softwareReleasePayload(
+            "maven", "eu.wohlben.qits:qits-eventstream", "2026.901.1", "qits", "contracts", run);
+
+    SoftwareReleaseListener.SoftwareReleasePayload read =
+        CanonicalJson.payloadTo(payload, SoftwareReleaseListener.SoftwareReleasePayload.class);
+    assertEquals("qits", read.projectId());
+    assertEquals("contracts", read.section());
+    assertEquals(run.toString(), read.runId());
+
+    JsonNode json = MAPPER.readTree(payload);
+    for (String field : List.of("projectId", "section", "runId")) {
       assertTrue(json.has(field), "the canonical payload carries no " + field);
     }
   }

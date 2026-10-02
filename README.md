@@ -462,6 +462,10 @@ where v1 waited up to six hours for a poll.
   binaries that carry it. (Until qits-703 the row was written terminal `FAILED`, because the route
   was then addressed through an `Ecosystem`; `V13__requeue_daemon_sboms.sql` put those rows back to
   PENDING and the boot's `RestartRecovery` read them.)
+- **The artifact row also keeps where the release came from** (V14): `projectId`, `section`
+  (`artifacts`|`contracts`) and `runId`, the three facts the daily SBOM check reads. All optional on
+  the wire; filled when a frame names them, never overwriting a stored value, and a `runId` that is
+  not a uuid is dropped rather than failing the decode.
 - **`SCMRelease` is also the ONLY source of a gitlink's latest.** There is no registry to poll — a
   submodule is a git repository and nothing publishes one — so the daily scan neither fills that row
   nor clears it, and `LatestResolver.resolvable` refuses the ecosystem outright. Every release is
@@ -551,7 +555,7 @@ transitive one is something no line anywhere names. A component whose purl names
 service does not inventory (`pkg:golang/…`) is stored with a **null ecosystem** — shown, never
 matched.
 
-Three tables, and the only foreign keys in this schema: `mt_artifact` (one row per released
+Three tables, and the graph's foreign keys: `mt_artifact` (one row per released
 version), `mt_artifact_component` (what it contains, with the purl verbatim), `mt_artifact_edge`
 (who pulled in whom — adjacency, not a closure, because the question is the PATH).
 
@@ -681,7 +685,27 @@ GET  /adoption/by-release?repository=&version=    → {repository, catalogId, ve
                                                                 state: ADOPTED|PENDING,
                                                                 adoptedVersion, adoptedAt}]}
                                                                 400 half a key is not a lookup
+GET  /sbom-check                                  → {ranAt, filed,
+                                                     entries:[{project, repository, ecosystem, name,
+                                                               version, reason}],
+                                                     warnings:[…],
+                                                     tickets:[{project, ecosystem, name, ticketSlug,
+                                                               versions:[…]}]}
+                                                                404 no check has run yet
+POST /sbom-check/runs                             → 202 the report above, once the run finished
+                                                                502 qits-artifacts could not be asked
 ```
+
+- **The SBOM check** (`sbomcheck/SbomCheckService`, daily at 02:15): every `mt_artifact` row of type
+  maven, npm, docker or daemon, from the `artifacts` section (or from before sections), whose SBOM is
+  MISSING, FAILED, or PENDING past `pending-grace`, whose version is still in qits-artifacts, and
+  which names a project — no cut-off on age. `reason` is MISSING, FAILED or PENDING. A row with no
+  project is a `warnings` line, never a ticket. Presence is read from listings that record no access
+  (`maven-metadata.xml`, the packument, `/v2/<name>/tags/list`,
+  `/artifacts/api/repositories/daemons/daemons/<name>/versions`) so the probe never keeps alive
+  what it reports; a 404 is "collected" and any other failure fails the run (502 on the door, nothing
+  stored). `tickets` is every ticket row still open after the run. `GET` takes `qits:agent` too;
+  `POST` is `qits:admin`/`qits:system`. Shipped report-only — `filed: false`.
 
 - `scope` is `INTERNAL`, `EXTERNAL` or `ALL`. **Every scan re-reads every manifest whatever the
   scope says** — the scope governs only which half of the registry lookups refresh.
@@ -843,6 +867,9 @@ environment without a rebuild.
 | `qits.maintenance.scan.internal.cron` | `0 30 0 * * ?` | the internal scan, 00:30 daily — the reconciliation belt behind the bus |
 | `qits.maintenance.scan.external.cron` | `0 0 1 * * ?` | the external scan, 01:00 daily |
 | `qits.maintenance.sbom.sweep-cron` | `0 5 * * * ?` | re-queue artifact rows still PENDING, hourly. It never retries MISSING or FAILED |
+| `qits.maintenance.sbom.check.cron` | `0 15 2 * * ?` | the daily SBOM check (`SbomCheckSchedule`) |
+| `qits.maintenance.sbom.check.pending-grace` | `PT24H` | how long a PENDING row is a queued fetch rather than a finding |
+| `qits.maintenance.sbom.check.file-tickets` | `false` | **shipped report-only**: off, a check run calls nothing in qits-projects; on, it files, comments and drops MAINTENANCE tickets |
 | `qits.maintenance.time-zone` | `UTC` | the zone both crons are read in |
 | `qits.maintenance.bump.enabled` | `true` | whether a branch may be pushed at all |
 | `qits.maintenance.bump.internal.cron` | `0 0 2 * * ?` | the INTERNAL bump's hour — **only used when `dispatch.gated=false`**; gated dispatch arms itself on debt |
@@ -935,8 +962,10 @@ audience `qits-workspaces`, for the release door — and it went with the door, 
 `mt_scan`, `mt_branch`, `mt_bump` (a log of what was asked and what came back, derivable from
 nothing); `mt_artifact`, `mt_artifact_component`, `mt_artifact_edge` (what each released
 artifact CONTAINS, replaced per artifact by each ingest — and the only foreign keys in the schema,
-because both ends are this context's own); and `mt_release`, `mt_release_pin` (what each released
-TREE declared, rewritten per release by each recording).
+because both ends are this context's own); `mt_release`, `mt_release_pin` (what each released
+TREE declared, rewritten per release by each recording); and `mt_sbom_check_run`, `mt_sbom_ticket`,
+`mt_sbom_ticket_version` (V14 — the daily SBOM check's reports and the ticket it holds per
+artifact, the last carrying one more part-of foreign key).
 
 **A second database, `qits_platform_maintenance_eventstream`**, declared by
 `postgresql:eventstream:<name>` beside it, holds the bus's outbox and the two durable consumers'
