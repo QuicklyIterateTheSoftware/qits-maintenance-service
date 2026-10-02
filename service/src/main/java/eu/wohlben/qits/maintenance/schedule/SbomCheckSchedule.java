@@ -9,9 +9,9 @@ import org.jboss.logging.Logger;
 
 /**
  * The daily SBOM check (qits-621 / qits-668): every released software artifact still in
- * qits-artifacts with no usable bill of materials, reported — and ticketed once {@code
- * qits.maintenance.sbom.check.file-tickets} is on, which it ships off. See {@link
- * SbomCheckService} for what counts and how a ticket is filed and closed.
+ * qits-artifacts with no usable bill of materials, reported — and ticketed, since {@code
+ * qits.maintenance.sbom.check.file-tickets} ships on. See {@link SbomCheckService} for what counts
+ * and how a ticket is filed and closed.
  *
  * <p>{@code SKIP} on a run still going, as every schedule here; and {@link SbomCheckService#run}
  * holds its own lock, so the clock and {@code POST /sbom-check/runs} never file one group twice.

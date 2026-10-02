@@ -22,8 +22,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * The SBOM check's two doors, through the real stack: the shipped config (report-only), the real
- * presence probe against a scripted qits-artifacts, the roles.
+ * The SBOM check's two doors, through the real stack: report-only forced for the whole module by
+ * {@code service/src/test/resources/application.properties} (the shipped config now files tickets;
+ * {@link SbomCheckServiceTest} covers filing), the real presence probe against a scripted
+ * qits-artifacts, the roles.
  */
 @QuarkusTest
 class SbomCheckApiTest {
@@ -56,8 +58,8 @@ class SbomCheckApiTest {
   }
 
   /**
-   * A run is computed against qits-artifacts' metadata listing, stored, served — and, as shipped
-   * (file-tickets=false), calls nothing at all in qits-projects.
+   * A run is computed against qits-artifacts' metadata listing, stored, served — and, with the test
+   * module's config forcing {@code file-tickets=false}, calls nothing at all in qits-projects.
    */
   @Test
   void aRunReportsTheVersionAndTheShippedConfigFilesNothing() {

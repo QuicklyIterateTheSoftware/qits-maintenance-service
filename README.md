@@ -872,7 +872,7 @@ environment without a rebuild.
 | `qits.maintenance.sbom.sweep-cron` | `0 5 * * * ?` | re-queue artifact rows still PENDING, hourly. It never retries MISSING or FAILED |
 | `qits.maintenance.sbom.check.cron` | `0 15 2 * * ?` | the daily SBOM check (`SbomCheckSchedule`) |
 | `qits.maintenance.sbom.check.pending-grace` | `PT24H` | how long a PENDING row is a queued fetch rather than a finding |
-| `qits.maintenance.sbom.check.file-tickets` | `false` | **shipped report-only**: off, a check run calls nothing in qits-projects; on, it files, comments and drops MAINTENANCE tickets |
+| `qits.maintenance.sbom.check.file-tickets` | `true` | **shipped on**: a check run files, comments and drops MAINTENANCE tickets; off returns to report-only, where a run calls nothing in qits-projects |
 | `qits.maintenance.time-zone` | `UTC` | the zone both crons are read in |
 | `qits.maintenance.bump.enabled` | `true` | whether a branch may be pushed at all |
 | `qits.maintenance.bump.internal.cron` | `0 0 2 * * ?` | the INTERNAL bump's hour — **only used when `dispatch.gated=false`**; gated dispatch arms itself on debt |

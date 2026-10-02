@@ -381,12 +381,13 @@ was reported on, and both ends are this context's own.
 
 ## The daily SBOM check
 
-**`sbomcheck/SbomCheckService` (V14), on `schedule/SbomCheckSchedule` at 02:15, and SHIPPED
-REPORT-ONLY** (`qits.maintenance.sbom.check.file-tickets=false`): a run computes which released
-artifact still in qits-artifacts has no usable SBOM, stores the report in `mt_sbom_check_run`, and
-calls NOTHING in qits-projects. With the key on it files one MAINTENANCE ticket per `(project,
-ecosystem, name)` and drops it again once every listed version is INGESTED or collected — the
-semantics of qits-projects' `TicketUnattendedGateTickets`, which is the precedent.
+**`sbomcheck/SbomCheckService` (V14), on `schedule/SbomCheckSchedule` at 02:15, and SHIPPED ON**
+(`qits.maintenance.sbom.check.file-tickets=true`): a run computes which released artifact still in
+qits-artifacts has no usable SBOM, stores the report in `mt_sbom_check_run`, files one MAINTENANCE
+ticket per `(project, ecosystem, name)`, and drops it again once every listed version is INGESTED or
+collected — the semantics of qits-projects' `TicketUnattendedGateTickets`, which is the precedent.
+Setting the key back to `false` returns to report-only: the report is still computed and stored, but
+NOTHING is called in qits-projects.
 
 **No cut-off; the GC is the retirement.** Every row counts however old, so an old version pinned
 somewhere is a finding until the pin moves and the GC collects it — at which point it stops counting

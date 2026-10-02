@@ -62,8 +62,8 @@ import org.jboss.logging.Logger;
  *   <li>Every presence probe the run will need is made FIRST, before anything is written, so a
  *       failing probe leaves no half-filed run behind.
  *   <li>The report is computed and grouped by {@code (project, ecosystem, name)}.
- *   <li>Report-only ({@code file-tickets=false}, as shipped): the report is stored and NOTHING in
- *       qits-projects is called — not a read, not a write.
+ *   <li>Report-only ({@code file-tickets=false}): the report is stored and NOTHING in qits-projects
+ *       is called — not a read, not a write.
  *   <li>Otherwise each group is filed (below), and then every open ticket none of whose versions is
  *       counted any more — each INGESTED, or gone from the store — is closed.
  *   <li>The report is stored in {@code mt_sbom_check_run} either way.

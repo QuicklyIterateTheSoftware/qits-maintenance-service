@@ -28,11 +28,10 @@ import java.util.UUID;
  * that may or may not have happened must not be mistaken for one that did, and nothing about a
  * ticket call is retried in place.
  *
- * <p><b>ROLLOUT NOTE, measured against qits-projects main on 2026-10-02:</b> those four doors admit
- * {@code qits:admin} and {@code qits:agent}, and this service presents {@code qits:system} on every
- * call — so they answer 403 today. That is harmless while {@code
- * qits.maintenance.sbom.check.file-tickets} ships {@code false} (report-only calls nothing here),
- * and it is the first thing to settle before that key is flipped.
+ * <p><b>ROLLOUT NOTE, measured against qits-projects main on 2026-10-02:</b> all four doors ({@code
+ * POST /projects/api/entities}, {@code GET …/{id}}, {@code POST …/{id}/comments}, {@code POST
+ * …/{id}/status}) admit {@code qits:system}, which this service presents on every call — settled
+ * before {@code qits.maintenance.sbom.check.file-tickets} shipped on.
  */
 @ApplicationScoped
 public class TicketClient {
