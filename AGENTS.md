@@ -384,8 +384,13 @@ probe that touched what it reports would keep those versions alive for ever. A 4
 anything else that is not a listing FAILS THE RUN rather than guessing either way, and every probe is
 made before anything is written.
 
-**A null `project_id` is a warning, never a ticket into a guessed project.** Rows written before
-the listener stored `SoftwareRelease.projectId` (V14) carry none.
+**A null `project_id` is RESOLVED, not guessed.** Rows written before the listener stored
+`SoftwareRelease.projectId` (V14) carry none — and after the GC those old pinned versions are exactly
+what the check finds — so a counted row's repository is matched against qits-projects' catalog
+listing (`GET /projects/api/repositories`, `CatalogReader`, admits `qits:system`), once per run and
+report-only too: an exact catalog id, or an exact name exactly one project carries. The project is
+written back onto the row, so it is resolved once. Ambiguous, unknown, or a catalog that would not
+answer stays a warning, never a ticket.
 
 **The ticket doors admit `qits:admin`/`qits:agent` in qits-projects today, and this service presents
 `qits:system`** — so filing answers 403 until that is settled. Harmless report-only; it is the first

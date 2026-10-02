@@ -8,6 +8,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import eu.wohlben.qits.db.DbRetry;
+import eu.wohlben.qits.maintenance.catalog.CatalogEntry;
+import eu.wohlben.qits.maintenance.catalog.CatalogReader;
 import eu.wohlben.qits.maintenance.dto.SbomCheckReportDto;
 import eu.wohlben.qits.maintenance.entity.MtSbomTicket;
 import eu.wohlben.qits.maintenance.error.NoSbomCheckRunException;
@@ -107,12 +109,30 @@ class SbomCheckServiceTest {
     }
   }
 
+  /** qits-projects' catalog listing, scripted; counts its reads. */
+  static final class FakeCatalog extends CatalogReader {
+    final List<CatalogEntry> entries = new ArrayList<>();
+    String error;
+    int reads;
+
+    @Override
+    public Result read() {
+      reads++;
+      return new Result(List.copyOf(entries), error);
+    }
+
+    void lists(String project, String name, String catalogId) {
+      entries.add(new CatalogEntry(project, name, "main", catalogId, "LIBRARY"));
+    }
+  }
+
   @Inject MaintenanceStore store;
 
   @Inject ObjectMapper json;
 
   private FakePresence presence;
   private FakeTickets tickets;
+  private FakeCatalog catalog;
   private SbomCheckService check;
 
   @BeforeEach
@@ -138,6 +158,8 @@ class SbomCheckServiceTest {
     check.store = store;
     check.presence = presence;
     check.tickets = tickets;
+    catalog = new FakeCatalog();
+    check.catalog = catalog;
     check.json = json;
     check.pendingGrace = Duration.ofHours(24);
     check.fileTickets = false;
@@ -276,6 +298,73 @@ class SbomCheckServiceTest {
 
     assertTrue(report.entries().isEmpty());
     assertEquals(1, report.warnings().size());
+    assertEquals(0, tickets.count("file"));
+  }
+
+  // --- a pre-change row's project, resolved from its repository ---------------------------------
+
+  /** A row from before the listener stored a project, released from a mt_artifact.repository name. */
+  private UUID preChange(String name, String repository) {
+    presence.held.put("maven " + name, Set.of("1"));
+    UUID id =
+        store.upsertArtifact(
+            Ecosystem.MAVEN, name, "1", repository, NOW.minus(Duration.ofDays(30)), ReleaseOrigin.NONE);
+    store.markArtifactMissing(id);
+    return id;
+  }
+
+  /**
+   * THE OLD PINNED VERSIONS ARE THE POINT: a counted row with no project is resolved through the
+   * catalog by an exact, unique repository match — in report-only mode too, since it is a read —
+   * and the project is written back so the next run does not ask again.
+   */
+  @Test
+  void aRowWithNoProjectIsResolvedFromItsRepositoryAndPersisted() {
+    catalog.lists("proj-x", "qits-old-lib", "11111111-0000-4000-8000-000000000001");
+    catalog.lists("proj-y", "qits-other", null);
+    UUID byName = preChange("g:by-name", "qits-old-lib");
+    UUID byId = preChange("g:by-id", "11111111-0000-4000-8000-000000000001");
+
+    SbomCheckReportDto report = check.run(NOW);
+
+    assertEquals(List.of("g:by-id@1", "g:by-name@1"), versions(report));
+    assertTrue(report.entries().stream().allMatch(e -> "proj-x".equals(e.project())));
+    assertTrue(report.warnings().isEmpty(), report.warnings().toString());
+    assertTrue(tickets.calls.isEmpty(), "report-only still calls nothing in the ticket doors");
+    assertEquals(1, catalog.reads, "one catalog read per run, however many rows need it");
+    detached();
+    assertEquals("proj-x", store.artifact(byName).orElseThrow().projectId);
+    assertEquals("proj-x", store.artifact(byId).orElseThrow().projectId);
+
+    check.run(NOW.plusSeconds(60));
+    assertEquals(1, catalog.reads, "resolved once: the next run reads the row, not the catalog");
+  }
+
+  /** Ambiguous, unknown, or a catalog that cannot be read: a warning, never a ticket. */
+  @Test
+  void anAmbiguousOrUnknownRepositoryStaysAWarningAndIsNeverTicketed() {
+    check.fileTickets = true;
+    catalog.lists("proj-x", "qits-twice", null);
+    catalog.lists("proj-y", "qits-twice", null);
+    UUID ambiguous = preChange("g:ambiguous", "qits-twice");
+    preChange("g:unknown", "qits-nobody-lists");
+
+    SbomCheckReportDto report = check.run(NOW);
+
+    assertTrue(report.entries().isEmpty(), report.entries().toString());
+    assertEquals(2, report.warnings().size(), report.warnings().toString());
+    assertTrue(report.warnings().stream().anyMatch(w -> w.contains("ambiguous")));
+    assertTrue(report.warnings().stream().anyMatch(w -> w.contains("not in the catalog")));
+    assertEquals(0, tickets.count("file"));
+    detached();
+    assertEquals(null, store.artifact(ambiguous).orElseThrow().projectId);
+
+    catalog.entries.clear();
+    catalog.lists("proj-x", "qits-twice", null);
+    catalog.error = "the catalog could not be read: HTTP 503";
+    SbomCheckReportDto failed = check.run(NOW.plusSeconds(60));
+    assertTrue(failed.entries().isEmpty());
+    assertTrue(failed.warnings().stream().allMatch(w -> w.contains("HTTP 503")), failed.warnings().toString());
     assertEquals(0, tickets.count("file"));
   }
 

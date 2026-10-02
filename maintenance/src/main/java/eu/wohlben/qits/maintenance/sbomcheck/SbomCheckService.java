@@ -2,6 +2,8 @@ package eu.wohlben.qits.maintenance.sbomcheck;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import eu.wohlben.qits.maintenance.catalog.CatalogEntry;
+import eu.wohlben.qits.maintenance.catalog.CatalogReader;
 import eu.wohlben.qits.maintenance.dto.SbomCheckReportDto;
 import eu.wohlben.qits.maintenance.entity.MtArtifact;
 import eu.wohlben.qits.maintenance.entity.MtSbomTicket;
@@ -47,8 +49,11 @@ import org.jboss.logging.Logger;
  *   <li>the version is still in qits-artifacts ({@link ArtifactPresence}): one the GC has collected
  *       is nobody's problem any more. A probe that cannot answer FAILS THE RUN — see {@link
  *       SbomCheckFailedException};
- *   <li>it names a project. A row with none is a WARNING in the report and never a ticket: filing
- *       into a guessed project would put a finding where nobody responsible reads it.
+ *   <li>it names a project — or, for a row written before the listener stored one, its repository
+ *       resolves to exactly one project in qits-projects' catalog, which is then written back onto
+ *       the row (see {@code ProjectResolver}). A row that resolves to none is a WARNING in the
+ *       report and never a ticket: filing into a guessed project would put a finding where nobody
+ *       responsible reads it.
  * </ul>
  *
  * <h2>A run</h2>
@@ -113,6 +118,8 @@ public class SbomCheckService {
 
   @Inject TicketClient tickets;
 
+  @Inject CatalogReader catalog;
+
   @Inject ObjectMapper json;
 
   @ConfigProperty(name = "qits.maintenance.sbom.check.pending-grace")
@@ -174,23 +181,35 @@ public class SbomCheckService {
 
     List<Counted> counted = new ArrayList<>();
     List<String> warnings = new ArrayList<>();
+    ProjectResolver projects = new ProjectResolver();
     for (MtArtifact row : candidates) {
       Reason reason = reason(row, now);
       if (reason == null || !present.get(key(row.ecosystem, row.name)).contains(row.version)) {
         continue;
       }
       if (row.projectId == null || row.projectId.isBlank()) {
-        warnings.add(
-            "WARN "
-                + row.ecosystem
-                + " "
-                + row.name
-                + " "
-                + row.version
-                + " ("
-                + reason
-                + ") names no project, so no ticket is filed for it");
-        continue;
+        // A row from before the listener stored the frame's project: resolved ONCE from its
+        // repository through the catalog, and written back. Report-only too — it is a read.
+        String resolved = projects.resolve(row.repository);
+        if (resolved == null) {
+          warnings.add(
+              "WARN "
+                  + row.ecosystem
+                  + " "
+                  + row.name
+                  + " "
+                  + row.version
+                  + " ("
+                  + reason
+                  + ") names no project and its repository '"
+                  + row.repository
+                  + "' "
+                  + projects.why(row.repository)
+                  + ", so no ticket is filed for it");
+          continue;
+        }
+        store.setArtifactProject(row.id, resolved);
+        row.projectId = resolved;
       }
       counted.add(new Counted(row, reason));
     }
@@ -256,6 +275,79 @@ public class SbomCheckService {
         warnings.size(),
         fileTickets ? "" : " — report-only, nothing filed");
     return report;
+  }
+
+  /**
+   * <b>A PRE-CHANGE ROW'S PROJECT, from its repository</b> — through qits-projects' catalog listing
+   * ({@code GET /projects/api/repositories}, {@link CatalogReader}, which admits {@code qits:system}),
+   * read at most once per run and only when a counted row needs it.
+   *
+   * <p>Every row released before V14 carries no project, and after the GC those are exactly the rows
+   * this check exists for — so a warning for each would leave the check unable to file anything at
+   * all. The match must be EXACT and UNIQUE: the repository's catalog name, or its catalog row id
+   * (which {@code mt_artifact.repository} still holds on rows written before V5's translation, and
+   * which is unique by construction). A name two projects both carry is ambiguous, a name the
+   * catalog does not list is unknown, and a catalog that could not be read resolves nothing — each
+   * stays a warning, never a guessed project.
+   */
+  private final class ProjectResolver {
+    private Map<String, Set<String>> projectsByName;
+    private Map<String, String> projectById;
+    private String failure;
+
+    String resolve(String repository) {
+      if (repository == null || repository.isBlank()) {
+        return null;
+      }
+      load();
+      if (failure != null) {
+        return null;
+      }
+      String byId = projectById.get(repository);
+      if (byId != null) {
+        return byId;
+      }
+      Set<String> candidates = projectsByName.getOrDefault(repository, Set.of());
+      return candidates.size() == 1 ? candidates.iterator().next() : null;
+    }
+
+    String why(String repository) {
+      if (repository == null || repository.isBlank()) {
+        return "is not recorded";
+      }
+      if (failure != null) {
+        return "could not be resolved (" + failure + ")";
+      }
+      int matches = projectsByName.getOrDefault(repository, Set.of()).size();
+      return matches > 1
+          ? "is ambiguous in the catalog (" + matches + " projects carry that name)"
+          : "is not in the catalog";
+    }
+
+    private void load() {
+      if (projectsByName != null || failure != null) {
+        return;
+      }
+      CatalogReader.Result result;
+      try {
+        result = catalog.read();
+      } catch (RuntimeException e) {
+        failure = "the catalog read threw " + e;
+        return;
+      }
+      if (!result.ok()) {
+        failure = result.error();
+        return;
+      }
+      projectsByName = new HashMap<>();
+      projectById = new HashMap<>();
+      for (CatalogEntry entry : result.entries()) {
+        projectsByName.computeIfAbsent(entry.name(), k -> new HashSet<>()).add(entry.project());
+        if (entry.catalogId() != null) {
+          projectById.put(entry.catalogId(), entry.project());
+        }
+      }
+    }
   }
 
   /** Why a candidate counts, or null when it does not (a PENDING still inside its grace). */

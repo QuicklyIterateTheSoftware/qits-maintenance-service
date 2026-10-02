@@ -700,7 +700,10 @@ POST /sbom-check/runs                             → 202 the report above, once
   maven, npm, docker or daemon, from the `artifacts` section (or from before sections), whose SBOM is
   MISSING, FAILED, or PENDING past `pending-grace`, whose version is still in qits-artifacts, and
   which names a project — no cut-off on age. `reason` is MISSING, FAILED or PENDING. A row with no
-  project is a `warnings` line, never a ticket. Presence is read from listings that record no access
+  project (released before V14) has it resolved from its repository through the catalog listing
+  (`GET /projects/api/repositories`) — exact catalog id, or an exact name exactly one project carries
+  — and written back; ambiguous, unknown or an unreadable catalog is a `warnings` line, never a
+  ticket. Presence is read from listings that record no access
   (`maven-metadata.xml`, the packument, `/v2/<name>/tags/list`,
   `/artifacts/api/repositories/daemons/daemons/<name>/versions`) so the probe never keeps alive
   what it reports; a 404 is "collected" and any other failure fails the run (502 on the door, nothing

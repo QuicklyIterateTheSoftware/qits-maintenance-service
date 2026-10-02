@@ -1708,6 +1708,23 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
                 .list());
   }
 
+  /**
+   * Writes a project resolved from the catalog onto a row that carries none — once, and never over
+   * a project the release itself named.
+   */
+  @ActivateRequestContext
+  public void setArtifactProject(UUID artifactId, String projectId) {
+    DbRetry.runInNewTx(
+        "resolve the project of artifact " + artifactId,
+        () -> {
+          MtArtifact row = MtArtifact.findById(artifactId);
+          if (row != null && row.projectId == null) {
+            row.projectId = projectId;
+            getEntityManager().flush();
+          }
+        });
+  }
+
   /** Stores one check run and its report. */
   @ActivateRequestContext
   public void recordSbomCheckRun(UUID id, Instant ranAt, boolean filed, String report) {
