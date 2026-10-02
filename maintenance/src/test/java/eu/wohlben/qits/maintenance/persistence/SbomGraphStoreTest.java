@@ -368,25 +368,87 @@ class SbomGraphStoreTest {
   }
 
   /**
-   * <b>TERMINAL AT THE WRITE, because nothing here can ever read it.</b> {@code SbomClient} keys the
-   * route by an {@code Ecosystem} and the ingest refuses a row whose ecosystem does not resolve, so
-   * a PENDING daemon row would be re-queued by the hourly sweep for ever and answered by nobody. The
-   * status carries its own sentence, which MISSING has no field to do — and MISSING would assert
-   * something untrue about qits-artifacts, which does hold a document for a released daemon.
+   * <b>PENDING AT THE WRITE, an outbox like any other row</b> (qits-703). qits-artifacts stores a
+   * bill of materials for every released daemon binary and {@code SbomClient} addresses a row by its
+   * stored type, so the row waits for its document exactly as a jar's does — and the sweep may
+   * re-offer it, because the ingest now answers it.
    */
   @Test
-  void aDaemonRowIsTerminalWithItsReasonAndNoSweepEverPicksItUp() {
+  void aDaemonRowIsPendingAndTheSweepOffersItLikeAnyOther() {
     UUID id =
         store.upsertDaemonArtifact(
             "qits-platform-access-cli", "2026.918." + UUID.randomUUID(), "qits-cli", Instant.now());
     detached();
 
     MtArtifact row = store.artifact(id).orElseThrow();
-    assertEquals(SbomStatus.FAILED.name(), row.sbomStatus);
-    assertEquals(MaintenanceStore.DAEMON_SBOM_UNREAD, row.sbomError);
+    assertEquals(SbomStatus.PENDING.name(), row.sbomStatus);
+    assertNull(row.sbomError);
     assertTrue(
-        store.pendingArtifacts().stream().noneMatch(pending -> pending.id.equals(id)),
-        "a row nothing can fetch must not sit in the queue the sweep re-offers");
+        store.pendingArtifacts().stream().anyMatch(pending -> pending.id.equals(id)),
+        "a daemon row nobody has read yet is in the queue the sweep re-offers");
+  }
+
+  // --- V13: the rows the old rule wrote terminal are re-queued -------------------------------------
+
+  /** The sentence the old rule wrote — {@code MaintenanceStore.DAEMON_SBOM_UNREAD}, now deleted. */
+  private static final String OLD_DAEMON_SENTENCE =
+      "a daemon binary's bill of materials is not read by this service: nothing it inventories pins"
+          + " a daemon, and the row exists to keep the binary the pin of its co-released artifact"
+          + " names";
+
+  /**
+   * <b>V13 re-queues exactly the rows the old daemon rule wrote, and nothing else.</b> Flyway has
+   * already run it against an empty schema at boot, so it is replayed here — the shipped file, read
+   * off the classpath — against rows written the way that rule wrote them, beside three that share
+   * one of its terms and must not move: a daemon row FAILED for another reason, a maven row carrying
+   * the same sentence, and a daemon row already INGESTED.
+   */
+  @Test
+  void theMigrationRequeuesOnlyTheDaemonRowsTheOldRuleWroteTerminal() throws Exception {
+    String suffix = UUID.randomUUID().toString();
+    UUID unread = store.upsertDaemonArtifact("qits-cli-a", "1." + suffix, "r", Instant.now());
+    UUID otherFailure = store.upsertDaemonArtifact("qits-cli-b", "1." + suffix, "r", Instant.now());
+    UUID maven =
+        store.upsertArtifact(Ecosystem.MAVEN, "x:y-" + suffix, "1." + suffix, "r", Instant.now());
+    UUID ingested = store.upsertDaemonArtifact("qits-cli-c", "1." + suffix, "r", Instant.now());
+    store.markArtifactFailed(unread, OLD_DAEMON_SENTENCE);
+    store.markArtifactFailed(otherFailure, "connection refused");
+    store.markArtifactFailed(maven, OLD_DAEMON_SENTENCE);
+    store.replaceGraph(ingested, List.of(), List.of(), Instant.now());
+
+    String sql;
+    try (var in =
+        getClass()
+            .getClassLoader()
+            .getResourceAsStream(
+                "db/maintenance/migration/V13__requeue_daemon_sboms.sql")) {
+      assertNotNull(in, "the migration ships on the classpath");
+      sql = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+    }
+    // Over the raw JDBC connection, as Flyway runs it: the file's comments carry apostrophes and
+    // colons that Hibernate's native-query parameter parsing has no business reading.
+    eu.wohlben.qits.db.DbRetry.runInNewTx(
+        "replay V13",
+        () ->
+            store
+                .getEntityManager()
+                .unwrap(org.hibernate.Session.class)
+                .doWork(
+                    connection -> {
+                      try (var statement = connection.createStatement()) {
+                        statement.executeUpdate(sql);
+                      }
+                    }));
+    detached();
+
+    MtArtifact moved = store.artifact(unread).orElseThrow();
+    assertEquals(SbomStatus.PENDING.name(), moved.sbomStatus);
+    assertNull(moved.sbomError);
+    assertEquals(SbomStatus.FAILED.name(), store.artifact(otherFailure).orElseThrow().sbomStatus);
+    assertEquals(
+        "connection refused", store.artifact(otherFailure).orElseThrow().sbomError);
+    assertEquals(SbomStatus.FAILED.name(), store.artifact(maven).orElseThrow().sbomStatus);
+    assertEquals(SbomStatus.INGESTED.name(), store.artifact(ingested).orElseThrow().sbomStatus);
   }
 
   /** A redelivered daemon release is a read and a return, exactly as the ordinary upsert is. */

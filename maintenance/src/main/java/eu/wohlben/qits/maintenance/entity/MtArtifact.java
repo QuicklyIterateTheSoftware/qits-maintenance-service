@@ -31,9 +31,11 @@ import java.util.UUID;
  * thing that must never move — editing a comment in one refuses boot and rolls the deploy back.
  * {@code docs} remains as the comment describes it: nothing pins an api-docs bundle.
  *
- * <p>A daemon row is written TERMINAL rather than PENDING — {@code
- * MaintenanceStore.upsertDaemonArtifact} says why — because this build cannot address a daemon's
- * bill of materials at all, and a PENDING row would be swept for ever.
+ * <p><b>A daemon row is an outbox like any other</b>: written PENDING, its document fetched from
+ * the {@code daemon} segment of the SBOM route, and its components joined into the graph, so a
+ * library's dependents include the binaries that carry it. It used to be written terminal FAILED
+ * because the route was then addressed through an {@code Ecosystem}; {@code SbomClient} addresses
+ * a row by this stored word now, and V13 re-queued the rows that rule wrote.
  */
 @Entity
 @Table(name = "mt_artifact")
@@ -43,9 +45,10 @@ public class MtArtifact extends PanacheEntityBase {
 
   /**
    * {@code Ecosystem}'s wire name — the same vocabulary {@code mt_pin} uses, because it joins — or
-   * {@code Ecosystem.DAEMON_WIRE_NAME}, which is a released artifact word and not an ecosystem. Read
-   * it through {@code Ecosystem.of}, which answers empty for the latter, and compare the string
-   * where a daemon is the subject.
+   * {@code Ecosystem.DAEMON_WIRE_NAME}, which is a released artifact word and not an ecosystem. It
+   * is also the SBOM route's type segment for every one of the four, which is how a row is fetched.
+   * Read it through {@code Ecosystem.of} where a pin or a latest is the subject — it answers empty
+   * for a daemon — and compare the string where a daemon is the subject.
    */
   @Column(nullable = false, length = 32)
   public String ecosystem;

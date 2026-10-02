@@ -456,10 +456,12 @@ where v1 waited up to six hours for a poll.
   no registry to refresh it from. `daemon` stays **out of the `Ecosystem` enum** — a fifth constant
   costs a parser, a resolver and a bump step, and a daemon binary has none of the three — so the row
   carries the literal string and `Ecosystem.of("daemon")` still answers empty. The row is written
-  **terminal** (`FAILED`, with the reason in `sbom_error`) rather than PENDING: nothing here can
-  address a daemon's SBOM — the route is keyed by an `Ecosystem` — so a PENDING row would be
-  re-queued by the hourly sweep for ever. `MISSING` would have been the quieter word and an untrue
-  one: qits-artifacts *does* hold a document for a released daemon.
+  **PENDING and its document is ingested like any other artifact's**: the SBOM route is keyed by the
+  released artifact's *type* (`/artifacts/sboms/daemon/<name>/-/<version>`), not by an ecosystem,
+  and `SbomClient` addresses a row by its stored word — so a library's dependents include the daemon
+  binaries that carry it. (Until qits-703 the row was written terminal `FAILED`, because the route
+  was then addressed through an `Ecosystem`; `V13__requeue_daemon_sboms.sql` put those rows back to
+  PENDING and the boot's `RestartRecovery` read them.)
 - **`SCMRelease` is also the ONLY source of a gitlink's latest.** There is no registry to poll — a
   submodule is a git repository and nothing publishes one — so the daily scan neither fills that row
   nor clears it, and `LatestResolver.resolvable` refuses the ecosystem outright. Every release is

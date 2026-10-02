@@ -307,6 +307,66 @@ class SbomIngestServiceTest {
     assertTrue(artifacts.asked.isEmpty(), "nothing is asked about a name that cannot be addressed");
   }
 
+  // --- the daemon binary (qits-703) ------------------------------------------------------------
+
+  /**
+   * <b>A DAEMON RELEASE IS READ LIKE ANY OTHER.</b> The announcement writes the row PENDING and
+   * queues the fetch; the fetch goes to the {@code daemon} segment of the SBOM route — the row's own
+   * stored word, not an {@code Ecosystem}, which {@code daemon} is not — and the graph lands.
+   */
+  @Test
+  void aDaemonReleaseIsPendingThenIngestedWithItsComponents() {
+    String daemon = "qits-daemon-" + UUID.randomUUID();
+    String daemonPath = "/artifacts/sboms/daemon/" + daemon + "/-/" + VERSION;
+    artifacts.answer(daemonPath, 200, DOCUMENT);
+    // The worker must not race the PENDING assertion: hold the queue behind a latch.
+    java.util.concurrent.CountDownLatch hold = new java.util.concurrent.CountDownLatch(1);
+    queue.submit(
+        "hold the queue",
+        () -> {
+          try {
+            hold.await();
+          } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+          }
+        });
+
+    UUID id;
+    try {
+      id = ingest.announcedDaemon(daemon, VERSION, "qits-platform-access-cli", Instant.now());
+
+      MtArtifact pending = reload(id);
+      assertEquals(Ecosystem.DAEMON_WIRE_NAME, pending.ecosystem);
+      assertEquals(SbomStatus.PENDING.name(), pending.sbomStatus);
+    } finally {
+      hold.countDown();
+    }
+    assertTrue(queue.awaitIdle(Duration.ofSeconds(30)), "the fetch runs on the worker thread");
+
+    assertEquals(List.of(daemonPath), artifacts.asked);
+    MtArtifact row = reload(id);
+    assertEquals(SbomStatus.INGESTED.name(), row.sbomStatus);
+    assertNull(row.sbomError);
+    List<MtArtifactComponent> components = components(id);
+    assertEquals(2, components.size());
+    assertTrue(named(components, DATABIND).direct);
+    assertEquals(2, edges(id).size());
+  }
+
+  /** And a daemon with no document is MISSING — the ordinary answer, the same as any other type. */
+  @Test
+  void aDaemonWithNoDocumentIsMissing() {
+    String daemon = "qits-daemon-" + UUID.randomUUID();
+    UUID id = store.upsertDaemonArtifact(daemon, VERSION, "qits-cli", Instant.now());
+
+    ingest.ingest(id);
+
+    assertEquals(
+        List.of("/artifacts/sboms/daemon/" + daemon + "/-/" + VERSION), artifacts.asked);
+    assertEquals(SbomStatus.MISSING.name(), reload(id).sbomStatus);
+    assertNull(reload(id).sbomError);
+  }
+
   // --- re-ingest --------------------------------------------------------------------------------
 
   /**

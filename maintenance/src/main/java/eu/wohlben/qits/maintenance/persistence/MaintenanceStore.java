@@ -1184,16 +1184,48 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
       String version,
       String repository,
       Instant occurredAt) {
+    return upsertArtifact(ecosystem.wireName(), name, version, repository, occurredAt);
+  }
+
+  /**
+   * <b>The row a released DAEMON BINARY leaves behind — PENDING, an outbox like any other.</b>
+   *
+   * <p>A sibling of the {@link Ecosystem} overload of {@code upsertArtifact}, sharing its write,
+   * and separate only because that one takes an enum: the ecosystem column takes {@link
+   * Ecosystem#DAEMON_WIRE_NAME} as the literal string — it is not an {@link Ecosystem} and must not
+   * become one, and {@code varchar(32)} with no check constraint has always been able to hold it. Everything else is the same rule: a
+   * coordinate already known is left alone, a new one is written PENDING, and the caller queues the
+   * fetch ({@code SbomIngestService.announcedDaemon}).
+   *
+   * <p>The row does two jobs. It is what the pin source derives a keep for the binary from (see
+   * {@code control/CarriedDaemons}), and it is the outbox for the binary's bill of materials, which
+   * qits-artifacts stores under the {@code daemon} segment of the SBOM route and {@code SbomClient}
+   * addresses by this stored word.
+   *
+   * <p><b>It used to be written terminal FAILED</b>, because the SBOM route was then addressed
+   * through an {@link Ecosystem} and a daemon could not be named. That is gone, and V13 re-queues
+   * the rows it wrote.
+   *
+   * @return the row's id, whether it was created here or was already there
+   */
+  @ActivateRequestContext
+  public UUID upsertDaemonArtifact(
+      String name, String version, String repository, Instant occurredAt) {
+    return upsertArtifact(Ecosystem.DAEMON_WIRE_NAME, name, version, repository, occurredAt);
+  }
+
+  private UUID upsertArtifact(
+      String type, String name, String version, String repository, Instant occurredAt) {
     return DbRetry.inNewTx(
         "record the released artifact " + name + " " + version,
         () -> {
-          MtArtifact row = artifactRow(ecosystem, name, version);
+          MtArtifact row = artifactRow(type, name, version);
           if (row != null) {
             return row.id;
           }
           row = new MtArtifact();
           row.id = UUID.randomUUID();
-          row.ecosystem = ecosystem.wireName();
+          row.ecosystem = type;
           row.name = name;
           row.version = version;
           row.repository = repository;
@@ -1204,67 +1236,6 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
           return row.id;
         });
   }
-
-  /**
-   * <b>The row a released DAEMON BINARY leaves behind — a keep, never an outbox.</b>
-   *
-   * <p>A sibling of {@link #upsertArtifact} and deliberately a separate method, because the two
-   * write two different things. That one opens a row for a document somebody will read; this one
-   * records that a release put a binary in the {@code daemons} store, so the pin source can answer
-   * for it — see {@code control/CarriedDaemons}. The ecosystem column takes {@link
-   * Ecosystem#DAEMON_WIRE_NAME} as the literal string: it is not an {@link Ecosystem} and must not
-   * become one, and {@code varchar(32)} with no check constraint has always been able to hold it.
-   *
-   * <p><b>TERMINAL at the write, and that is the whole reason this is not a flag on the method
-   * above.</b> Nothing in this build can read a daemon's bill of materials: {@code
-   * SbomClient.path} keys the route by an {@link Ecosystem}, and {@code SbomIngestService.ingest}
-   * refuses a row whose ecosystem does not resolve. A PENDING row would therefore be re-queued by
-   * the hourly sweep for ever and answered by nobody, which is the one state this schema's status
-   * column exists to prevent. FAILED rather than MISSING because MISSING asserts something untrue
-   * about the peer — qits-artifacts DOES hold a document for a released daemon — and carries no
-   * field to say otherwise, while FAILED's {@code sbom_error} is a sentence a reader gets in the
-   * same breath as the status. Neither is retried; {@link #requeueArtifact} remains the one hand
-   * that moves either, and for a daemon it lands back here by the ingest's own unknown-ecosystem
-   * arm.
-   *
-   * @return the row's id, whether it was created here or was already there
-   */
-  @ActivateRequestContext
-  public UUID upsertDaemonArtifact(
-      String name, String version, String repository, Instant occurredAt) {
-    return DbRetry.inNewTx(
-        "record the released daemon binary " + name + " " + version,
-        () -> {
-          MtArtifact row =
-              MtArtifact.find(
-                      "ecosystem = ?1 and name = ?2 and version = ?3",
-                      Ecosystem.DAEMON_WIRE_NAME,
-                      name,
-                      version)
-                  .firstResult();
-          if (row != null) {
-            return row.id;
-          }
-          row = new MtArtifact();
-          row.id = UUID.randomUUID();
-          row.ecosystem = Ecosystem.DAEMON_WIRE_NAME;
-          row.name = name;
-          row.version = version;
-          row.repository = repository;
-          row.occurredAt = occurredAt;
-          row.sbomStatus = SbomStatus.FAILED.name();
-          row.sbomError = DAEMON_SBOM_UNREAD;
-          row.persist();
-          getEntityManager().flush();
-          return row.id;
-        });
-  }
-
-  /** Why a daemon row is terminal the moment it is written. It is the status's own explanation. */
-  public static final String DAEMON_SBOM_UNREAD =
-      "a daemon binary's bill of materials is not read by this service: nothing it inventories pins"
-          + " a daemon, and the row exists to keep the binary the pin of its co-released artifact"
-          + " names";
 
   /**
    * The manual backfill's write: create the row, or put an existing one back to PENDING.
@@ -1278,14 +1249,24 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
   @ActivateRequestContext
   public UUID requeueArtifact(
       Ecosystem ecosystem, String name, String version, String repository, Instant now) {
+    return requeueArtifact(ecosystem.wireName(), name, version, repository, now);
+  }
+
+  /**
+   * The same, keyed by the artifact's stored wire type — {@code maven}, {@code npm}, {@code docker}
+   * or {@code daemon} — which is how a daemon row, not being an {@link Ecosystem}, is re-queued.
+   */
+  @ActivateRequestContext
+  public UUID requeueArtifact(
+      String type, String name, String version, String repository, Instant now) {
     return DbRetry.inNewTx(
         "re-queue the sbom of " + name + " " + version,
         () -> {
-          MtArtifact row = artifactRow(ecosystem, name, version);
+          MtArtifact row = artifactRow(type, name, version);
           if (row == null) {
             row = new MtArtifact();
             row.id = UUID.randomUUID();
-            row.ecosystem = ecosystem.wireName();
+            row.ecosystem = type;
             row.name = name;
             row.version = version;
             row.repository = repository;
@@ -1429,8 +1410,11 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
   }
 
   private static MtArtifact artifactRow(Ecosystem ecosystem, String name, String version) {
-    return MtArtifact.find(
-            "ecosystem = ?1 and name = ?2 and version = ?3", ecosystem.wireName(), name, version)
+    return artifactRow(ecosystem.wireName(), name, version);
+  }
+
+  private static MtArtifact artifactRow(String type, String name, String version) {
+    return MtArtifact.find("ecosystem = ?1 and name = ?2 and version = ?3", type, name, version)
         .firstResult();
   }
 

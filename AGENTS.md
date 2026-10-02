@@ -437,11 +437,15 @@ uuid rows. **An unknown spelling passes through untouched in every arm**: a rele
 this inventory has never scanned still happened, and guessing a name here would put one on a page
 that no event ever carried.
 
-**No `mt_artifact` row is ever a `daemon` or a `gitlink`.** Daemon SBOMs exist upstream; a gitlink is
-a submodule rather than a published package and no release announces one as its `packageType`.
-`SoftwareReleaseListener.ECOSYSTEMS` maps the three qits-ci publishes and is where everything else is
-filtered out, one step before either write — GITLINK reaches `mt_latest` through the OTHER listener,
-off the same `SCMRelease` a branch's state is read from.
+**No `mt_artifact` row is ever a `gitlink`, and a `daemon` row is an artifact like any other.** A
+gitlink is a submodule rather than a published package and no release announces one as its
+`packageType`; GITLINK reaches `mt_latest` through the OTHER listener, off the same `SCMRelease` a
+branch's state is read from. A `daemon` release writes the artifact row (never `mt_latest`) under
+the literal word — it is not an `Ecosystem` — PENDING, and its document is fetched and ingested like
+a jar's: **the SBOM route is keyed by the released artifact's TYPE, so `SbomClient` takes the stored
+wire string, not an `Ecosystem`.** That is what qits-703 corrected — the row used to be written
+terminal FAILED (`DAEMON_SBOM_UNREAD`) because the fetch took an `Ecosystem`; V13 re-queued those.
+`SoftwareReleaseListener.ECOSYSTEMS` maps the three ecosystems and filters `docs` and unknown types.
 
 ## The event bus
 

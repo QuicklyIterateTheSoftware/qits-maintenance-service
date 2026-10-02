@@ -116,8 +116,9 @@ class SoftwareReleaseListenerTest {
 
     /**
      * The daemon arm records a null ecosystem, which is the point of it: {@code daemon} is a stored
-     * string and not an {@link Ecosystem}, and the row it writes is terminal with no fetch queued
-     * behind it — {@code SbomGraphStoreTest} proves that half against a real PostgreSQL.
+     * string and not an {@link Ecosystem}. The row it writes is PENDING with a fetch queued behind
+     * it, like any other — {@code SbomIngestServiceTest} proves that half against a real
+     * PostgreSQL.
      */
     @Override
     public UUID announcedDaemon(
@@ -452,8 +453,9 @@ class SoftwareReleaseListenerTest {
   }
 
   /**
-   * The word stays OUT of the enum, which is what keeps the latest column, the pending rule and the
-   * SBOM route from all being asked a question about a daemon binary that none of them can answer.
+   * The word stays OUT of the enum, which is what keeps the latest column and the pending rule from
+   * being asked a question about a daemon binary that neither can answer. (The SBOM route is keyed
+   * by the stored word instead, and does read a daemon's document.)
    * {@code Ecosystem.DAEMON_WIRE_NAME} is the string, and it is compared as one.
    */
   @Test

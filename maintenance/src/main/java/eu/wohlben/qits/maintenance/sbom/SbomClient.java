@@ -8,6 +8,8 @@ import eu.wohlben.qits.maintenance.peer.PeerExchange;
 import eu.wohlben.qits.maintenance.peer.PeerTarget;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import java.util.Locale;
+import java.util.Set;
 
 /**
  * "Does qits-artifacts hold a bill of materials for this release, and what does it say."
@@ -61,13 +63,41 @@ public class SbomClient {
    */
   public record SbomAnswer(Outcome outcome, JsonNode document, String url, String reason) {}
 
-  /** The document for one released coordinate. */
-  public SbomAnswer fetch(Ecosystem ecosystem, String name, String version) {
+  /**
+   * The released-artifact types this route is keyed by, in qits-ci's {@code packageType} spelling —
+   * the same word {@code mt_artifact.ecosystem} stores. Three of them are {@link Ecosystem}s; {@code
+   * daemon} is not and never becomes one ({@link Ecosystem#DAEMON_WIRE_NAME} says why), and it is a
+   * type here all the same, because qits-artifacts stores a bill of materials for every released
+   * daemon binary under exactly that segment.
+   */
+  public static final Set<String> TYPES =
+      Set.of(
+          Ecosystem.MAVEN.wireName(),
+          Ecosystem.NPM.wireName(),
+          Ecosystem.DOCKER.wireName(),
+          Ecosystem.DAEMON_WIRE_NAME);
+
+  /** Whether a stored {@code mt_artifact.ecosystem} word is one this route can address. */
+  public static boolean addressable(String type) {
+    return type != null && TYPES.contains(type.trim().toLowerCase(Locale.ROOT));
+  }
+
+  /**
+   * The document for one released coordinate.
+   *
+   * @param type the artifact's wire type — {@code maven}, {@code npm}, {@code docker} or {@code
+   *     daemon}, exactly as {@code mt_artifact.ecosystem} holds it
+   */
+  public SbomAnswer fetch(String type, String name, String version) {
+    if (!addressable(type)) {
+      return new SbomAnswer(
+          Outcome.FAILED, null, null, "'" + type + "' is not an artifact type the sbom route keys");
+    }
     if (name == null || name.isBlank() || version == null || version.isBlank()) {
       return new SbomAnswer(
           Outcome.FAILED, null, null, "an artifact needs a name and a version to be asked about");
     }
-    String path = path(ecosystem, name, version);
+    String path = path(type, name, version);
     PeerExchange exchange = peers.get(PeerTarget.ARTIFACTS_SBOM, path);
     String url = exchange.call().url();
     PeerAnswer answer = exchange.answer();
@@ -85,31 +115,28 @@ public class SbomClient {
   }
 
   /**
-   * {@code /artifacts/sboms/<packageType>/<packageName>/-/<version>}.
+   * {@code /artifacts/sboms/<type>/<name>/-/<version>}, where {@code <type>} is qits-ci's {@code
+   * packageType} — {@code maven}, {@code npm}, {@code docker} or {@code daemon} — which is also the
+   * word {@code mt_artifact.ecosystem} stores, so a row is addressed by its own column.
    *
    * <p><b>The name goes in LITERALLY, slashes and all.</b> {@code qits/build-images/maven-base} is
    * three path segments on this route and the {@code /-/} separator is what tells the name from the
    * version — which is why it exists. Encoding the slashes, as the npm packument read has to, would
    * address a package with a per-cent sign in its name.
-   */
-  static String path(Ecosystem ecosystem, String name, String version) {
-    return PREFIX + packageType(ecosystem) + "/" + name.trim() + "/-/" + version.trim();
-  }
-
-  /**
-   * qits-ci's {@code packageType} vocabulary, which is what the route is keyed by.
    *
-   * <p><b>{@code daemon} SBOMs exist upstream and are unreachable from here, deliberately.</b>
-   * qits-artifacts stores one per released daemon binary; this signature cannot address it, because
-   * it takes an {@link Ecosystem} and {@code daemon} is not one — {@code
-   * Ecosystem.DAEMON_WIRE_NAME} prices the fifth constant and declines it. There ARE {@code
-   * mt_artifact} rows for daemons since the qits CLI's version became a pom pin, and they exist to
-   * carry a GC keep rather than a document: {@code SbomIngestService.announcedDaemon} writes each
-   * one terminal at the write and queues no fetch, so this route is never reached for one.
+   * <p><b>A daemon is addressed like any other type, and that is a correction.</b> This signature
+   * used to take an {@link Ecosystem}, which made a daemon's document unreachable — {@code daemon}
+   * is deliberately not one — so the daemon rows written to carry a GC keep (see {@code
+   * control/CarriedDaemons}) were written terminal FAILED while qits-artifacts held a document for
+   * every one of them. The route is keyed by the RELEASED ARTIFACT's type, not by an ecosystem this
+   * service inventories pins in, and so is this method now.
    */
-  static String packageType(Ecosystem ecosystem) {
-    // maven, npm, docker — the wire spelling this service already stores and serves, which is the
-    // same word qits-ci publishes and the same segment the route takes.
-    return ecosystem.wireName();
+  static String path(String type, String name, String version) {
+    return PREFIX
+        + type.trim().toLowerCase(Locale.ROOT)
+        + "/"
+        + name.trim()
+        + "/-/"
+        + version.trim();
   }
 }

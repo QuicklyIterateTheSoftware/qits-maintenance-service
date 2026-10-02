@@ -187,6 +187,47 @@ class SbomApiTest {
   }
 
   /**
+   * <b>A DAEMON BINARY IS A DEPENDENT LIKE ANY OTHER ARTIFACT</b> (qits-621 / qits-703). Its
+   * document is ingested into the same graph, so "who ships a copy of this" names the binaries that
+   * carry a library — served under the stored word {@code daemon}, which is not an {@code Ecosystem},
+   * and neither the dependents read nor the artifacts listing may trip over that.
+   */
+  @Test
+  void aDaemonBinaryThatCarriesALibraryIsAmongItsDependents() {
+    UUID daemon =
+        store.upsertDaemonArtifact(
+            "qits-platform-access-cli",
+            "2026.1002.1",
+            "qits-platform-access-cli",
+            Instant.parse("2026-10-02T10:00:00Z"));
+    store.replaceGraph(
+        daemon,
+        List.of(component("c-an", Ecosystem.MAVEN, ANNOTATIONS, "2.18.2", true)),
+        List.of(new ParsedSbom.Edge(-1, 0)),
+        Instant.now());
+
+    given()
+        .when()
+        .get(BASE + "/dependencies/dependents?ecosystem=maven&name=" + ANNOTATIONS)
+        .then()
+        .statusCode(200)
+        .body("dependents.size()", equalTo(1))
+        .body("dependents[0].artifactEcosystem", equalTo("daemon"))
+        .body("dependents[0].artifactName", equalTo("qits-platform-access-cli"))
+        .body("dependents[0].embeddedVersion", equalTo("2.18.2"))
+        .body("dependents[0].sbomStatus", equalTo("INGESTED"));
+
+    given()
+        .when()
+        .get(BASE + "/artifacts")
+        .then()
+        .statusCode(200)
+        .body("find { it.name == 'qits-platform-access-cli' }.ecosystem", equalTo("daemon"))
+        .body("find { it.name == 'qits-platform-access-cli' }.sbomStatus", equalTo("INGESTED"))
+        .body("find { it.name == 'qits-platform-access-cli' }.latest", nullValue());
+  }
+
+  /**
    * THE DEFAULT VIEW IS THE NEWEST RELEASE OF EACH DEPENDENT. Forty-nine older releases of one
    * library are answers about versions nobody can change any more.
    */
@@ -345,7 +386,7 @@ class SbomApiTest {
         .post(BASE + "/artifacts/ingest")
         .then()
         .statusCode(400)
-        .body("message", containsString("maven, npm or docker"));
+        .body("message", containsString("maven, npm, docker or daemon"));
 
     given()
         .contentType(ContentType.JSON)

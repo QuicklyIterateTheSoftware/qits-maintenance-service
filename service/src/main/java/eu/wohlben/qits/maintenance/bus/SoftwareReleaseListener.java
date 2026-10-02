@@ -25,7 +25,8 @@ import org.jboss.logging.Logger;
  * the newest version says nothing about what any release contained, and a graph of one release says
  * nothing about whether a higher one exists. See {@code SbomIngestService}.
  *
- * <p><b>…and a DAEMON release makes the second write only.</b> {@code daemon} used to be discarded
+ * <p><b>…and a DAEMON release makes the second write only</b> — the artifact row, PENDING, whose
+ * document is fetched and ingested like any other artifact's. {@code daemon} used to be discarded
  * here with a DEBUG, on the reading — written into {@code mt_artifact.ecosystem}'s own V3 comment as
  * a decision — that nothing in any manifest pins a daemon binary. That sentence stopped being true
  * when the qits CLI's version became a pom pin: qits-ci pins {@code
@@ -143,8 +144,9 @@ public class SoftwareReleaseListener implements QitsDurableEventListener {
    *
    * <p>{@code daemon} is deliberately absent and is NOT an omission: it is handled one branch below,
    * as the string it is. Putting it in this map would make it an {@link Ecosystem}, which would put
-   * a daemon binary in {@code mt_latest}, in the pending rule and on the SBOM route — three
-   * questions nothing can answer about it. {@code docs} is absent for the original reason, which
+   * a daemon binary in {@code mt_latest} and in the pending rule — two questions nothing can answer
+   * about it. (The SBOM route is NOT one of them: it is keyed by the released artifact's type, so a
+   * daemon's document is fetched by the stored word without the word becoming an ecosystem.) {@code docs} is absent for the original reason, which
    * still holds: nothing pins an api-docs bundle.
    */
   static final Map<String, Ecosystem> ECOSYSTEMS =
@@ -261,7 +263,9 @@ public class SoftwareReleaseListener implements QitsDurableEventListener {
    * <p>The row is what the GC's keep-set is derived from — {@code control/CarriedDaemons} turns a
    * pom pin on the co-released maven coordinate into a keep for this binary — so a daemon release
    * this listener discarded was a version the {@code daemons} store was free to collect out from
-   * under a pin that still named it.
+   * under a pin that still named it. It is also the binary's SBOM outbox: written PENDING, its
+   * fetch queued off the claim exactly as {@link SbomIngestService#announced} queues a jar's, and
+   * its components joined into the graph once read.
    *
    * <p><b>{@code mt_latest} is deliberately not written, and it is not an omission either.</b> That
    * column exists to be compared against a pin of the same ecosystem, and there is no such pin: what

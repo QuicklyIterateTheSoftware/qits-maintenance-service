@@ -69,24 +69,29 @@ public class SbomIngestService {
   }
 
   /**
-   * <b>What an announced DAEMON release leaves behind: a row, and nothing on the queue.</b>
+   * <b>What an announced DAEMON release leaves behind: the same PENDING row and the same queued
+   * fetch as any other artifact.</b>
    *
    * <p>A daemon binary is not an {@link Ecosystem} and never will be — {@code
-   * Ecosystem.DAEMON_WIRE_NAME} says why — so there is no document to fetch here and no fetch to
-   * queue. The row is still written, because the qits CLI's version is a pom pin now and the GC's
-   * keep-set is derived from exactly these rows: without one, the binary a released pom names is
-   * kept by nothing and the release pipelines that fetch it 404. See {@code control/CarriedDaemons}.
+   * Ecosystem.DAEMON_WIRE_NAME} says why — so the row carries the literal word rather than an enum
+   * value. It is written for two reasons now. The first is the GC: the qits CLI's version is a pom
+   * pin, and the keep-set is derived from exactly these rows (see {@code control/CarriedDaemons}).
+   * The second is the document: qits-artifacts stores a bill of materials for every released
+   * daemon binary under the {@code daemon} segment of the SBOM route, and {@link SbomClient}
+   * addresses a row by its stored type, so a daemon's components and edges join the graph like any
+   * other artifact's — a library's dependents include the binaries that carry it.
    *
-   * <p>It is written TERMINAL by {@link MaintenanceStore#upsertDaemonArtifact}, and this method
-   * makes no queue submit at all, so nothing ever asks about it: a PENDING row would be re-queued
-   * by {@link #sweep} every hour, answered by {@link #ingest}'s unknown-ecosystem arm, and reset by
-   * the next sweep — a loop around a question this build cannot ask.
+   * <p><b>This used to write the row terminal FAILED and queue nothing</b>, because the route was
+   * addressed through an {@link Ecosystem} and a daemon could not be named. V13 re-queues every row
+   * that rule wrote.
    *
    * @return the artifact row's id
    */
   public UUID announcedDaemon(
       String name, String version, String repository, Instant occurredAt) {
-    return store.upsertDaemonArtifact(name, version, repository, occurredAt);
+    UUID id = store.upsertDaemonArtifact(name, version, repository, occurredAt);
+    queue.submit("ingest the sbom of " + name + " " + version, () -> ingest(id));
+    return id;
   }
 
   /**
@@ -98,7 +103,18 @@ public class SbomIngestService {
    */
   public UUID requeue(
       Ecosystem ecosystem, String name, String version, String repository, Instant now) {
-    UUID id = store.requeueArtifact(ecosystem, name, version, repository, now);
+    return requeue(ecosystem.wireName(), name, version, repository, now);
+  }
+
+  /**
+   * The same, keyed by the artifact's wire type — which is how a {@code daemon} row, not an {@link
+   * Ecosystem}, is re-read by hand.
+   *
+   * @param type one of {@link SbomClient#TYPES}; the caller refuses anything else
+   */
+  public UUID requeue(
+      String type, String name, String version, String repository, Instant now) {
+    UUID id = store.requeueArtifact(type, name, version, repository, now);
     queue.submit("re-ingest the sbom of " + name + " " + version, () -> ingest(id));
     return id;
   }
@@ -119,10 +135,11 @@ public class SbomIngestService {
     if (SbomStatus.of(artifact.sbomStatus) != SbomStatus.PENDING) {
       return;
     }
-    Optional<Ecosystem> ecosystem = Ecosystem.of(artifact.ecosystem);
-    if (ecosystem.isEmpty()) {
-      // A row written by a build that knew a fourth ecosystem. It is recorded and not asked about,
-      // which is what every unknown word in this schema gets.
+    // RESOLVED BY THE STORED WIRE TYPE, not by Ecosystem.of: a daemon row is not an ecosystem and is
+    // addressed all the same, because the route is keyed by the released artifact's type.
+    if (!SbomClient.addressable(artifact.ecosystem)) {
+      // A row written by a build that knew another artifact type. It is recorded and not asked
+      // about, which is what every unknown word in this schema gets.
       store.markArtifactFailed(
           artifactId, "'" + artifact.ecosystem + "' is not an ecosystem this build can address");
       return;
@@ -130,7 +147,7 @@ public class SbomIngestService {
 
     SbomClient.SbomAnswer answer;
     try {
-      answer = client.fetch(ecosystem.get(), artifact.name, artifact.version);
+      answer = client.fetch(artifact.ecosystem, artifact.name, artifact.version);
     } catch (RuntimeException e) {
       // The client answers rather than throws; this is the belt, so one surprise cannot leave a row
       // PENDING for ever with nothing saying why.

@@ -3,7 +3,7 @@ package eu.wohlben.qits.maintenance.api;
 import eu.wohlben.qits.maintenance.control.ArtifactGraph;
 import eu.wohlben.qits.maintenance.dto.ArtifactDto;
 import eu.wohlben.qits.maintenance.error.BadRequestException;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
+import eu.wohlben.qits.maintenance.sbom.SbomClient;
 import eu.wohlben.qits.maintenance.sbom.SbomIngestService;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
@@ -16,6 +16,7 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.time.Instant;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 import org.eclipse.microprofile.openapi.annotations.Operation;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
@@ -42,7 +43,7 @@ public class ArtifactController {
   /**
    * The manual backfill's body.
    *
-   * @param ecosystem maven, npm or docker
+   * @param ecosystem the artifact type: maven, npm, docker or daemon
    * @param name the artifact in {@code mt_pin}'s spelling
    * @param version the released version whose document to read
    */
@@ -83,14 +84,13 @@ public class ArtifactController {
     if (request == null) {
       throw new BadRequestException("an ingest names an ecosystem, a name and a version");
     }
-    Ecosystem ecosystem =
-        Ecosystem.of(request.ecosystem())
-            .orElseThrow(
-                () ->
-                    new BadRequestException(
-                        "ecosystem must be maven, npm or docker, not '"
-                            + request.ecosystem()
-                            + "'"));
+    // The released artifact's TYPE, which is wider than an Ecosystem by one word: a daemon binary's
+    // document is addressed by `daemon` exactly as a jar's is by `maven`.
+    if (!SbomClient.addressable(request.ecosystem())) {
+      throw new BadRequestException(
+          "ecosystem must be maven, npm, docker or daemon, not '" + request.ecosystem() + "'");
+    }
+    String type = request.ecosystem().trim().toLowerCase(Locale.ROOT);
     String name = trimmed(request.name());
     String version = trimmed(request.version());
     if (name == null || version == null) {
@@ -98,7 +98,7 @@ public class ArtifactController {
     }
     // The repository is left null: nothing announced this one, and guessing which repository
     // produced a release would put a name on the row that no event ever said.
-    UUID id = sboms.requeue(ecosystem, name, version, null, Instant.now());
+    UUID id = sboms.requeue(type, name, version, null, Instant.now());
     return Response.status(Response.Status.ACCEPTED)
         .entity(new IngestRequest.Accepted(id))
         .type(MediaType.APPLICATION_JSON)

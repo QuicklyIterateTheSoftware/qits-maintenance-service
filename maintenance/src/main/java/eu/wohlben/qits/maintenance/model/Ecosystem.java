@@ -46,13 +46,15 @@ public enum Ecosystem {
    * resolver and a step together" and a daemon binary has none of the three: no manifest declares
    * one as a dependency, no registry answers what its newest version is, and no bump step can edit a
    * line that does not exist. So {@link #of} keeps answering EMPTY for it, and everything that
-   * branches on an {@code Ecosystem} — the latest column, the pending rule, the SBOM fetch — keeps
-   * passing it by. What a daemon row carries is a fact about a RELEASE, which is exactly the half of
-   * this schema that is keyed by the stored string rather than by this enum.
+   * branches on an {@code Ecosystem} — the latest column and the pending rule — keeps passing it
+   * by. What a daemon row carries is a fact about a RELEASE, which is exactly the half of this
+   * schema that is keyed by the stored string rather than by this enum — and that includes the SBOM
+   * fetch, whose route is keyed by the released artifact's type: {@code SbomClient} addresses a
+   * daemon row's document by this word, and its components join the graph like any other's.
    *
-   * <p>Compared as the stored string wherever it is needed, which is three places: the listener that
-   * writes the row, {@code ArtifactGraph.daemonsReleasedWith} that reads it back, and the {@code
-   * ecosystem} the pin source serves the derived row under — a spelling qits-artifacts' {@code
+   * <p>Compared as the stored string wherever it is needed: the listener that writes the row, {@code
+   * SbomClient.TYPES} that addresses its document, {@code ArtifactGraph.daemonsReleasedWith} that
+   * reads it back, and the {@code ecosystem} the pin source serves the derived row under — a spelling qits-artifacts' {@code
    * MaintenanceHttpDependencyPins} matches exactly.
    */
   public static final String DAEMON_WIRE_NAME = "daemon";
