@@ -360,6 +360,13 @@ components:
           type: string
         name:
           type: string
+    PendingBumpsDto:
+      type: object
+      properties:
+        bumps:
+          type: array
+          items:
+            $ref: "#/components/schemas/BumpDto"
     PinDto:
       type: object
       properties:
@@ -684,6 +691,35 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/BumpDto"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      tags:
+      - Bump Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+        - qits:system
+        - qits:agent
+  /maintenance/api/bumps/pending:
+    get:
+      summary: The newest bumps still on their way
+      operationId: listPendingBumps
+      parameters:
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          format: int32
+          default: 20
+      responses:
+        "200":
+          description: The pending bumps
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PendingBumpsDto"
         "401":
           description: Not Authorized
         "403":

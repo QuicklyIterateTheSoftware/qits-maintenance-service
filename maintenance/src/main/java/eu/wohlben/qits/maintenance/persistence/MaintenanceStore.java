@@ -1047,6 +1047,33 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
         });
   }
 
+  /**
+   * The newest bumps still on their way. A bump is pending while it is asked for or running, and
+   * after a green run while its branch is not released: the release is still owed (a pushed commit
+   * and no answer yet), or the release request is still open. {@code converged} and {@code refused}
+   * end it, as do a released or withdrawn request, a failure and nothing to do.
+   */
+  @ActivateRequestContext
+  public List<MtBump> pendingBumps(int limit) {
+    return DbRetry.inNewTx(
+        "read the pending bumps",
+        () -> {
+          List<MtBump> pending =
+              MtBump.find(
+                      "status in ?1 or (status = ?2 and ((releaseRequestId is null and resultSha"
+                          + " is not null) or (releaseRequestId not in ?3 and (releaseState is"
+                          + " null or releaseState in ?4))))",
+                      Sort.by("startedAt").descending(),
+                      List.of(BumpStatus.REQUESTED.name(), BumpStatus.RUNNING.name()),
+                      BumpStatus.SUCCEEDED.name(),
+                      List.of("converged", "refused"),
+                      List.of("PENDING", "READY", "REJECTED", "FAILED", "CONFLICTED"))
+                  .page(0, limit)
+                  .list();
+          return pending;
+        });
+  }
+
   /** Every bump that has not ended — what the poller drives. */
   @ActivateRequestContext
   public List<MtBump> activeBumps() {

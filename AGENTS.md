@@ -859,16 +859,20 @@ any API change. `BumpController`'s reads carry `operationId`s (`listBumps`, `get
 qits-maintenance is a pact provider, set up like qits-githost-service and qits-events-service.
 The test package `service/src/test/java/eu/wohlben/qits/maintenance/contracts/` holds it:
 
-- `ProviderStates`: "pending bumps" (five bump rows in the year 2100, so they are the newest:
-  requested, running, green and waiting for its release request, released, failed) and "no
+- `ProviderStates`: "pending bumps" (seven bump rows in the year 2100, so they are the newest:
+  requested, running, green with its release owed, green with its request open, and three that
+  are over: converged, released, failed) and "no
   pending bumps". The rows are written straight to `mt_bump` and deleted again (`cleanUp()`), so
   the dispatcher and the other suites never see them.
-- `GoldenMasterRecordingTest` records `listBumps` with `?limit=20` into `golden-masters/`. The
-  answer is a bare array, so its filtered list is the root (`listFilteredTo: "$"`). It compares by
-  default; `-Dgolden.update=true` rewrites.
+- `GoldenMasterRecordingTest` records `listPendingBumps` with `?limit=20` into `golden-masters/`.
+  It compares by default; `-Dgolden.update=true` rewrites.
 - `ConsumerPactVerificationTest` verifies `pacts/*_qits-maintenance-service.json` on the test
   classpath. It passes with no pact until the first consumer pact jar is pinned; then drop
   `@IgnoreNoPactsToVerify` and set `ClasspathPactLoader.REQUIRED = true`.
+
+**Give a consumer an object, not a bare array.** pact-jvm (4.6.21) takes a consumer's rule at the
+body root (`$`) as a whole-body matcher and runs `arrayContains` on the raw bytes, which passes
+whatever the provider answers. That is why `listPendingBumps` answers `{ "bumps": [...] }`.
 
 `.config/qits/release.yml` declares the golden masters as a contract, so the platform publishes
 `eu.wohlben.qits:qits-maintenance-golden-masters` and `@qits/maintenance-golden-masters` when they

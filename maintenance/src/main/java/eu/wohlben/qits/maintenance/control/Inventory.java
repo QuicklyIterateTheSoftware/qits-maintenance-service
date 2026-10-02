@@ -276,6 +276,12 @@ public class Inventory {
     return store.bumps(repository, limit).stream().map(Inventory::bump).toList();
   }
 
+  /** The newest bumps still on their way, of every repository. */
+  public eu.wohlben.qits.maintenance.dto.PendingBumpsDto pendingBumps(int limit) {
+    return new eu.wohlben.qits.maintenance.dto.PendingBumpsDto(
+        store.pendingBumps(limit).stream().map(Inventory::bump).toList());
+  }
+
   /** One bump. */
   public BumpDto bump(UUID id) {
     return bump(store.bump(id).orElseThrow(() -> new NoSuchBumpException(id)));

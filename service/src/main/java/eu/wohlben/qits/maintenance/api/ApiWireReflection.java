@@ -4,6 +4,7 @@ import eu.wohlben.qits.maintenance.dto.AdoptionJourneyDto;
 import eu.wohlben.qits.maintenance.dto.ArtifactDto;
 import eu.wohlben.qits.maintenance.dto.BumpDto;
 import eu.wohlben.qits.maintenance.dto.BumpWindowDto;
+import eu.wohlben.qits.maintenance.dto.PendingBumpsDto;
 import eu.wohlben.qits.maintenance.dto.DependencyDto;
 import eu.wohlben.qits.maintenance.dto.DownstreamDto;
 import eu.wohlben.qits.maintenance.dto.DependentDto;
@@ -73,6 +74,7 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
       // stalled entries are a nested record and are their own registration, exactly as every other
       // nested shape here is.
       BumpWindowDto.class,
+      PendingBumpsDto.class,
       BumpWindowDto.StalledBumpDto.class,
       BumpWindowDto.OwedBumpDto.class,
       ScanDto.class,

@@ -90,9 +90,9 @@ public class ProviderStates {
   // --- the states ------------------------------------------------------------------------------
 
   /**
-   * Five bumps, newest first: a group bump asked for and not yet running, one running, one green and
-   * waiting for its release request, and two that are over (released, and failed) — the menu shows
-   * the first three.
+   * Seven bumps, newest first. Pending: a targeted bump asked for and not yet running, a group bump
+   * running, one green whose release is still owed, and one green with its release request open.
+   * Over, which {@code listPendingBumps} leaves out: one that converged, one released, one failed.
    */
   private Setup pendingBumps() {
     UUID requested =
@@ -101,7 +101,7 @@ public class ProviderStates {
             "TARGETED",
             "maintenance/targeted",
             "REQUESTED",
-            FUTURE.plusSeconds(5),
+            FUTURE.plusSeconds(6),
             change("DOCKER", "docker/Dockerfile", "qits/build-images/ci-base", "2026.1.1", "2026.2.1"),
             null,
             null);
@@ -111,8 +111,18 @@ public class ProviderStates {
             "GROUP",
             "maintenance/dependencies",
             "RUNNING",
-            FUTURE.plusSeconds(4),
+            FUTURE.plusSeconds(5),
             change("MAVEN", "pom.xml", "eu.wohlben.qits:qits-arch-rules", "2026.1.1", "2026.2.1"),
+            null,
+            null);
+    UUID releaseOwed =
+        bump(
+            "contract-javalib",
+            "GROUP",
+            "maintenance/dependencies",
+            "SUCCEEDED",
+            FUTURE.plusSeconds(4),
+            change("MAVEN", "pom.xml", "io.quarkus.platform:quarkus-bom", "3.30.1", "3.31.0"),
             null,
             null);
     UUID awaitingRelease =
@@ -125,13 +135,23 @@ public class ProviderStates {
             change("NPM", "package.json", "@qits/angular", "2026.1.1", "2026.2.1"),
             UUID.randomUUID().toString(),
             "PENDING");
+    UUID converged =
+        bump(
+            "contract-javalib",
+            "GROUP",
+            "maintenance/dependencies",
+            "SUCCEEDED",
+            FUTURE.plusSeconds(2),
+            change("MAVEN", "pom.xml", "org.junit:junit-bom", "6.0.0", "6.0.1"),
+            "converged",
+            null);
     UUID released =
         bump(
             "contract-frontend",
             "GROUP",
             "maintenance/dependencies",
             "SUCCEEDED",
-            FUTURE.plusSeconds(2),
+            FUTURE.plusSeconds(1),
             change("NPM", "package.json", "@qits/ui-components", "2026.1.1", "2026.2.1"),
             UUID.randomUUID().toString(),
             "RELEASED");
@@ -141,13 +161,15 @@ public class ProviderStates {
             "GROUP",
             "maintenance/dependencies",
             "FAILED",
-            FUTURE.plusSeconds(1),
+            FUTURE,
             change("MAVEN", "pom.xml", "eu.wohlben.qits:qits-db-core", "2026.1.1", "2026.2.1"),
             null,
             null);
     Map<String, String> params = new TreeMap<>();
     params.put("awaitingReleaseBumpId", awaitingRelease.toString());
+    params.put("convergedBumpId", converged.toString());
     params.put("failedBumpId", failed.toString());
+    params.put("releaseOwedBumpId", releaseOwed.toString());
     params.put("releasedBumpId", released.toString());
     params.put("requestedBumpId", requested.toString());
     params.put("runningBumpId", running.toString());
@@ -206,6 +228,11 @@ public class ProviderStates {
               row.releaseRequestId = releaseRequestId;
               row.releaseState = releaseState;
               row.releaseStateAt = releaseState == null ? null : startedAt.plusSeconds(120);
+              // A green bump pushed a commit, except one that converged: there was nothing to hold.
+              row.resultSha =
+                  status.equals("SUCCEEDED") && !"converged".equals(releaseRequestId)
+                      ? "0123456789abcdef0123456789abcdef01234567"
+                      : null;
               row.persist();
             });
     created.add(id);

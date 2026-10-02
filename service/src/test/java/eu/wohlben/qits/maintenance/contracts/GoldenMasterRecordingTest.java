@@ -83,29 +83,29 @@ class GoldenMasterRecordingTest {
   }
 
   /**
-   * The bump list as the bumps menu asks for it: the newest 20, of every repository. The answer is a
-   * bare array, so its filtered list is the root ({@code $}); it keeps only the state's own bumps.
+   * The pending bumps as the bumps menu asks for them: the newest 20, of every repository, filtered
+   * to the state's own bumps.
    */
   static final List<Interaction> INTERACTIONS =
       List.of(
           new Interaction(
               ProviderStates.PENDING_BUMPS,
-              "listBumps",
+              "listPendingBumps",
               "GET",
-              "/maintenance/api/bumps",
+              "/maintenance/api/bumps/pending",
               Map.of("limit", "20"),
               200,
-              "$",
+              "$.bumps",
               null,
               List.of()),
           new Interaction(
               ProviderStates.NO_PENDING_BUMPS,
-              "listBumps",
+              "listPendingBumps",
               "GET",
-              "/maintenance/api/bumps",
+              "/maintenance/api/bumps/pending",
               Map.of("limit", "20"),
               200,
-              "$",
+              "$.bumps",
               null,
               List.of()));
 

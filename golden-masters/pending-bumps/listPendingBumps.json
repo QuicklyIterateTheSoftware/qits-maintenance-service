@@ -1,0 +1,136 @@
+{
+  "bumps": [
+    {
+      "id": "00000000-0000-4000-8000-000000000006",
+      "repository": "contract-service",
+      "group": "targeted",
+      "mode": "TARGETED",
+      "branch": "maintenance/targeted",
+      "environment": "dev",
+      "trigger": "SCHEDULED",
+      "status": "REQUESTED",
+      "ciEventId": null,
+      "ciRunId": null,
+      "ciRunIds": [],
+      "configPath": ".config/qits/platform-pipelines/maintenance-bump.yml",
+      "ciRunStatus": null,
+      "startedAt": "2026-01-01T00:00:00Z",
+      "finishedAt": null,
+      "message": null,
+      "resultSha": null,
+      "releaseRequestId": null,
+      "releaseState": null,
+      "releaseDetail": null,
+      "releaseStateAt": null,
+      "changes": [
+        {
+          "ecosystem": "DOCKER",
+          "manifestPath": "docker/Dockerfile",
+          "name": "qits/build-images/ci-base",
+          "from": "2026.1.1",
+          "to": "2026.2.1",
+          "location": null
+        }
+      ]
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000007",
+      "repository": "contract-service",
+      "group": "dependencies",
+      "mode": "GROUP",
+      "branch": "maintenance/dependencies",
+      "environment": "dev",
+      "trigger": "SCHEDULED",
+      "status": "RUNNING",
+      "ciEventId": null,
+      "ciRunId": null,
+      "ciRunIds": [],
+      "configPath": ".config/qits/platform-pipelines/maintenance-bump.yml",
+      "ciRunStatus": null,
+      "startedAt": "2026-01-01T00:00:00Z",
+      "finishedAt": null,
+      "message": null,
+      "resultSha": null,
+      "releaseRequestId": null,
+      "releaseState": null,
+      "releaseDetail": null,
+      "releaseStateAt": null,
+      "changes": [
+        {
+          "ecosystem": "MAVEN",
+          "manifestPath": "pom.xml",
+          "name": "eu.wohlben.qits:qits-arch-rules",
+          "from": "2026.1.1",
+          "to": "2026.2.1",
+          "location": null
+        }
+      ]
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000004",
+      "repository": "contract-javalib",
+      "group": "dependencies",
+      "mode": "GROUP",
+      "branch": "maintenance/dependencies",
+      "environment": "dev",
+      "trigger": "SCHEDULED",
+      "status": "SUCCEEDED",
+      "ciEventId": null,
+      "ciRunId": null,
+      "ciRunIds": [],
+      "configPath": ".config/qits/platform-pipelines/maintenance-bump.yml",
+      "ciRunStatus": null,
+      "startedAt": "2026-01-01T00:00:00Z",
+      "finishedAt": "2026-01-01T00:00:00Z",
+      "message": null,
+      "resultSha": "0123456789abcdef0123456789abcdef01234567",
+      "releaseRequestId": null,
+      "releaseState": null,
+      "releaseDetail": null,
+      "releaseStateAt": null,
+      "changes": [
+        {
+          "ecosystem": "MAVEN",
+          "manifestPath": "pom.xml",
+          "name": "io.quarkus.platform:quarkus-bom",
+          "from": "3.30.1",
+          "to": "3.31.0",
+          "location": null
+        }
+      ]
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "repository": "contract-frontend",
+      "group": "dependencies",
+      "mode": "GROUP",
+      "branch": "maintenance/dependencies",
+      "environment": "dev",
+      "trigger": "SCHEDULED",
+      "status": "SUCCEEDED",
+      "ciEventId": null,
+      "ciRunId": null,
+      "ciRunIds": [],
+      "configPath": ".config/qits/platform-pipelines/maintenance-bump.yml",
+      "ciRunStatus": null,
+      "startedAt": "2026-01-01T00:00:00Z",
+      "finishedAt": "2026-01-01T00:00:00Z",
+      "message": null,
+      "resultSha": "0123456789abcdef0123456789abcdef01234567",
+      "releaseRequestId": "00000000-0000-4000-8000-000000000008",
+      "releaseState": "PENDING",
+      "releaseDetail": null,
+      "releaseStateAt": "2026-01-01T00:00:00Z",
+      "changes": [
+        {
+          "ecosystem": "NPM",
+          "manifestPath": "package.json",
+          "name": "@qits/angular",
+          "from": "2026.1.1",
+          "to": "2026.2.1",
+          "location": null
+        }
+      ]
+    }
+  ]
+}

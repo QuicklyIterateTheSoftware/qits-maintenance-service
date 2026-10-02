@@ -3,6 +3,7 @@ package eu.wohlben.qits.maintenance.api;
 import eu.wohlben.qits.maintenance.bump.BumpDispatcher;
 import eu.wohlben.qits.maintenance.control.Inventory;
 import eu.wohlben.qits.maintenance.dto.BumpDto;
+import eu.wohlben.qits.maintenance.dto.PendingBumpsDto;
 import eu.wohlben.qits.maintenance.dto.BumpWindowDto;
 import eu.wohlben.qits.maintenance.error.NoSuchBumpException;
 import jakarta.annotation.security.RolesAllowed;
@@ -118,6 +119,20 @@ public class BumpController {
       @QueryParam("repository") String repository,
       @QueryParam("limit") @DefaultValue("" + DEFAULT_LIMIT) int limit) {
     return inventory.bumps(repository, Math.clamp(limit, 1, MAX_LIMIT));
+  }
+
+  /**
+   * The newest bumps still on their way, of every repository: asked for, running, or green and not
+   * released yet. What the top bar's bumps menu lists.
+   */
+  @GET
+  @jakarta.ws.rs.Path("/pending")
+  @Operation(operationId = "listPendingBumps", summary = "The newest bumps still on their way")
+  @APIResponse(responseCode = "200", description = "The pending bumps")
+  @RolesAllowed({"qits:admin", "qits:system", "qits:agent"})
+  public PendingBumpsDto pendingBumps(
+      @QueryParam("limit") @DefaultValue("" + DEFAULT_LIMIT) int limit) {
+    return inventory.pendingBumps(Math.clamp(limit, 1, MAX_LIMIT));
   }
 
   /**

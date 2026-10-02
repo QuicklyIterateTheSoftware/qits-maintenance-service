@@ -9,19 +9,19 @@
       "dependsOn": [],
       "operations": [
         {
-          "operationId": "listBumps",
+          "operationId": "listPendingBumps",
           "method": "GET",
-          "path": "/maintenance/api/bumps",
+          "path": "/maintenance/api/bumps/pending",
           "query": {
             "limit": "20"
           },
           "status": 200,
-          "file": "no-pending-bumps/listBumps.json",
+          "file": "no-pending-bumps/listPendingBumps.json",
           "frozen": {
             "ids": [],
             "instants": [],
             "strings": [],
-            "listFilteredTo": "$"
+            "listFilteredTo": "$.bumps"
           }
         }
       ]
@@ -31,34 +31,36 @@
       "slug": "pending-bumps",
       "params": {
         "awaitingReleaseBumpId": "00000000-0000-4000-8000-000000000001",
-        "failedBumpId": "00000000-0000-4000-8000-000000000002",
-        "releasedBumpId": "00000000-0000-4000-8000-000000000003",
-        "requestedBumpId": "00000000-0000-4000-8000-000000000004",
-        "runningBumpId": "00000000-0000-4000-8000-000000000005"
+        "convergedBumpId": "00000000-0000-4000-8000-000000000002",
+        "failedBumpId": "00000000-0000-4000-8000-000000000003",
+        "releaseOwedBumpId": "00000000-0000-4000-8000-000000000004",
+        "releasedBumpId": "00000000-0000-4000-8000-000000000005",
+        "requestedBumpId": "00000000-0000-4000-8000-000000000006",
+        "runningBumpId": "00000000-0000-4000-8000-000000000007"
       },
       "dependsOn": [],
       "operations": [
         {
-          "operationId": "listBumps",
+          "operationId": "listPendingBumps",
           "method": "GET",
-          "path": "/maintenance/api/bumps",
+          "path": "/maintenance/api/bumps/pending",
           "query": {
             "limit": "20"
           },
           "status": 200,
-          "file": "pending-bumps/listBumps.json",
+          "file": "pending-bumps/listPendingBumps.json",
           "frozen": {
             "ids": [
-              "$[*].id",
-              "$[*].releaseRequestId"
+              "$.bumps[*].id",
+              "$.bumps[*].releaseRequestId"
             ],
             "instants": [
-              "$[*].startedAt",
-              "$[*].finishedAt",
-              "$[*].releaseStateAt"
+              "$.bumps[*].startedAt",
+              "$.bumps[*].finishedAt",
+              "$.bumps[*].releaseStateAt"
             ],
             "strings": [],
-            "listFilteredTo": "$"
+            "listFilteredTo": "$.bumps"
           }
         }
       ]
