@@ -131,6 +131,13 @@ public class MtBump extends PanacheEntityBase {
    *
    * <p>Null for ever on a bump that is not SUCCEEDED: there is no branch to release.
    */
+  /**
+   * The work item a {@code BASELINES} bump names in its commit subject, for example {@code
+   * qits-112}. Null on every other mode.
+   */
+  @Column(name = "work_item", length = 64)
+  public String workItem;
+
   @Column(name = "release_request_id", length = 255)
   public String releaseRequestId;
 

@@ -16,7 +16,7 @@ import java.util.UUID;
  * @param repository which repository
  * @param group which group, and therefore which branch — or the stated sentinel {@code targeted} on
  *     a TARGETED bump, which belongs to no group and named its own branch
- * @param mode GROUP or TARGETED: whose branch this wrote. GROUP owns {@code branch}, tracks it and
+ * @param mode GROUP, TARGETED or BASELINES: whose branch this wrote, and what. GROUP owns {@code branch}, tracks it and
  *     asks for its release; TARGETED wrote onto the caller's branch, tracks nothing and asks for
  *     nothing
  * @param branch the ref the changes go on

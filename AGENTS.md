@@ -211,6 +211,20 @@ column carries the stated sentinel `targeted` — a label for the payload and th
 never a key; the mode is the discriminator, which is why `newestBump`, `activeBump` and
 `bumpsOwedARelease` all carry a mode term.
 
+**A third mode, BASELINES, renders screenshot references** (`POST
+/repositories/{name}/release-requests/{requestId}/screenshot-baselines`,
+`BumpService.requestBaselines`, CLI `qits maintenance screenshot-baselines`). The request must be
+open. The run starts from the request's fold, `release/<request>`, and the wrapper pipeline's
+baselines step (payload `job: screenshot-baselines`, on `node-browser-base`, the image the `app`
+QA step compares in) runs `UPDATE_SNAPSHOT=all npm run test:browser` and commits only
+`__screenshots__/` files onto `maintenance/baselines/<request>`. The branch is ours, so the start
+head is stored in `result_sha` and compared at the end: unmoved is NOTHING_TO_DO ("unchanged"),
+moved is joined to the request (`ReleaseRequestClient.join`) and SUCCEEDED, red is FAILED. No
+`mt_branch` row and no release ask: the request decides when the branch ships. Missing references
+are written like changed ones, so a repository's first baselines come from here as well. The
+commit subject's scope is `mt_bump.work_item` (`V16`), or, when the caller named none, the newest
+id on the fold's own commit subjects.
+
 **Two callers on the group path, and no scan is one of them.** The button is `POST
 /repositories/{name}/groups/{group}/bumps`; the clock is `schedule/BumpSchedule` at 02:00, INTERNAL
 group only. A SCHEDULED scan used to ask for the bumps it found, gated by `bump.auto` — that key and

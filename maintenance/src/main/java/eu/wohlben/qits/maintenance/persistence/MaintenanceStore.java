@@ -778,6 +778,83 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
         });
   }
 
+  /**
+   * Opens a {@code BASELINES} bump for one release request, unless one is already going onto its
+   * branch.
+   *
+   * <p>The lock is the branch, as for a targeted bump: one release request has one baselines
+   * branch, and two runs must not push it at once. {@code release_request_id} holds the request the
+   * branch is joined to — known from the start here, where a group bump learns it only after the
+   * release ask.
+   */
+  @ActivateRequestContext
+  public UUID openBaselinesBump(
+      String repository,
+      String group,
+      String branch,
+      String environment,
+      BumpTrigger trigger,
+      String releaseRequestId,
+      String workItem,
+      Instant now) {
+    return DbRetry.inNewTx(
+        "open a baselines bump of " + repository + " for " + releaseRequestId,
+        () -> {
+          MtBump active = activeBranchBumpRow(repository, branch, BumpMode.BASELINES);
+          if (active != null) {
+            throw BumpAlreadyActiveException.onBranch(repository, branch, active.id);
+          }
+          MtBump row = new MtBump();
+          row.id = UUID.randomUUID();
+          row.repository = repository;
+          row.groupName = group;
+          row.mode = BumpMode.BASELINES.name();
+          row.branch = branch;
+          row.environment = environment;
+          row.trigger = trigger.name();
+          row.status = BumpStatus.REQUESTED.name();
+          row.changes = writeJson(List.of());
+          row.releaseRequestId = releaseRequestId;
+          row.workItem = workItem;
+          row.startedAt = now;
+          row.persist();
+          getEntityManager().flush();
+          return row.id;
+        });
+  }
+
+  /** Records the branch head a run starts from, so the ending can tell whether it moved. */
+  @ActivateRequestContext
+  public void bumpStartHead(UUID id, String head) {
+    DbRetry.runInNewTx(
+        "record the start head of bump " + id,
+        () -> {
+          MtBump row = MtBump.findById(id);
+          if (row == null) {
+            return;
+          }
+          row.resultSha = head;
+          getEntityManager().flush();
+        });
+  }
+
+  /** Records what qits-projects said to the join, without ending anything. */
+  @ActivateRequestContext
+  public void bumpJoined(UUID id, String releaseState, String releaseDetail, Instant now) {
+    DbRetry.runInNewTx(
+        "record the join of bump " + id,
+        () -> {
+          MtBump row = MtBump.findById(id);
+          if (row == null) {
+            return;
+          }
+          row.releaseState = releaseState;
+          row.releaseDetail = releaseDetail;
+          row.releaseStateAt = now;
+          getEntityManager().flush();
+        });
+  }
+
   /** Records that qits-ci accepted the trigger and named its runs. */
   @ActivateRequestContext
   public void bumpDispatched(UUID id, String eventId, List<String> runIds) {
@@ -1159,11 +1236,16 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
   /** The TARGETED bump holding one branch, if there is one. Keyed on the ref, which is the thing
    * that cannot be written twice at once — see {@link #openTargetedBump}. */
   private static MtBump activeTargetedBumpRow(String repository, String branch) {
+    return activeBranchBumpRow(repository, branch, BumpMode.TARGETED);
+  }
+
+  /** The active bump of one mode holding one branch, if there is one. */
+  private static MtBump activeBranchBumpRow(String repository, String branch, BumpMode mode) {
     return MtBump.find(
             "repository = ?1 and branch = ?2 and mode = ?3 and status in ?4",
             repository,
             branch,
-            BumpMode.TARGETED.name(),
+            mode.name(),
             List.of(BumpStatus.REQUESTED.name(), BumpStatus.RUNNING.name()))
         .firstResult();
   }

@@ -44,7 +44,17 @@ public enum BumpMode {
    * caller already has one — a second ask would be a second request for the same work), and its
    * verdict is its CI run's, not its branch head's.
    */
-  TARGETED;
+  TARGETED,
+
+  /**
+   * The branch is this service's, {@code maintenance/baselines/<request>}, and it carries no
+   * dependency at all: one run renders a release request's screenshot tests in the CI image and
+   * commits the reference images it wrote. A green run that moved the branch JOINS it to that
+   * release request rather than opening a new one, because the images belong to the work already
+   * under review. It writes no {@code mt_branch} row: the release request, not this service, decides
+   * when the branch is done.
+   */
+  BASELINES;
 
   /** Whether a row in this mode owns the branch it writes — which is the whole of the difference. */
   public boolean ownsTheBranch() {

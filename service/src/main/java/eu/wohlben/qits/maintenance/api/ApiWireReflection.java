@@ -41,6 +41,7 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
       // is no better at seeing through: the route's 202 rides in a Response.entity, so the whole
       // method is invisible to it and the request record goes with it.
       RepositoryController.TargetedBumpRequest.class,
+      RepositoryController.BaselinesRequest.class,
       ScanController.StartScanRequest.class,
       ScanController.StartScanRequest.Response.class,
       ArtifactController.IngestRequest.class,

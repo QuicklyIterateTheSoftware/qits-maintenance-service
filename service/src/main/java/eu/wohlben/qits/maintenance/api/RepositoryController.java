@@ -79,6 +79,11 @@ public class RepositoryController {
    */
   public record TargetedBumpRequest(String branch, List<Change> changes) {}
 
+  /**
+   * The body of a screenshot-baselines update: the work item its commit subject names, optional.
+   */
+  public record BaselinesRequest(String workItem) {}
+
   @GET
   @Operation(summary = "Every repository in the inventory, with its groups and what is pending")
   @APIResponse(responseCode = "200", description = "The repositories")
@@ -242,6 +247,45 @@ public class RepositoryController {
     UUID id =
         bumps.requestTargeted(
             name, request.branch().trim(), request.changes(), BumpTrigger.MANUAL);
+    return Response.status(Response.Status.ACCEPTED)
+        .entity(new AcceptedResponse(id))
+        .type(MediaType.APPLICATION_JSON)
+        .build();
+  }
+
+  /**
+   * Renders one release request's screenshot tests in the CI image and joins the reference images
+   * that changed to that request. Does NOT wait.
+   *
+   * <p>The run starts from the request's fold, writes every reference that is missing or differs
+   * ({@code UPDATE_SNAPSHOT=all npm run test:browser}), commits only {@code __screenshots__/}
+   * files onto {@code maintenance/baselines/<request>} and joins that branch to the request. Nothing
+   * reaches {@code main} except through the request's own gates and approval. {@code GET
+   * /bumps/{id}} follows it: SUCCEEDED (joined), NOTHING_TO_DO (unchanged) or FAILED with the reason.
+   *
+   * <p>The same three roles as every route here.
+   */
+  @POST
+  @jakarta.ws.rs.Path("/{name}/release-requests/{requestId}/screenshot-baselines")
+  @Operation(summary = "Update a release request's screenshot baselines in the CI image")
+  @APIResponse(responseCode = "202", description = "Requested; poll GET /bumps/{id}")
+  @APIResponse(responseCode = "400", description = "Not a request id, or not a work item")
+  @APIResponse(responseCode = "404", description = "No such repository in the inventory")
+  @APIResponse(
+      responseCode = "409",
+      description =
+          "The request takes no branch, one is already running for it, or bumping is disabled")
+  @RolesAllowed({"qits:admin", "qits:system", "qits:agent"})
+  public Response updateBaselines(
+      @PathParam("name") String name,
+      @PathParam("requestId") String requestId,
+      BaselinesRequest request) {
+    UUID id =
+        bumps.requestBaselines(
+            name,
+            requestId == null ? null : requestId.trim(),
+            request == null ? null : request.workItem(),
+            BumpTrigger.MANUAL);
     return Response.status(Response.Status.ACCEPTED)
         .entity(new AcceptedResponse(id))
         .type(MediaType.APPLICATION_JSON)

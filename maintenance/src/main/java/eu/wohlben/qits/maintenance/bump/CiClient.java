@@ -12,6 +12,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -87,12 +88,29 @@ public class CiClient {
    */
   public TriggerResult trigger(
       String bumpId, String repository, String group, String branch, String baseRef, List<Change> changes) {
+    return trigger(bumpId, repository, group, branch, baseRef, changes, Map.of());
+  }
+
+  /**
+   * The same trigger with extra top-level payload fields. A {@code BASELINES} bump sends {@code
+   * job} and {@code subject} here: the dependency steps read neither and skip a payload with no
+   * changes of their ecosystem, and the baselines step runs only for its own {@code job}.
+   */
+  public TriggerResult trigger(
+      String bumpId,
+      String repository,
+      String group,
+      String branch,
+      String baseRef,
+      List<Change> changes,
+      Map<String, String> extra) {
     ObjectNode payload = JSON.createObjectNode();
     payload.put("repository", repository);
     payload.put("group", group);
     payload.put("branch", branch);
     payload.put("baseRef", baseRef);
     payload.set("changes", JSON.valueToTree(changes));
+    extra.forEach(payload::put);
 
     ObjectNode body = JSON.createObjectNode();
     body.put("name", EVENT_NAME);

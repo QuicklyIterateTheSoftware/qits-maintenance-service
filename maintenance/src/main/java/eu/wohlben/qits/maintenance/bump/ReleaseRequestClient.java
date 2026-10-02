@@ -206,6 +206,40 @@ public class ReleaseRequestClient {
   }
 
   /**
+   * Adds a branch to an open release request, so its next fold carries it. Safe to repeat: a branch
+   * already on the request adds nothing over there.
+   *
+   * @param repoId the repository as qits-projects ids it ({@code mt_repository.catalog_id})
+   * @param requestId the open request
+   * @param branch the branch to add
+   */
+  public RequestResult join(String repoId, String requestId, String branch) {
+    ObjectNode body = JSON.createObjectNode();
+    body.put("branch", branch);
+    String path =
+        REQUESTS_PATH_PREFIX + encode(repoId) + REQUESTS_PATH_SUFFIX + "/" + encode(requestId)
+            + "/sources";
+    PeerAnswer answer = peers.post(PeerTarget.PROJECTS, path, body.toString()).answer();
+    if (answer.ok()) {
+      JsonNode request = answer.json() == null ? null : answer.json().get("request");
+      return RequestResult.requested(requestId, text(request, "state"));
+    }
+    Integer status = answer.httpStatus();
+    if (status != null && status >= 400 && status < 500 && status != 401 && status != 403) {
+      return new RequestResult(
+          RequestResult.Outcome.REFUSED,
+          REFUSED,
+          "joining " + branch + " to release request " + requestId + " was refused: HTTP "
+              + status + " " + brief(answer.body()));
+    }
+    return new RequestResult(
+        RequestResult.Outcome.RETRY,
+        null,
+        "qits-projects did not take the join of " + branch + " ("
+            + (status == null ? answer.failure() : "HTTP " + status) + ")");
+  }
+
+  /**
    * What qits-projects says has become of one release request.
    *
    * @param state the state verbatim — {@code PENDING}, {@code READY}, {@code RELEASED}, {@code
