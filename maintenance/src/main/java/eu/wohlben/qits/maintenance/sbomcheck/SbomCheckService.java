@@ -10,7 +10,6 @@ import eu.wohlben.qits.maintenance.entity.MtSbomTicket;
 import eu.wohlben.qits.maintenance.entity.MtSbomTicketVersion;
 import eu.wohlben.qits.maintenance.error.NoSbomCheckRunException;
 import eu.wohlben.qits.maintenance.error.SbomCheckFailedException;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.SbomStatus;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import eu.wohlben.qits.maintenance.sbom.SbomClient;
@@ -606,39 +605,28 @@ public class SbomCheckService {
         + "\n\n"
         + "Later affected versions are added as comments. Every listed version's SBOM is fetched"
         + " again on each daily check. qits-maintenance closes this ticket itself (DROPPED, with a"
-        + " comment) once every listed version has an ingested SBOM"
-        + (collectable(row.ecosystem) ? " or is no longer in the store" : "")
+        + " comment) once every listed version has an ingested SBOM or is no longer in the store"
         + " — unless it has been retyped.";
   }
 
   /**
-   * The way out, which depends on the ecosystem: qits-artifacts' GC never collects a maven or npm
-   * release, so for those "move the pin and let the GC take it" would leave the ticket open for
-   * ever — the only remedy is the document itself.
+   * The way out, the same for every type: qits-artifacts' GC collects any release — maven since
+   * qits-739, npm since qits-740, docker and daemon always — once nothing on any main branch still
+   * pins it, and a collected version stops counting. So a version nothing needs leaves on its own
+   * and the ticket closes itself; one something still pins goes when that pin moves forward; and
+   * one that has to stay needs its document.
    */
   private static String remedy(MtArtifact row) {
-    String backfill =
-        "publish (backfill) the SBOM to `/artifacts/sboms/"
-            + row.ecosystem
-            + "/"
-            + row.name
-            + "/-/"
-            + row.version
-            + "`; the next daily check ingests it, and this ticket closes itself.";
-    if (!collectable(row.ecosystem)) {
-      return "- qits-artifacts never collects a "
-          + row.ecosystem
-          + " release, so this version stays in the store for ever. The remedy is to "
-          + backfill;
-    }
-    return "- Is this an old version kept only because something pins it? Then moving that pin"
-        + " forward lets GC collect it, and this ticket closes itself. Otherwise, "
-        + backfill;
-  }
-
-  /** Whether qits-artifacts' GC ever collects a release of this type: never a maven or npm one. */
-  static boolean collectable(String type) {
-    return !Ecosystem.MAVEN.wireName().equals(type) && !Ecosystem.NPM.wireName().equals(type);
+    return "- A version nothing on any main branch still pins is collected by qits-artifacts' GC,"
+        + " and this ticket then closes itself. Is this an old version kept only because something"
+        + " pins it? Then moving that pin forward lets GC collect it. Otherwise, publish (backfill)"
+        + " the SBOM to `/artifacts/sboms/"
+        + row.ecosystem
+        + "/"
+        + row.name
+        + "/-/"
+        + row.version
+        + "`; the next daily check ingests it, and this ticket closes itself.";
   }
 
   private String reasonLine(Counted c, Instant now) {

@@ -732,27 +732,34 @@ class SbomCheckServiceTest {
   }
 
   /**
-   * A maven release is never collected, so the remedy is the backfill and the ticket says so — no
-   * pin, no GC, and no release.yml line made up from the row's own fields.
+   * Every type is collectable now — maven since qits-739, npm since qits-740 — so a maven or npm
+   * ticket names the GC way out beside the backfill, and closes on "no longer in the store" like
+   * any other; and still no release.yml line made up from the row's own fields.
    */
-  @Test
-  void aMavenDescriptionNamesTheBackfillAndNeverTheGc() {
-    String text = description("maven", "eu.wohlben.qits:qits-service-mock");
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "maven, eu.wohlben.qits:qits-service-mock",
+    "npm, @qits/ui-components"
+  })
+  void aMavenOrNpmDescriptionNamesTheGcAndTheBackfill(String type, String name) {
+    String text = description(type, name);
 
     assertTrue(
         text.contains(
-            "- **Announced as:** `{ type: maven, name: eu.wohlben.qits:qits-service-mock }` (by the"
+            "- **Announced as:** `{ type: " + type + ", name: " + name + " }` (by the"
                 + " release; release.yml was not read)"),
         text);
     assertTrue(!text.contains("at tag"), text);
-    assertTrue(text.contains("never collects a maven release"), text);
+    assertTrue(!text.contains("never collects"), text);
+    assertTrue(!text.contains("for ever"), text);
+    assertTrue(text.contains("collected by qits-artifacts' GC"), text);
+    assertTrue(text.contains("moving that pin forward lets GC collect it"), text);
     assertTrue(
         text.contains(
-            "publish (backfill) the SBOM to"
-                + " `/artifacts/sboms/maven/eu.wohlben.qits:qits-service-mock/-/2026.915.220910`"),
+            "publish (backfill) the SBOM to `/artifacts/sboms/" + type + "/" + name
+                + "/-/2026.915.220910`"),
         text);
-    assertTrue(!text.contains("GC"), text);
-    assertTrue(!text.contains("no longer in the store"), text);
+    assertTrue(text.contains("or is no longer in the store"), text);
   }
 
   /** A docker image can be collected, so the pin hint stays, and so does "no longer in the store". */
