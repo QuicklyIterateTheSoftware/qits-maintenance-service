@@ -47,12 +47,8 @@ release-request:
       for dir in $webui_dirs; do
         (
           cd "$dir"
-          if [ -f package-lock.json ]; then
-            sed -i -E \
-              -e "s#(\"resolved\": \")https?://[^/\"]+#\1$npm_proxy_origin#" \
-              -e "s#(\"resolved\": \")https?://[^/\"]+($npm_hosted_path)#\1$npm_hosted_origin\2#" \
-              package-lock.json
-          fi
+          # The lockfile is installed exactly as committed, no rewrite: it names only the two
+          # public hosts (qits-731), and `npm ci` is pointed at them directly.
           env npm_config_registry="$npm_proxy_origin/npm/npmjs/" \
               "npm_config_@qits:registry=$npm_hosted_origin$npm_hosted_path" \
               npm ci --no-audit --no-fund
