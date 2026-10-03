@@ -168,7 +168,10 @@ components:
         inFlight:
           type: integer
           format: int32
-        allowed:
+        slots:
+          type: integer
+          format: int32
+        free:
           type: integer
           format: int32
         ciActive:
@@ -190,6 +193,10 @@ components:
             $ref: "#/components/schemas/OwedBumpDto"
         next:
           type: string
+        picks:
+          type: array
+          items:
+            type: string
     Change:
       type: object
       properties:

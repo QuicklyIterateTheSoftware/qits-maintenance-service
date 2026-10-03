@@ -328,7 +328,7 @@ public class Inventory {
    * <p><b>The read runs the tick's own reasoning and acts on none of it</b> — {@link
    * BumpDispatcher#explain} — so that "there are pending bumps and nothing is queued" has an answer
    * at the door rather than in three services' logs. It costs what a tick costs: the candidate walk,
-   * one listing read from qits-ci and, for a held candidate, one release-request read (inside its
+   * one queue read from qits-ci and, for a held candidate, one release-request read (inside its
    * ttl, usually a cache hit). Nothing here closes a window and nothing here dispatches.
    */
   public BumpWindowDto bumpWindow(Instant now) {
@@ -341,7 +341,8 @@ public class Inventory {
         decision.outcome(),
         decision.summary(),
         decision.inFlight(),
-        decision.allowed(),
+        decision.slots(),
+        decision.free(),
         decision.ciActive(),
         decision.owed(),
         decision.held(),
@@ -365,7 +366,8 @@ public class Inventory {
                         one.reason(),
                         one.detail()))
             .toList(),
-        decision.pick() == null ? null : decision.pick().candidate().repository());
+        decision.pick() == null ? null : decision.pick().candidate().repository(),
+        decision.picks().stream().map(pick -> pick.candidate().repository()).toList());
   }
 
   public ScanDto scan(UUID id) {

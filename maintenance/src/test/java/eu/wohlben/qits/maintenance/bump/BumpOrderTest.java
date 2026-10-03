@@ -198,4 +198,93 @@ class BumpOrderTest {
 
     assertEquals(Optional.empty(), BumpOrder.next(candidates, PRODUCERS));
   }
+
+  /**
+   * <b>QITS-882: AS MANY AS THERE ARE FREE SLOTS, IN THE CALLER'S ORDER.</b> Every READY candidate
+   * can go in the same tick — none waits on another — so with slots for them all, they all go, in
+   * exactly the listing order (least-recently-bumped first, at the caller).
+   */
+  @Test
+  void everyReadyCandidateGoesUpToTheFreeSlotsInListingOrder() {
+    List<BumpOrder.Candidate> candidates =
+        List.of(
+            candidate("qits-c", on("maven", "io.quarkus.platform:quarkus-bom")),
+            candidate("qits-a", on("maven", "io.quarkus.platform:quarkus-bom")),
+            candidate("qits-b", on("maven", "io.quarkus.platform:quarkus-bom")),
+            candidate("qits-d", on("maven", "io.quarkus.platform:quarkus-bom")),
+            candidate("qits-e", on("maven", "io.quarkus.platform:quarkus-bom")));
+
+    assertEquals(
+        List.of("qits-c", "qits-a", "qits-b"),
+        names(BumpOrder.nextUpTo(candidates, PRODUCERS, 3)),
+        "three slots, three of the five, the first three as listed");
+    assertEquals(5, BumpOrder.nextUpTo(candidates, PRODUCERS, 7).size(), "never more than are READY");
+    assertTrue(BumpOrder.nextUpTo(candidates, PRODUCERS, 0).isEmpty(), "no slot, no pick");
+    assertTrue(
+        BumpOrder.nextUpTo(candidates, PRODUCERS, 3).stream().noneMatch(BumpOrder.Pick::cycleBroken));
+  }
+
+  /**
+   * <b>Free slots never send a consumer beside its owed upstream.</b> The service waits on the
+   * library whatever the capacity — the extra slot stays empty rather than building the service
+   * against the pin it is about to be handed — while an unrelated READY repository does go.
+   */
+  @Test
+  void freeSlotsDoNotLetAConsumerGoBesideItsOwedUpstream() {
+    List<BumpOrder.Candidate> candidates =
+        List.of(
+            candidate(SERVICE, on("maven", "eu.wohlben.qits:qits-eventstream")),
+            candidate(LIB, on("maven", "io.quarkus.platform:quarkus-bom")),
+            held(WRAPPER, on("npm", "left-pad")));
+
+    assertEquals(List.of(LIB), names(BumpOrder.nextUpTo(candidates, PRODUCERS, 5)));
+  }
+
+  /**
+   * <b>ONE CYCLE BREAK PER TICK, HOWEVER MANY SLOTS ARE FREE.</b> Breaking a cycle is a guess; the
+   * next tick asks again against a graph one release smaller. Two guesses at once would be two
+   * builds against stale pins where one would do.
+   */
+  @Test
+  void aCycleBreaksOnceEvenWithManyFreeSlots() {
+    List<BumpOrder.Candidate> candidates =
+        List.of(
+            candidate(SERVICE, on("maven", "eu.wohlben.qits:qits-eventstream")),
+            candidate(LIB, on("docker", "qits/qits-ci")));
+
+    List<BumpOrder.Pick> picks = BumpOrder.nextUpTo(candidates, PRODUCERS, 8);
+
+    assertEquals(1, picks.size(), "one knot, one pick");
+    assertTrue(picks.get(0).cycleBroken());
+    assertEquals(BumpOrder.next(candidates, PRODUCERS).orElseThrow(), picks.get(0));
+  }
+
+  /** Everything waiting on a release in flight is still nothing, with slots or without. */
+  @Test
+  void aCycleThroughAHeldCandidateIsNotBrokenWhateverTheSlots() {
+    List<BumpOrder.Candidate> candidates =
+        List.of(
+            candidate(SERVICE, on("maven", "eu.wohlben.qits:qits-eventstream")),
+            held(LIB, on("docker", "qits/qits-ci")));
+
+    assertTrue(BumpOrder.nextUpTo(candidates, PRODUCERS, 8).isEmpty());
+  }
+
+  /** {@code n == 1} is exactly {@link BumpOrder#next}, so the single-slot estate is unchanged. */
+  @Test
+  void oneSlotIsExactlyNext() {
+    List<BumpOrder.Candidate> candidates =
+        List.of(
+            candidate(SERVICE, on("maven", "eu.wohlben.qits:qits-eventstream")),
+            candidate(WRAPPER, on("npm", "left-pad")),
+            candidate(LIB, on("maven", "io.quarkus.platform:quarkus-bom")));
+
+    assertEquals(
+        List.of(BumpOrder.next(candidates, PRODUCERS).orElseThrow()),
+        BumpOrder.nextUpTo(candidates, PRODUCERS, 1));
+  }
+
+  private static List<String> names(List<BumpOrder.Pick> picks) {
+    return picks.stream().map(pick -> pick.candidate().repository()).toList();
+  }
 }

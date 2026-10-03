@@ -40,9 +40,6 @@ public class MaintenanceConfig {
   @ConfigProperty(name = "qits.maintenance.bump.dispatch.gated")
   boolean bumpDispatchGated;
 
-  @ConfigProperty(name = "qits.maintenance.bump.dispatch.max-in-flight")
-  int bumpMaxInFlight;
-
   @ConfigProperty(name = "qits.maintenance.bump.internal.window")
   Duration bumpWindow;
 
@@ -115,11 +112,11 @@ public class MaintenanceConfig {
   }
 
   /**
-   * Whether the nightly bump is DISPATCHED one at a time against an idle qits-ci, or fired all at
-   * once the way it used to be.
+   * Whether the nightly bump is DISPATCHED against qits-ci's free slots, or fired all at once the
+   * way it used to be.
    *
-   * <p>True — the default — makes the cron open a window and {@code BumpDispatcher} hand out one
-   * bump per idle tick, deepest upstream first. False restores the loop-and-fire: every eligible
+   * <p>True — the default — makes {@code BumpDispatcher} hand out as many bumps per tick as qits-ci
+   * has free slots, deepest upstream first. False restores the loop-and-fire: every eligible
    * repository asked for in one breath, which is what produced 30 simultaneous builds the first
    * night this ran. The old behaviour stays REACHABLE rather than removed, because a platform whose
    * qits-ci is not the bottleneck should be able to say so without a release.
@@ -129,24 +126,10 @@ public class MaintenanceConfig {
   }
 
   /**
-   * How much may be in flight before a dispatch waits — <b>counted twice, against the same
-   * number</b>: this service's own unfinished bumps, and qits-ci's whole active listing.
-   *
-   * <p>One, the default, is the request in its plain form: an empty CI queue and nothing of ours
-   * outstanding. It is a setting rather than a constant because "empty" is a policy and not a fact
-   * about correctness — a platform with a wide worker pool may want two or three in flight, and
-   * that is a number, not a rebuild. <b>Never below one</b>: zero would be a dispatcher that can
-   * never dispatch, which is a stall spelled as a config value.
-   */
-  public int bumpMaxInFlight() {
-    return Math.max(1, bumpMaxInFlight);
-  }
-
-  /**
    * How long after the nightly cron bumps may still be handed out.
    *
-   * <p>One at a time means the night's work is spread over as many CI runs as there are owed
-   * repositories, so the window has to be wide enough for the whole chain and narrow enough that a
+   * <p>Bounded by qits-ci's free slots and by each bump waiting on its upstream's release, the
+   * night's work is spread over many ticks, so the window has to be wide enough for the whole chain and narrow enough that a
    * branch never arrives in somebody's working day. The window ends early and by itself the moment
    * nothing is owed, so this is a CEILING rather than a duration anything runs for.
    */

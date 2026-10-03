@@ -299,30 +299,69 @@ public final class Fixture {
   }
 
   /**
-   * qits-ci has nothing queued and nothing running — the state the dispatch gate waits for.
+   * qits-ci has nothing queued and nothing running, and one connected runner with ONE slot — room
+   * for exactly one bump, the state the dispatch gate waits for.
    *
-   * <p>Every test that expects the clock to hand a bump out has to say this: an UNSCRIPTED listing
-   * is a 404, and the gate reads a listing it could not read as BUSY.
+   * <p>Every test that expects the clock to hand a bump out has to say this: an UNSCRIPTED snapshot
+   * is a 404, and the gate reads a snapshot it could not read as BUSY.
    */
   public static void scriptCiQueueEmpty(FakePeers peers) {
-    peers.answer(PeerTarget.CI, CiClient.ACTIVE_RUNS_PATH, FakePeers.Scripted.ok("{\"runs\":[]}"));
+    scriptCiQueue(peers, 0, runner("qits-ci", 1, true, false));
   }
 
-  /** qits-ci is busy: {@code active} runs queued or running, across every repository. */
+  /** qits-ci is full: {@code active} runs queued or running on a runner with that many slots. */
   public static void scriptCiQueue(FakePeers peers, int active) {
-    StringBuilder runs = new StringBuilder("{\"runs\":[");
+    scriptCiQueue(peers, active, runner("qits-ci", Math.max(1, active), true, false));
+  }
+
+  /**
+   * qits-ci's queue snapshot — {@code GET /ci/api/runs/queue} — with {@code active} runs and these
+   * runners.
+   *
+   * <p>The first active run is QUEUED and the rest RUNNING: the gate counts both halves rather than
+   * matching on a status, and a fixture that only ever filled one half would let a gate that read
+   * only the other pass unnoticed.
+   *
+   * @param runners JSON objects, see {@link #runner}
+   */
+  public static void scriptCiQueue(FakePeers peers, int active, String... runners) {
+    StringBuilder running = new StringBuilder();
+    StringBuilder queued = new StringBuilder();
     for (int index = 0; index < active; index++) {
-      runs.append(index == 0 ? "" : ",")
+      StringBuilder half = index == 0 ? queued : running;
+      half.append(half.length() == 0 ? "" : ",")
           .append("{\"id\":\"busy-")
           .append(index)
           .append("\",\"status\":\"")
-          // One QUEUED and the rest RUNNING: the gate counts the listing rather than matching on a
-          // status, and a fixture that only ever said QUEUED would let a filter pass unnoticed.
           .append(index == 0 ? "QUEUED" : "RUNNING")
           .append("\"}");
     }
     peers.answer(
-        PeerTarget.CI, CiClient.ACTIVE_RUNS_PATH, FakePeers.Scripted.ok(runs.append("]}").toString()));
+        PeerTarget.CI,
+        CiClient.QUEUE_PATH,
+        FakePeers.Scripted.ok(
+            "{\"generatedAt\":\"2026-10-03T12:00:00Z\",\"running\":["
+                + running
+                + "],\"queued\":["
+                + queued
+                + "],\"runners\":["
+                + String.join(",", runners)
+                + "]}"));
+  }
+
+  /** One runner as qits-ci's queue snapshot lists it. */
+  public static String runner(String name, int slots, boolean connected, boolean quarantined) {
+    return "{\"id\":\"00000000-0000-0000-0000-"
+        + String.format("%012d", Math.abs(name.hashCode()))
+        + "\",\"name\":\""
+        + name
+        + "\",\"slots\":"
+        + slots
+        + ",\"held\":0,\"connected\":"
+        + connected
+        + ",\"quarantined\":"
+        + quarantined
+        + "}";
   }
 
   public static void scriptRun(FakePeers peers, String runId, String status) {
