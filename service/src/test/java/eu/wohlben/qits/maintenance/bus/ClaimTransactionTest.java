@@ -136,6 +136,9 @@ class ClaimTransactionTest {
           store.repositoryName(REPOSITORY);
           store.pins(REPOSITORY);
           store.allPins();
+          store.gitlinkPins(REPOSITORY);
+          store.allGitlinkPins();
+          store.gitlinkTree(REPOSITORY, "0000000000000000000000000000000000000000");
           store.groups(REPOSITORY);
           store.allLatest();
           store.latestOf(Ecosystem.GITLINK);

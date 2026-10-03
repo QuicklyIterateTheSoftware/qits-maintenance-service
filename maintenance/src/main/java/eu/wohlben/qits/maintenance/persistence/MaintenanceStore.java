@@ -8,6 +8,8 @@ import eu.wohlben.qits.maintenance.entity.MtArtifactEdge;
 import eu.wohlben.qits.maintenance.entity.MtBranch;
 import eu.wohlben.qits.maintenance.entity.MtBump;
 import eu.wohlben.qits.maintenance.entity.MtBumpWindow;
+import eu.wohlben.qits.maintenance.entity.MtGitlinkPin;
+import eu.wohlben.qits.maintenance.entity.MtGitlinkTree;
 import eu.wohlben.qits.maintenance.entity.MtGroup;
 import eu.wohlben.qits.maintenance.entity.MtLatest;
 import eu.wohlben.qits.maintenance.entity.MtPin;
@@ -118,6 +120,36 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
       GroupSource groupSource,
       java.util.function.Function<ParsedPin, PinKind> kindOf,
       Instant now) {
+    replaceInventory(
+        name, project, catalogId, archetype, mainBranch, status, headSha, message, pins, groups,
+        groupSource, kindOf, List.of(), now);
+  }
+
+  /**
+   * The same replacement, with the npm pins the repository reaches THROUGH ITS GITLINKS written
+   * beside its own — in the one transaction, so {@code GET /pins} never reads a repository whose
+   * gitlink rows belong to a different scan than its gitlinks. See {@link MtGitlinkPin} for why
+   * they are a table of their own rather than {@code mt_pin} rows.
+   *
+   * @param gitlinkPins every row to serve for this repository, the kept ones of an unreadable tree
+   *     included — the caller decided which; this replaces the repository's rows with exactly these
+   */
+  @ActivateRequestContext
+  public void replaceInventory(
+      String name,
+      String project,
+      String catalogId,
+      String archetype,
+      String mainBranch,
+      RepositoryStatus status,
+      String headSha,
+      String message,
+      List<ParsedPin> pins,
+      List<GroupConfig.Group> groups,
+      GroupSource groupSource,
+      java.util.function.Function<ParsedPin, PinKind> kindOf,
+      List<GitlinkPin> gitlinkPins,
+      Instant now) {
     DbRetry.runInNewTx(
         "replace the inventory of " + name,
         () -> {
@@ -183,8 +215,127 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
             stored.source = (groupSource == null ? GroupSource.DEFAULT : groupSource).name();
             stored.persist();
           }
+
+          MtGitlinkPin.delete("repository", name);
+          for (GitlinkPin pin : gitlinkPins == null ? List.<GitlinkPin>of() : gitlinkPins) {
+            MtGitlinkPin stored = new MtGitlinkPin();
+            stored.id = UUID.randomUUID();
+            stored.repository = name;
+            stored.gitlinkPath = pin.gitlinkPath();
+            stored.submodule = pin.submodule();
+            stored.sha = pin.sha();
+            stored.ecosystem = pin.ecosystem();
+            stored.name = pin.name();
+            stored.version = pin.version();
+            stored.manifestPath = pin.manifestPath();
+            stored.persist();
+          }
           getEntityManager().flush();
         });
+  }
+
+  /**
+   * One npm pin a repository reaches through a gitlink, as {@link #replaceInventory} writes it.
+   *
+   * @param gitlinkPath where the gitlink sits in the carrying repository
+   * @param submodule the submodule's repository name
+   * @param sha the commit the submodule's tree was read at
+   * @param ecosystem the wire name — {@code npm}
+   * @param name the package
+   * @param version the lock's resolved version
+   * @param manifestPath the submodule's manifest, prefixed by {@code gitlinkPath}
+   */
+  public record GitlinkPin(
+      String gitlinkPath,
+      String submodule,
+      String sha,
+      String ecosystem,
+      String name,
+      String version,
+      String manifestPath) {
+
+    /** A stored row back as the value it was written from — what a kept row is re-written as. */
+    public static GitlinkPin of(MtGitlinkPin row) {
+      return new GitlinkPin(
+          row.gitlinkPath, row.submodule, row.sha, row.ecosystem, row.name, row.version,
+          row.manifestPath);
+    }
+  }
+
+  /**
+   * One npm pin a submodule's tree declared, as {@link MtGitlinkTree#pins} holds it.
+   *
+   * @param manifestPath relative to the SUBMODULE's root
+   */
+  public record TreePin(String name, String version, String manifestPath) {}
+
+  /**
+   * What the submodule's tree at {@code sha} was read to pin, if it has been read — empty when it
+   * never was, and a present empty list when it was and pins nothing.
+   */
+  @ActivateRequestContext
+  public Optional<List<TreePin>> gitlinkTree(String submodule, String sha) {
+    return DbRetry.inNewTx(
+        "read the cached tree of " + submodule + " at " + sha,
+        () -> {
+          MtGitlinkTree row =
+              MtGitlinkTree.find("submodule = ?1 and sha = ?2", submodule, sha).firstResult();
+          if (row == null) {
+            return Optional.<List<TreePin>>empty();
+          }
+          List<TreePin> pins = new java.util.ArrayList<>();
+          for (Map<String, Object> pin : readObjects(row.pins)) {
+            pins.add(
+                new TreePin(
+                    String.valueOf(pin.get("name")),
+                    String.valueOf(pin.get("version")),
+                    String.valueOf(pin.get("manifestPath"))));
+          }
+          return Optional.of(List.copyOf(pins));
+        });
+  }
+
+  /**
+   * Remembers what one submodule tree pins. <b>Write-once</b>: a commit's tree never changes, so a
+   * row already there is left as it is rather than rewritten.
+   */
+  @ActivateRequestContext
+  public void recordGitlinkTree(String submodule, String sha, List<TreePin> pins, Instant now) {
+    DbRetry.runInNewTx(
+        "remember the tree of " + submodule + " at " + sha,
+        () -> {
+          if (MtGitlinkTree.count("submodule = ?1 and sha = ?2", submodule, sha) > 0) {
+            return;
+          }
+          MtGitlinkTree row = new MtGitlinkTree();
+          row.id = UUID.randomUUID();
+          row.submodule = submodule;
+          row.sha = sha;
+          row.pins = writeJson(pins);
+          row.readAt = now;
+          row.persist();
+          getEntityManager().flush();
+        });
+  }
+
+  /** The npm rows one repository reaches through its gitlinks, as the last scan wrote them. */
+  @ActivateRequestContext
+  public List<MtGitlinkPin> gitlinkPins(String repository) {
+    return DbRetry.inNewTx(
+        "read the gitlink pins of one repository",
+        () ->
+            MtGitlinkPin.find(
+                    "repository = ?1", Sort.by("gitlinkPath").and("name"), repository)
+                .list());
+  }
+
+  /** Every npm row reached through a gitlink, on the platform — the GC's pin source reads it. */
+  @ActivateRequestContext
+  public List<MtGitlinkPin> allGitlinkPins() {
+    return DbRetry.inNewTx(
+        "read every gitlink pin",
+        () ->
+            MtGitlinkPin.findAll(Sort.by("repository").and("gitlinkPath").and("name")).list());
   }
 
   /**
@@ -305,6 +456,8 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
           // full scan, and the updates above are flushed by the first query anyway.
           MtPin.delete("repository in ?1", absent);
           MtGroup.delete("repository in ?1", absent);
+          // …and what its gitlinks reached, which is the same cache one hop further out.
+          MtGitlinkPin.delete("repository in ?1", absent);
           getEntityManager().flush();
           return List.copyOf(dropped);
         });
@@ -1799,9 +1952,8 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
    *
    * <p><b>No cut-off, on purpose.</b> Every released version still in the store counts, however
    * old. What retires one is an INGESTED backfill — the check re-reads every MISSING and FAILED
-   * row's document before it counts it — or, for a docker image or a daemon binary, the GC
-   * collecting it. qits-artifacts never collects a maven or npm release, so for those the backfill
-   * is the only way out.
+   * row's document before it counts it — or the GC collecting it, which it does for every type
+   * once nothing on any main branch still pins the version.
    */
   @ActivateRequestContext
   public List<MtArtifact> sbomCheckCandidates(Collection<String> types) {

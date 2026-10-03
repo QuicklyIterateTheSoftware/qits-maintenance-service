@@ -14,6 +14,7 @@ import eu.wohlben.qits.maintenance.dto.ScanDto;
 import eu.wohlben.qits.maintenance.entity.MtBranch;
 import eu.wohlben.qits.maintenance.entity.MtBump;
 import eu.wohlben.qits.maintenance.entity.MtBumpWindow;
+import eu.wohlben.qits.maintenance.entity.MtGitlinkPin;
 import eu.wohlben.qits.maintenance.entity.MtGroup;
 import eu.wohlben.qits.maintenance.entity.MtLatest;
 import eu.wohlben.qits.maintenance.entity.MtPin;
@@ -215,6 +216,14 @@ public class Inventory {
    * repository, manifest — so two reads over an unchanged store answer identically and a diff
    * between two runs is a change in the platform rather than in a query plan.
    *
+   * <p><b>A gitlink's CONTENTS are served, though the gitlink itself is not.</b> A service builds
+   * its frontend out of a submodule at the commit the gitlink records, so the INTERNAL npm pins of
+   * that submodule's lock AT THAT COMMIT are versions the service's build installs — and the
+   * frontend's own rows say only what the frontend's main pins. The scan resolves them and stores
+   * them beside the repository's own pins ({@code scan/GitlinkNpmPins}); they are served here as
+   * {@code npm} rows naming the CARRYING repository, with a {@code via} of {@code
+   * gitlink:<path>@<sha>}.
+   *
    * <p><b>The one thing this computes is {@link CarriedImages} and {@link CarriedDaemons}, and it is
    * the same fact in the store it will actually be fetched from.</b> Container image versions and
    * the qits CLI's version are pom pins now — a maven coordinate whose own version IS the image tag,
@@ -251,6 +260,19 @@ public class Inventory {
           new PinSourceDto.ArtifactPinDto(
               pin.ecosystem, pin.name, pin.version, pin.repository, pin.manifestPath, null));
     }
+    // …the npm pins each repository's gitlinks reach: the submodule's lock at the gitlinked
+    // commit, which is what that repository's build installs. Resolved and stored by the scan (see
+    // scan/GitlinkNpmPins), so this is a read like the one above. Already INTERNAL by the same rule.
+    for (MtGitlinkPin pin : store.allGitlinkPins()) {
+      pins.add(
+          new PinSourceDto.ArtifactPinDto(
+              pin.ecosystem,
+              pin.name,
+              pin.version,
+              pin.repository,
+              pin.manifestPath,
+              gitlinkVia(pin.gitlinkPath, pin.sha)));
+    }
     // …and the images and daemon binaries those maven and npm pins name without spelling out.
     // Derived from the STORED rows — snapshotted here, so the second derivation cannot read the
     // first one's output as if a manifest had written it — rather than from the store again, so the
@@ -261,6 +283,11 @@ public class Inventory {
     pins.addAll(carriedDaemons.resolve(stored));
     pins.sort(PIN_ORDER);
     return new PinSourceDto(Instant.now(), List.copyOf(repositories), List.copyOf(pins));
+  }
+
+  /** The {@code via} of an npm row reached through a gitlink: the path, and the commit read. */
+  public static String gitlinkVia(String gitlinkPath, String sha) {
+    return "gitlink:" + gitlinkPath + "@" + sha;
   }
 
   /** The total order the pin source is served in. Every field is non-null on a stored row. */

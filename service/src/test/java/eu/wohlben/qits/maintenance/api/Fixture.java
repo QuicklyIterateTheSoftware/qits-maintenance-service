@@ -174,24 +174,8 @@ public final class Fixture {
                 // A row with no alias has no address, so a scan must skip it rather than fail on it.
                 + "{\"id\":\"r2\",\"projectId\":\"qits\",\"name\":null,\"mainBranch\":\"main\"}]}"));
 
-    String root =
-        "{\"entries\":["
-            + "{\"name\":\"pom.xml\",\"type\":\"blob\"},"
-            + "{\"name\":\"package.json\",\"type\":\"blob\"},"
-            + "{\"name\":\"package-lock.json\",\"type\":\"blob\"},"
-            + "{\"name\":\"Dockerfile\",\"type\":\"blob\"},"
-            + "{\"name\":\".gitmodules\",\"type\":\"blob\"},"
-            // The gitlink itself, as a git host that reports the mode and the object name answers
-            // it. Both spellings are read; this is the one qits-githost 33b0ccf serves.
-            + "{\"name\":\"webui\",\"type\":\"commit\",\"mode\":\"160000\",\"sha\":\""
-            + GITLINK_SHA
-            + "\"},"
-            + "{\"name\":\"service\",\"type\":\"tree\"}]}";
+    scriptGitlinkAt(peers, GITLINK_SHA);
     Map<String, String> sha = Map.of("Git-Commit-Sha", HEAD_SHA);
-    peers.answer(PeerTarget.GITHOST, TREE + "main", FakePeers.Scripted.ok(root, sha));
-    // The same listing at the sha: it is what a 404 on a blob is checked against, and answering it
-    // is the difference between ABSENT and GONE.
-    peers.answer(PeerTarget.GITHOST, TREE + HEAD_SHA, FakePeers.Scripted.ok(root, sha));
 
     peers.answer(PeerTarget.GITHOST, BLOB + "pom.xml", FakePeers.Scripted.ok(POM, sha));
     peers.answer(PeerTarget.GITHOST, BLOB + "service/pom.xml", FakePeers.Scripted.ok(MODULE_POM, sha));
@@ -239,6 +223,32 @@ public final class Fixture {
         FakePeers.Scripted.ok(
             "{\"name\":\"qits/build-images/maven-base\",\"tags\":"
                 + "[\"latest\",\"2026.813.1\",\"2026.821.2\"]}"));
+  }
+
+  /**
+   * The root listing, with the {@code webui} gitlink recording {@code gitlinkSha} — what a gitlink
+   * bump landing on main looks like to the next scan. {@link #scriptScan} answers it at {@link
+   * #GITLINK_SHA}.
+   */
+  public static void scriptGitlinkAt(FakePeers peers, String gitlinkSha) {
+    String root =
+        "{\"entries\":["
+            + "{\"name\":\"pom.xml\",\"type\":\"blob\"},"
+            + "{\"name\":\"package.json\",\"type\":\"blob\"},"
+            + "{\"name\":\"package-lock.json\",\"type\":\"blob\"},"
+            + "{\"name\":\"Dockerfile\",\"type\":\"blob\"},"
+            + "{\"name\":\".gitmodules\",\"type\":\"blob\"},"
+            // The gitlink itself, as a git host that reports the mode and the object name answers
+            // it. Both spellings are read; this is the one qits-githost 33b0ccf serves.
+            + "{\"name\":\"webui\",\"type\":\"commit\",\"mode\":\"160000\",\"sha\":\""
+            + gitlinkSha
+            + "\"},"
+            + "{\"name\":\"service\",\"type\":\"tree\"}]}";
+    Map<String, String> sha = Map.of("Git-Commit-Sha", HEAD_SHA);
+    peers.answer(PeerTarget.GITHOST, TREE + "main", FakePeers.Scripted.ok(root, sha));
+    // The same listing at the sha: it is what a 404 on a blob is checked against, and answering it
+    // is the difference between ABSENT and GONE.
+    peers.answer(PeerTarget.GITHOST, TREE + HEAD_SHA, FakePeers.Scripted.ok(root, sha));
   }
 
   /** The branch does not exist yet — the ordinary state before a first bump. */

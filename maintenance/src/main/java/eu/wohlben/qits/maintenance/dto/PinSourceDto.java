@@ -66,12 +66,15 @@ public record PinSourceDto(
    * @param name the artifact in its own ecosystem's spelling, which is the registry coordinate
    * @param version the exact version referenced; for npm the LOCK's resolved one, because that is
    *     what an install actually fetches out of the registry
-   * @param repository the repository whose manifest holds the line
-   * @param manifestPath where that line is, relative to the repository root
-   * @param via the {@code <ecosystem> <name>} of the coordinate this row was RESOLVED through, and
-   *     null on a row a manifest wrote out. It is provenance and no part of the keep: a reviewer
-   *     asking why an image nobody's {@code FROM} line mentions is being kept reads the pom property
-   *     that carries its tag here.
+   * @param repository the repository whose manifest holds the line — for a gitlink row, the
+   *     repository CARRYING the gitlink, whose build installs the version
+   * @param manifestPath where that line is, relative to the repository root; for a gitlink row the
+   *     submodule's manifest prefixed by the gitlink path
+   * @param via the {@code <ecosystem> <name>} of the coordinate this row was RESOLVED through, or
+   *     {@code gitlink:<path>@<sha>} on an npm row read out of a submodule's lock at the commit the
+   *     repository's gitlink records, and null on a row a manifest wrote out. It is provenance and
+   *     no part of the keep: a reviewer asking why an image nobody's {@code FROM} line mentions is
+   *     being kept reads the pom property that carries its tag here.
    */
   public record ArtifactPinDto(
       String ecosystem,

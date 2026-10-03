@@ -82,6 +82,9 @@ public class ScanService {
 
   @Inject WorkQueue queue;
 
+  /** The npm pins each repository reaches through its gitlinks, resolved here and stored beside. */
+  @Inject GitlinkNpmPins gitlinkNpmPins;
+
   /**
    * Opens a scan row, queues the work and answers at once.
    *
@@ -167,8 +170,14 @@ public class ScanService {
       return;
     }
 
+    // The WHOLE listing, not the filtered loop: a scan of one service still has to find the
+    // project its frontend submodule is addressed under.
+    Map<String, CatalogEntry> catalogByName = new LinkedHashMap<>();
+    for (CatalogEntry entry : read.entries()) {
+      catalogByName.putIfAbsent(entry.name(), entry);
+    }
     for (CatalogEntry entry : entries) {
-      scanOne(entry, revision, now);
+      scanOne(entry, catalogByName, revision, now);
     }
     // BEFORE the registry half, so no ghost's pins are looked up: a dropped repository's rows are
     // gone by the time refreshLatest reads the inventory back out of the store.
@@ -189,9 +198,10 @@ public class ScanService {
    * <p>A repository that blows up is that repository's row, not the scan's: forty-eight others
    * still have manifests worth reading.
    */
-  private void scanOne(CatalogEntry entry, String revision, Instant now) {
+  private void scanOne(
+      CatalogEntry entry, Map<String, CatalogEntry> catalog, String revision, Instant now) {
     try {
-      readInto(entry, revision, now);
+      readInto(entry, catalog, revision, now);
     } catch (RuntimeException e) {
       LOG.warnf(e, "%s could not be scanned", entry.name());
       store.markRepository(
@@ -205,7 +215,8 @@ public class ScanService {
     }
   }
 
-  private void readInto(CatalogEntry entry, String revision, Instant now) {
+  private void readInto(
+      CatalogEntry entry, Map<String, CatalogEntry> catalog, String revision, Instant now) {
     ManifestScanner.Read read = manifests.read(entry, revision);
     if (read.status() == RepositoryStatus.UNREACHABLE) {
       store.markRepository(
@@ -231,6 +242,9 @@ public class ScanService {
         read.groups(),
         read.groupSource(),
         config::kindOf,
+        // What each gitlink's submodule pins at the recorded commit — read once per (submodule,
+        // sha) and stored, so the GC's pin source can serve it without calling the git host.
+        gitlinkNpmPins.resolve(entry.name(), read.pins(), catalog, now),
         now);
   }
 

@@ -42,7 +42,10 @@ import org.jboss.logging.Logger;
  * <p><b>The gitlink ITSELF is a pin, and that is a different fact from what it contains.</b>
  * {@code .gitmodules} plus the mode-{@code 160000} entry in the tree say which repository is
  * embedded and at which commit — one line this repository owns and can move. Its contents belong to
- * the submodule's own row, which is why the two never meet.
+ * the submodule's own row, which is why the two never meet HERE. The one exception lives outside
+ * this class: the npm pins the submodule's lock holds AT THAT COMMIT are what the carrying
+ * repository's build installs, so {@code scan/GitlinkNpmPins} reads them through {@link #pinsAt}
+ * and stores them for the GC's pin source — never as pins of this repository's.
  *
  * <p><b>A repository may take a whole ecosystem off this scan.</b> {@code ignore:} in
  * {@code .config/qits/maintenance.yml} names ecosystems by their wire name, and one named there is
