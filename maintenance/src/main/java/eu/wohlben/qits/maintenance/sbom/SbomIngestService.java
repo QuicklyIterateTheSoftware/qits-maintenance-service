@@ -24,11 +24,12 @@ import org.jboss.logging.Logger;
  * fetched inline would hold a bus claim open across another service's call, and a qits-artifacts
  * that was slow would turn one release into an event redelivered for ever.
  *
- * <p><b>404 is MISSING and there is NO retry loop.</b> The SBOM route is newer than most of what
- * this platform has released, so most coordinates have no document — and a released version is
- * immutable, so asking again tomorrow asks about the same bytes. What supplies the answer is the
- * NEXT release of that artifact, which brings its own row; and a person who knows a document has
- * since been stored asks for one by hand through {@code POST /artifacts/ingest}.
+ * <p><b>404 is MISSING and there is NO retry loop here.</b> The SBOM route is newer than most of
+ * what this platform has released, so most coordinates have no document. A released version is
+ * immutable, but its document can be BACKFILLED to qits-artifacts later — and qits-artifacts keeps
+ * maven and npm releases for ever — so the daily SBOM check asks again through {@link #recheck}
+ * for every MISSING and FAILED row still in the store (qits-739). A person who will not wait asks
+ * for one by hand through {@code POST /artifacts/ingest}.
  *
  * <p><b>A failure is FAILED with the sentence, not a throw.</b> One artifact's unreadable document
  * costs that artifact's row and nothing else, the same rule every other outbound read here follows.
@@ -121,8 +122,8 @@ public class SbomIngestService {
    * The manual backfill: create the row or put it back to PENDING, whatever it said before, and
    * queue it.
    *
-   * <p>This is the only thing that moves a MISSING or FAILED row, and it exists because both are
-   * terminal by design.
+   * <p>The by-hand way to move a MISSING or FAILED row; the daily SBOM check's {@link #recheck} is
+   * the scheduled one.
    */
   public UUID requeue(
       Ecosystem ecosystem, String name, String version, String repository, Instant now) {
@@ -181,30 +182,94 @@ public class SbomIngestService {
       case MISSING -> {
         store.markArtifactMissing(artifactId);
         LOG.debugf(
-            "qits-artifacts holds no sbom for %s %s %s; nothing retries it",
+            "qits-artifacts holds no sbom for %s %s %s; the daily sbom check asks again",
             artifact.ecosystem, artifact.name, artifact.version);
       }
-      case FAILED -> {
+      // UNREACHABLE too: a PENDING row has no earlier answer to keep, and leaving it PENDING would
+      // be a row nothing says anything about.
+      case FAILED, UNREACHABLE -> {
         store.markArtifactFailed(artifactId, answer.reason());
         LOG.warnf(
             "The sbom of %s %s could not be read: %s",
             artifact.name, artifact.version, answer.reason());
       }
+      case FOUND -> stored(artifact, answer);
+    }
+  }
+
+  /**
+   * <b>The daily SBOM check's re-read of a MISSING or FAILED row</b> (qits-739): the same fetch,
+   * parse and write as {@link #ingest}, for a row that already has an answer.
+   *
+   * <p>Without it a document BACKFILLED to {@code /artifacts/sboms/<type>/<name>/-/<version>} after
+   * the release was never read: the row stayed MISSING, the check counted it every day, and its
+   * ticket could never close — qits-artifacts keeps maven and npm releases for ever, so "collected"
+   * never comes either.
+   *
+   * <p><b>Only an ANSWER moves the row.</b> A document is INGESTED; a 404 is MISSING; a 2xx that is
+   * not a document is FAILED with the sentence. {@link SbomClient.Outcome#UNREACHABLE} — and a
+   * surprise thrown out of the client — says nothing about the document, so the row is left exactly
+   * as it was and the sentence goes back to the caller for its report. That is the one difference
+   * from {@link #ingest}, where a PENDING row has no earlier answer to keep.
+   *
+   * <p>Runs on the CALLER's thread, not the queue: the check counts the row right after, and has to
+   * count what the re-read found.
+   *
+   * @param row a MISSING or FAILED row; its status and error are brought up to date in place
+   * @return empty when qits-artifacts answered and the row now says so; else why it could not be
+   *     asked, with the row untouched
+   */
+  public Optional<String> recheck(MtArtifact row) {
+    SbomStatus before = SbomStatus.of(row.sbomStatus);
+    if (before != SbomStatus.MISSING && before != SbomStatus.FAILED) {
+      return Optional.empty();
+    }
+    SbomClient.SbomAnswer answer;
+    try {
+      answer = client.fetch(row.ecosystem, row.name, row.version);
+    } catch (RuntimeException e) {
+      return Optional.of("the sbom could not be read: " + e);
+    }
+    switch (answer.outcome()) {
+      case UNREACHABLE -> {
+        return Optional.of(answer.reason());
+      }
+      case MISSING -> {
+        // Still 404 — the ordinary answer, and a MISSING row already says it.
+        if (before != SbomStatus.MISSING) {
+          store.markArtifactMissing(row.id);
+        }
+        row.sbomStatus = SbomStatus.MISSING.name();
+        row.sbomError = null;
+      }
+      case FAILED -> {
+        store.markArtifactFailed(row.id, answer.reason());
+        row.sbomStatus = SbomStatus.FAILED.name();
+        row.sbomError = answer.reason();
+      }
       case FOUND -> {
-        ParsedSbom parsed = CycloneDxParser.parse(answer.document());
-        // The whole graph in one transaction, and the row is INGESTED by the same write.
-        store.replaceGraph(artifactId, parsed.components(), parsed.edges(), Instant.now());
-        long direct = parsed.components().stream().filter(ParsedSbom.Component::direct).count();
-        LOG.infof(
-            "Ingested the sbom of %s %s: %d components (%d direct), %d edges%s",
-            artifact.name,
-            artifact.version,
-            parsed.components().size(),
-            direct,
-            parsed.edges().size(),
-            parsed.problems().isEmpty() ? "" : " — " + String.join("; ", parsed.problems()));
+        stored(row, answer);
+        row.sbomStatus = SbomStatus.INGESTED.name();
+        row.sbomError = null;
       }
     }
+    return Optional.empty();
+  }
+
+  /** A FOUND answer, parsed and stored — the ingest's write and the re-read's alike. */
+  private void stored(MtArtifact artifact, SbomClient.SbomAnswer answer) {
+    ParsedSbom parsed = CycloneDxParser.parse(answer.document());
+    // The whole graph in one transaction, and the row is INGESTED by the same write.
+    store.replaceGraph(artifact.id, parsed.components(), parsed.edges(), Instant.now());
+    long direct = parsed.components().stream().filter(ParsedSbom.Component::direct).count();
+    LOG.infof(
+        "Ingested the sbom of %s %s: %d components (%d direct), %d edges%s",
+        artifact.name,
+        artifact.version,
+        parsed.components().size(),
+        direct,
+        parsed.edges().size(),
+        parsed.problems().isEmpty() ? "" : " — " + String.join("; ", parsed.problems()));
   }
 
   /**

@@ -3,12 +3,12 @@ package eu.wohlben.qits.maintenance.model;
 /**
  * How far one released artifact's bill of materials has got.
  *
- * <p><b>MISSING is not a failure and is deliberately terminal.</b> qits-artifacts stores an SBOM
- * for artifacts released since that route existed and holds nothing for the ones released before
- * it, so a 404 is the ORDINARY answer during the rollout — for most coordinates it is also the
- * permanent one. Retrying it would be a schedule asking the same question about the same immutable
- * version for ever; the next release of that artifact brings its own row, and a person who knows
- * better can re-ingest one by hand.
+ * <p><b>MISSING is not a failure.</b> qits-artifacts stores an SBOM for artifacts released since
+ * that route existed and holds nothing for the ones released before it, so a 404 is the ORDINARY
+ * answer during the rollout — for most coordinates it is also the permanent one. Nothing retries it
+ * on a timer of its own; the daily SBOM check re-reads every MISSING and FAILED row still in
+ * qits-artifacts, so a document backfilled later is ingested (qits-739), and a person can re-ingest
+ * one by hand.
  */
 public enum SbomStatus {
   /** The row exists and the document has not been read yet — the outbox state. */
@@ -17,7 +17,7 @@ public enum SbomStatus {
   /** The components and edges recorded against this artifact are that document's. */
   INGESTED,
 
-  /** qits-artifacts has no document for this coordinate. Nothing retries it. */
+  /** qits-artifacts has no document for this coordinate. The daily SBOM check asks again. */
   MISSING,
 
   /** The document could not be read, and {@code sbom_error} says why. */

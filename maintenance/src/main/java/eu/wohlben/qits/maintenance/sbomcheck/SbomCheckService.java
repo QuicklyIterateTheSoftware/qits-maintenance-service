@@ -10,9 +10,11 @@ import eu.wohlben.qits.maintenance.entity.MtSbomTicket;
 import eu.wohlben.qits.maintenance.entity.MtSbomTicketVersion;
 import eu.wohlben.qits.maintenance.error.NoSbomCheckRunException;
 import eu.wohlben.qits.maintenance.error.SbomCheckFailedException;
+import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.SbomStatus;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import eu.wohlben.qits.maintenance.sbom.SbomClient;
+import eu.wohlben.qits.maintenance.sbom.SbomIngestService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.time.Duration;
@@ -44,8 +46,9 @@ import org.jboss.logging.Logger;
  *   <li>its type is one the SBOM route keys ({@link SbomClient#TYPES}: maven, npm, docker, daemon);
  *   <li>its release.yml section is {@code artifacts}, or unrecorded (a release from before qits-ci
  *       carried the section) — a {@code contracts} entry is never counted;
- *   <li>its SBOM is MISSING or FAILED, or PENDING for longer than {@code pending-grace} after the
- *       release (a fetch that is merely queued is not a finding);
+ *   <li>its SBOM is MISSING or FAILED — STILL, after this run asked qits-artifacts again — or
+ *       PENDING for longer than {@code pending-grace} after the release (a fetch that is merely
+ *       queued is not a finding);
  *   <li>the version is still in qits-artifacts ({@link ArtifactPresence}): one the GC has collected
  *       is nobody's problem any more. A probe that cannot answer FAILS THE RUN — see {@link
  *       SbomCheckFailedException};
@@ -61,6 +64,12 @@ import org.jboss.logging.Logger;
  * <ol>
  *   <li>Every presence probe the run will need is made FIRST, before anything is written, so a
  *       failing probe leaves no half-filed run behind.
+ *   <li>Every MISSING or FAILED row still in the store has its document FETCHED AGAIN ({@link
+ *       SbomIngestService#recheck}, qits-739) — the PENDING sweep's fetch, parse and write. A
+ *       document backfilled since is INGESTED and stops counting today; a 404 stays MISSING; a 2xx
+ *       that is not a document is FAILED with the sentence. A qits-artifacts that cannot be reached
+ *       on one row changes nothing on it: the row counts as it stood, a warning says why, and the
+ *       run goes on.
  *   <li>The report is computed and grouped by {@code (project, ecosystem, name)}.
  *   <li>Report-only ({@code file-tickets=false}): the report is stored and NOTHING in qits-projects
  *       is called — not a read, not a write.
@@ -119,6 +128,8 @@ public class SbomCheckService {
   @Inject TicketClient tickets;
 
   @Inject CatalogReader catalog;
+
+  @Inject SbomIngestService ingest;
 
   @Inject ObjectMapper json;
 
@@ -179,8 +190,22 @@ public class SbomCheckService {
       probe(present, ticket.ecosystem, ticket.name);
     }
 
-    List<Counted> counted = new ArrayList<>();
+    // A document backfilled since the row was answered is read NOW, before the row is counted —
+    // or a MISSING row would count for ever, and its ticket never close.
     List<String> warnings = new ArrayList<>();
+    int reread = 0;
+    for (MtArtifact row : candidates) {
+      Reason reason = reason(row, now);
+      if ((reason == Reason.MISSING || reason == Reason.FAILED)
+          && present.get(key(row.ecosystem, row.name)).contains(row.version)) {
+        recheck(row, warnings);
+        if (SbomStatus.of(row.sbomStatus) == SbomStatus.INGESTED) {
+          reread++;
+        }
+      }
+    }
+
+    List<Counted> counted = new ArrayList<>();
     ProjectResolver projects = new ProjectResolver();
     for (MtArtifact row : candidates) {
       Reason reason = reason(row, now);
@@ -269,12 +294,43 @@ public class SbomCheckService {
       throw new IllegalStateException("the sbom check report does not serialize", e);
     }
     LOG.infof(
-        "SBOM check: %d version(s) without a usable SBOM across %d artifact(s), %d warning(s)%s",
+        "SBOM check: %d version(s) without a usable SBOM across %d artifact(s), %d ingested on"
+            + " re-read, %d warning(s)%s",
         counted.size(),
         groups.size(),
+        reread,
         warnings.size(),
         fileTickets ? "" : " — report-only, nothing filed");
     return report;
+  }
+
+  /**
+   * One MISSING or FAILED row's document, asked for again. <b>A row that could not be asked about
+   * is counted as it stood</b> — "could not ask" is never read as "still 404" or as "there now" —
+   * and costs a warning, not the run: the presence probe already proved qits-artifacts answers, so
+   * one coordinate's failure is that coordinate's.
+   */
+  private void recheck(MtArtifact row, List<String> warnings) {
+    Optional<String> unasked;
+    try {
+      unasked = ingest.recheck(row);
+    } catch (RuntimeException e) {
+      unasked = Optional.of(e.toString());
+      LOG.warnf(e, "The sbom check could not re-read %s %s", row.name, row.version);
+    }
+    unasked.ifPresent(
+        why ->
+            warnings.add(
+                "could not re-read the sbom of "
+                    + row.ecosystem
+                    + " "
+                    + row.name
+                    + " "
+                    + row.version
+                    + ", counted as "
+                    + row.sbomStatus
+                    + ": "
+                    + why));
   }
 
   /**
@@ -533,25 +589,56 @@ public class SbomCheckService {
         + "- **Release run:** "
         + (row.runId == null ? "not recorded" : "`" + row.runId + "`")
         + " (qits-ci run; absent for releases before SoftwareRelease carried it)\n"
-        + "- **release.yml entry:** `.config/qits/release.yml` at tag `"
-        + row.version
-        + "`: `{ type: "
+        + "- **Announced as:** `{ type: "
         + row.ecosystem
         + ", name: "
         + row.name
-        + " }`\n"
+        + " }` (by the release; release.yml was not read)\n"
         + "- **Reason:** "
         + reasonLine(c, now)
         + "\n\n"
         + "## To analyse\n"
-        + "- Does the entry declare `sbom:`, and does the step that builds it write that path?\n"
+        + "- Does the release.yml entry declare `sbom:`, and does the step that builds it write that"
+        + " path?\n"
         + "- Did the release run's last step pass the SBOM presence check?\n"
         + "- For FAILED: fetch the document and validate it as CycloneDX 1.6.\n"
-        + "- Is this an old version kept only because something pins it? Then moving that pin"
-        + " forward lets GC collect it, and this ticket closes itself.\n\n"
-        + "Later affected versions are added as comments. qits-maintenance closes this ticket itself"
-        + " (DROPPED, with a comment) once every listed version has an ingested SBOM or is no longer"
-        + " in the store — unless it has been retyped.";
+        + remedy(row)
+        + "\n\n"
+        + "Later affected versions are added as comments. Every listed version's SBOM is fetched"
+        + " again on each daily check. qits-maintenance closes this ticket itself (DROPPED, with a"
+        + " comment) once every listed version has an ingested SBOM"
+        + (collectable(row.ecosystem) ? " or is no longer in the store" : "")
+        + " — unless it has been retyped.";
+  }
+
+  /**
+   * The way out, which depends on the ecosystem: qits-artifacts' GC never collects a maven or npm
+   * release, so for those "move the pin and let the GC take it" would leave the ticket open for
+   * ever — the only remedy is the document itself.
+   */
+  private static String remedy(MtArtifact row) {
+    String backfill =
+        "publish (backfill) the SBOM to `/artifacts/sboms/"
+            + row.ecosystem
+            + "/"
+            + row.name
+            + "/-/"
+            + row.version
+            + "`; the next daily check ingests it, and this ticket closes itself.";
+    if (!collectable(row.ecosystem)) {
+      return "- qits-artifacts never collects a "
+          + row.ecosystem
+          + " release, so this version stays in the store for ever. The remedy is to "
+          + backfill;
+    }
+    return "- Is this an old version kept only because something pins it? Then moving that pin"
+        + " forward lets GC collect it, and this ticket closes itself. Otherwise, "
+        + backfill;
+  }
+
+  /** Whether qits-artifacts' GC ever collects a release of this type: never a maven or npm one. */
+  static boolean collectable(String type) {
+    return !Ecosystem.MAVEN.wireName().equals(type) && !Ecosystem.NPM.wireName().equals(type);
   }
 
   private String reasonLine(Counted c, Instant now) {

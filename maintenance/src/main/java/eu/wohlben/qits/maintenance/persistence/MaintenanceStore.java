@@ -1408,10 +1408,9 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
   /**
    * The manual backfill's write: create the row, or put an existing one back to PENDING.
    *
-   * <p><b>This is the one thing that moves a MISSING or FAILED row.</b> Nothing retries either
-   * automatically — a 404 is the ordinary permanent answer for a release published before the SBOM
-   * route existed — so a person who knows a document has since been stored asks for it by hand, and
-   * this is what that ask writes. The graph is left standing until the re-ingest replaces it: a row
+   * <p><b>The by-hand way to move a MISSING or FAILED row</b>; the other is the daily SBOM check,
+   * which re-reads both. A person who knows a document has since been stored and will not wait for
+   * the check asks for it by hand, and this is what that ask writes. The graph is left standing until the re-ingest replaces it: a row
    * with no components for a minute would read as an artifact that contains nothing.
    */
   @ActivateRequestContext
@@ -1527,7 +1526,11 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
         });
   }
 
-  /** qits-artifacts holds no document for this coordinate. Terminal, and nothing retries it. */
+  /**
+   * qits-artifacts holds no document for this coordinate. Not terminal: the daily SBOM check
+   * re-reads every MISSING row still in the store ({@code SbomIngestService#recheck}), so a document
+   * backfilled since is ingested, and a manual {@link #requeueArtifact} asks again too.
+   */
   @ActivateRequestContext
   public void markArtifactMissing(UUID artifactId) {
     markArtifact(artifactId, SbomStatus.MISSING, null);
@@ -1795,7 +1798,10 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
    * probe are the caller's — the first is a clock, the second a peer.
    *
    * <p><b>No cut-off, on purpose.</b> Every released version still in the store counts, however
-   * old; the GC is what retires an old one, and the check follows it there.
+   * old. What retires one is an INGESTED backfill — the check re-reads every MISSING and FAILED
+   * row's document before it counts it — or, for a docker image or a daemon binary, the GC
+   * collecting it. qits-artifacts never collects a maven or npm release, so for those the backfill
+   * is the only way out.
    */
   @ActivateRequestContext
   public List<MtArtifact> sbomCheckCandidates(Collection<String> types) {

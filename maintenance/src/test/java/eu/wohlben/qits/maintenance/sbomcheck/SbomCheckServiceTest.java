@@ -6,17 +6,28 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import eu.wohlben.qits.db.DbRetry;
 import eu.wohlben.qits.maintenance.catalog.CatalogEntry;
 import eu.wohlben.qits.maintenance.catalog.CatalogReader;
 import eu.wohlben.qits.maintenance.dto.SbomCheckReportDto;
+import eu.wohlben.qits.maintenance.entity.MtArtifact;
 import eu.wohlben.qits.maintenance.entity.MtSbomTicket;
 import eu.wohlben.qits.maintenance.error.NoSbomCheckRunException;
 import eu.wohlben.qits.maintenance.error.SbomCheckFailedException;
 import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.ReleaseOrigin;
+import eu.wohlben.qits.maintenance.model.SbomStatus;
+import eu.wohlben.qits.maintenance.peer.PeerAnswer;
+import eu.wohlben.qits.maintenance.peer.PeerCall;
+import eu.wohlben.qits.maintenance.peer.PeerClient;
+import eu.wohlben.qits.maintenance.peer.PeerExchange;
+import eu.wohlben.qits.maintenance.peer.PeerTarget;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
+import eu.wohlben.qits.maintenance.sbom.SbomClient;
+import eu.wohlben.qits.maintenance.sbom.SbomIngestFixture;
+import eu.wohlben.qits.maintenance.sbom.SbomIngestService;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import java.time.Duration;
@@ -34,7 +45,9 @@ import org.junit.jupiter.api.Test;
 
 /**
  * The daily SBOM check against a real PostgreSQL, with qits-artifacts' presence probe and
- * qits-projects' ticket doors faked at the client.
+ * qits-projects' ticket doors faked at the client, and qits-artifacts' SBOM route faked at the peer
+ * — the re-read of a MISSING or FAILED row goes through the real {@link SbomIngestService} and
+ * {@link SbomClient}, so a wrong path or a wrong write fails here.
  *
  * <p><b>The check reads EVERY row</b> — no cut-off — so each test starts from an empty artifact
  * table and an empty ticket table rather than from unique names, which is what the rest of this
@@ -109,6 +122,61 @@ class SbomCheckServiceTest {
     }
   }
 
+  /** qits-artifacts' SBOM route, at no port. Scripted by path; an unscripted path answers 404. */
+  static final class FakeSboms extends PeerClient {
+    private static final ObjectMapper JSON = new ObjectMapper();
+
+    final Map<String, PeerAnswer> script = new HashMap<>();
+    final List<String> asked = new ArrayList<>();
+
+    @Override
+    public String url(PeerTarget target, String path) {
+      return "http://qits-artifacts:8080" + path;
+    }
+
+    @Override
+    public PeerExchange get(PeerTarget target, String path) {
+      asked.add(path);
+      return new PeerExchange(
+          new PeerCall("GET", url(target, path), null),
+          script.getOrDefault(path, new PeerAnswer(404, "", null, Map.of(), null)));
+    }
+
+    void answer(String name, String version, String body) {
+      script.put(path(name, version), new PeerAnswer(200, body, parse(body), Map.of(), null));
+    }
+
+    void unreachable(String name, String version, String sentence) {
+      script.put(path(name, version), new PeerAnswer(null, null, null, Map.of(), sentence));
+    }
+
+    static String path(String name, String version) {
+      return "/artifacts/sboms/maven/" + name + "/-/" + version;
+    }
+
+    private static JsonNode parse(String body) {
+      try {
+        return JSON.readTree(body);
+      } catch (Exception notJson) {
+        return null;
+      }
+    }
+  }
+
+  /** A document as the release would have published it — one direct component. */
+  private static final String DOCUMENT =
+      """
+      {"bomFormat":"CycloneDX","specVersion":"1.6",
+       "metadata":{"component":{"bom-ref":"self","name":"a","version":"1"}},
+       "components":[
+         {"bom-ref":"c-databind","name":"jackson-databind","version":"2.18.2",
+          "purl":"pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.18.2"}],
+       "dependencies":[{"ref":"self","dependsOn":["c-databind"]}]}
+      """;
+
+  /** What a 200 that is no document says on the row. */
+  private static final String NOT_JSON = "the sbom answer did not parse as json";
+
   /** qits-projects' catalog listing, scripted; counts its reads. */
   static final class FakeCatalog extends CatalogReader {
     final List<CatalogEntry> entries = new ArrayList<>();
@@ -133,6 +201,7 @@ class SbomCheckServiceTest {
   private FakePresence presence;
   private FakeTickets tickets;
   private FakeCatalog catalog;
+  private FakeSboms sboms;
   private SbomCheckService check;
 
   @BeforeEach
@@ -161,6 +230,8 @@ class SbomCheckServiceTest {
     catalog = new FakeCatalog();
     check.catalog = catalog;
     check.json = json;
+    sboms = new FakeSboms();
+    check.ingest = SbomIngestFixture.over(store, sboms);
     check.pendingGrace = Duration.ofHours(24);
     check.fileTickets = false;
   }
@@ -212,7 +283,8 @@ class SbomCheckServiceTest {
   void theSelectionCountsExactlyTheRowsWithoutAUsableSbomStillInTheStore() {
     missing("g:missing", "1");
     UUID failed = released("g:failed", "1", Duration.ofDays(3), origin("artifacts"));
-    store.markArtifactFailed(failed, "the document did not parse as json");
+    store.markArtifactFailed(failed, NOT_JSON);
+    sboms.answer("g:failed", "1", "<html>still not a document</html>");
     released("g:pending-23h", "1", Duration.ofHours(23), origin("artifacts"));
     released("g:pending-25h", "1", Duration.ofHours(25), origin("artifacts"));
     UUID contract = released("g:contract", "1", Duration.ofDays(3), origin("contracts"));
@@ -398,14 +470,15 @@ class SbomCheckServiceTest {
 
     // A third version: the ticket is read, found open, and commented — once.
     UUID third = released("g:a", "3", Duration.ofDays(1), origin("artifacts"));
-    store.markArtifactFailed(third, "not CycloneDX");
+    store.markArtifactFailed(third, NOT_JSON);
+    sboms.answer("g:a", "3", "<html>not a document</html>");
     check.run(NOW.plusSeconds(2 * 86_400));
     assertEquals(0, tickets.count("file"));
     assertEquals(1, tickets.count("read"));
     assertEquals(1, tickets.count("comment"));
     List<String> thread = tickets.comments.values().iterator().next();
     assertTrue(thread.get(thread.size() - 1).contains("`3`"), thread.toString());
-    assertTrue(thread.get(thread.size() - 1).contains("FAILED: not CycloneDX"), thread.toString());
+    assertTrue(thread.get(thread.size() - 1).contains("FAILED: " + NOT_JSON), thread.toString());
 
     tickets.calls.clear();
     check.run(NOW.plusSeconds(3 * 86_400));
@@ -510,5 +583,186 @@ class SbomCheckServiceTest {
 
     assertEquals(0, tickets.count("drop"));
     assertEquals(0, tickets.count("comment"));
+  }
+
+  // --- the re-read (qits-739) -----------------------------------------------------------------
+
+  /**
+   * THE BACKFILL: a MISSING row whose document qits-artifacts holds now is read into the graph
+   * before it is counted — INGESTED, not in the report, not filed.
+   */
+  @Test
+  void aMissingRowWhoseDocumentIsThereNowIsIngestedAndNotFiled() {
+    check.fileTickets = true;
+    UUID id = missing("g:a", "1");
+    sboms.answer("g:a", "1", DOCUMENT);
+
+    SbomCheckReportDto report = check.run(NOW);
+
+    assertTrue(report.entries().isEmpty(), report.entries().toString());
+    assertTrue(report.warnings().isEmpty(), report.warnings().toString());
+    assertEquals(0, tickets.count("file"));
+    assertEquals(List.of(FakeSboms.path("g:a", "1")), sboms.asked);
+    detached();
+    assertEquals(SbomStatus.INGESTED.name(), store.artifact(id).orElseThrow().sbomStatus);
+    assertEquals(1, store.components(id).size(), "the graph is the document's, not an empty one");
+  }
+
+  /** A FAILED row whose document reads now is ingested the same way. */
+  @Test
+  void aFailedRowWhoseDocumentReadsNowIsIngested() {
+    UUID id = released("g:a", "1", Duration.ofDays(3), origin("artifacts"));
+    store.markArtifactFailed(id, NOT_JSON);
+    sboms.answer("g:a", "1", DOCUMENT);
+
+    assertTrue(check.run(NOW).entries().isEmpty());
+    detached();
+    MtArtifact row = store.artifact(id).orElseThrow();
+    assertEquals(SbomStatus.INGESTED.name(), row.sbomStatus);
+    assertEquals(null, row.sbomError);
+  }
+
+  /** Still 404: asked, still MISSING, and filed as before. */
+  @Test
+  void aMissingRowStillFourOhFourIsStillFiled() {
+    check.fileTickets = true;
+    UUID id = missing("g:a", "1");
+
+    SbomCheckReportDto report = check.run(NOW);
+
+    assertEquals(List.of("g:a@1"), versions(report));
+    assertEquals(List.of(FakeSboms.path("g:a", "1")), sboms.asked, "it WAS asked again");
+    assertEquals(1, tickets.count("file"));
+    assertTrue(tickets.descriptions.get(0).contains("MISSING — qits-artifacts answers 404"));
+    detached();
+    assertEquals(SbomStatus.MISSING.name(), store.artifact(id).orElseThrow().sbomStatus);
+  }
+
+  /** A 200 that is no document: FAILED with the sentence, and filed as FAILED. */
+  @Test
+  void aMissingRowAnsweredWithSomethingUnreadableIsFailedWithTheSentence() {
+    check.fileTickets = true;
+    UUID id = missing("g:a", "1");
+    sboms.answer("g:a", "1", "<html>a proxy error page</html>");
+
+    SbomCheckReportDto report = check.run(NOW);
+
+    assertEquals("FAILED", report.entries().get(0).reason());
+    assertTrue(tickets.descriptions.get(0).contains(NOT_JSON), tickets.descriptions.toString());
+    detached();
+    MtArtifact row = store.artifact(id).orElseThrow();
+    assertEquals(SbomStatus.FAILED.name(), row.sbomStatus);
+    assertEquals(NOT_JSON, row.sbomError);
+  }
+
+  /**
+   * "Could not ask" moves nothing: the row keeps its status and counts as it stood, the warning
+   * says why, and the run goes on to the next row — which IS ingested.
+   */
+  @Test
+  void anUnreachableReReadLeavesTheRowAsItWasAndDoesNotAbortTheRun() {
+    UUID stuck = missing("g:a", "1");
+    UUID backfilled = missing("g:b", "1");
+    sboms.unreachable("g:a", "1", "connection refused");
+    sboms.answer("g:b", "1", DOCUMENT);
+
+    SbomCheckReportDto report = check.run(NOW);
+
+    assertEquals(List.of("g:a@1"), versions(report));
+    assertEquals("MISSING", report.entries().get(0).reason());
+    assertEquals(1, report.warnings().size(), report.warnings().toString());
+    assertTrue(report.warnings().get(0).contains("could not re-read the sbom of maven g:a 1"));
+    assertTrue(report.warnings().get(0).contains("connection refused"));
+    detached();
+    MtArtifact row = store.artifact(stuck).orElseThrow();
+    assertEquals(SbomStatus.MISSING.name(), row.sbomStatus, "never flipped to FAILED");
+    assertEquals(null, row.sbomError);
+    assertEquals(SbomStatus.INGESTED.name(), store.artifact(backfilled).orElseThrow().sbomStatus);
+  }
+
+  /** A collected version is not asked about: the probe already says it is nobody's problem. */
+  @Test
+  void aCollectedVersionIsNotReRead() {
+    missing("g:a", "1");
+    presence.holds("maven", "g:a", "2");
+
+    check.run(NOW);
+
+    assertTrue(sboms.asked.isEmpty(), sboms.asked.toString());
+  }
+
+  /**
+   * END TO END: filed on a 404, the document backfilled, and the next run ingests it and DROPS the
+   * ticket — the version still in the store, as a maven release always is.
+   */
+  @Test
+  void aTicketWhoseOnlyVersionIsBackfilledIsDroppedOnTheNextRun() {
+    check.fileTickets = true;
+    UUID id = missing("g:a", "1");
+    check.run(NOW);
+    assertEquals(1, tickets.count("file"));
+    detached();
+    MtSbomTicket ticket = store.sbomTicket(PROJECT, "maven", "g:a").orElseThrow();
+
+    sboms.answer("g:a", "1", DOCUMENT);
+    tickets.calls.clear();
+    SbomCheckReportDto report = check.run(NOW.plusSeconds(86_400));
+
+    assertTrue(report.entries().isEmpty(), report.entries().toString());
+    assertEquals(0, tickets.count("file"));
+    assertEquals(1, tickets.count("drop"), tickets.calls.toString());
+    assertEquals("DROPPED", tickets.states.get(ticket.ticketId).status());
+    List<String> thread = tickets.comments.get(ticket.ticketId);
+    assertTrue(thread.get(thread.size() - 1).contains("1: INGESTED"), thread.toString());
+    assertTrue(report.tickets().isEmpty());
+    detached();
+    assertEquals(SbomStatus.INGESTED.name(), store.artifact(id).orElseThrow().sbomStatus);
+    assertNotNull(store.sbomTicket(PROJECT, "maven", "g:a").orElseThrow().closedAt);
+  }
+
+  // --- the texts ------------------------------------------------------------------------------
+
+  private String description(String type, String name) {
+    MtArtifact row = new MtArtifact();
+    row.ecosystem = type;
+    row.name = name;
+    row.version = "2026.915.220910";
+    row.occurredAt = NOW.minus(Duration.ofDays(17));
+    return check.description(new SbomCheckService.Counted(row, SbomCheckService.Reason.MISSING), NOW);
+  }
+
+  /**
+   * A maven release is never collected, so the remedy is the backfill and the ticket says so — no
+   * pin, no GC, and no release.yml line made up from the row's own fields.
+   */
+  @Test
+  void aMavenDescriptionNamesTheBackfillAndNeverTheGc() {
+    String text = description("maven", "eu.wohlben.qits:qits-service-mock");
+
+    assertTrue(
+        text.contains(
+            "- **Announced as:** `{ type: maven, name: eu.wohlben.qits:qits-service-mock }` (by the"
+                + " release; release.yml was not read)"),
+        text);
+    assertTrue(!text.contains("at tag"), text);
+    assertTrue(text.contains("never collects a maven release"), text);
+    assertTrue(
+        text.contains(
+            "publish (backfill) the SBOM to"
+                + " `/artifacts/sboms/maven/eu.wohlben.qits:qits-service-mock/-/2026.915.220910`"),
+        text);
+    assertTrue(!text.contains("GC"), text);
+    assertTrue(!text.contains("no longer in the store"), text);
+  }
+
+  /** A docker image can be collected, so the pin hint stays, and so does "no longer in the store". */
+  @Test
+  void aDockerDescriptionKeepsThePinHint() {
+    String text = description("docker", "qits/build-images/maven-base");
+
+    assertTrue(text.contains("moving that pin forward lets GC collect it"), text);
+    assertTrue(text.contains("/artifacts/sboms/docker/qits/build-images/maven-base/-/"), text);
+    assertTrue(text.contains("or is no longer in the store"), text);
+    assertTrue(!text.contains("never collects"), text);
   }
 }

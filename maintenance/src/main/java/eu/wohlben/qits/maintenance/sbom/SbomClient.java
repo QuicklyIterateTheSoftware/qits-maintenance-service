@@ -28,7 +28,8 @@ import java.util.Set;
  *
  * <p><b>404 is the ORDINARY answer and it is not an error.</b> The SBOM route is newer than most of
  * the platform's releases, so most coordinates have no document and never will. It comes back as
- * {@link Outcome#MISSING}, which nothing retries.
+ * {@link Outcome#MISSING}. Nothing retries it on a timer, but the daily SBOM check re-reads every
+ * MISSING row still in the store, so a document backfilled later is found (qits-739).
  *
  * <p><b>Nothing here throws.</b> An unreachable qits-artifacts costs one artifact row its status,
  * the same rule every other outbound call in this service follows.
@@ -46,11 +47,19 @@ public class SbomClient {
     /** A document was returned. */
     FOUND,
 
-    /** qits-artifacts has none for this coordinate. Terminal, and not a failure. */
+    /** qits-artifacts has none for this coordinate. Not a failure. */
     MISSING,
 
-    /** It answered something else, or could not be reached. */
-    FAILED
+    /** It answered with something that is not a document, or the coordinate cannot be asked about. */
+    FAILED,
+
+    /**
+     * It could not be reached, or answered something other than 2xx or 404 — which says nothing
+     * about the document itself. The ingest of a PENDING row writes it FAILED all the same; the
+     * daily check's re-read of an answered row leaves the row as it was (see {@code
+     * SbomIngestService#recheck}).
+     */
+    UNREACHABLE
   }
 
   /**
@@ -59,7 +68,7 @@ public class SbomClient {
    * @param outcome which of the three
    * @param document the parsed document, only on {@link Outcome#FOUND}
    * @param url what was read, so a surprising answer can be reproduced by hand
-   * @param reason one line, on {@link Outcome#FAILED}
+   * @param reason one line, on {@link Outcome#FAILED} and {@link Outcome#UNREACHABLE}
    */
   public record SbomAnswer(Outcome outcome, JsonNode document, String url, String reason) {}
 
@@ -105,7 +114,7 @@ public class SbomClient {
       return new SbomAnswer(Outcome.MISSING, null, url, null);
     }
     if (!answer.ok()) {
-      return new SbomAnswer(Outcome.FAILED, null, url, answer.failure());
+      return new SbomAnswer(Outcome.UNREACHABLE, null, url, answer.failure());
     }
     JsonNode document = answer.json();
     if (document == null || !document.isObject()) {
