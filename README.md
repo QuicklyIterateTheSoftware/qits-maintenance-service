@@ -921,15 +921,17 @@ declares it, and qits-deployments injects `QITS_RESOURCE_IDP_URL`, `QITS_RESOURC
 `QITS_RESOURCE_IDP_CLIENT_SECRET`. Configure none of them, and the old `projects` client's extras set
 nothing.
 
-One old named block is still shipped, `projects`, and it is not a stub for a client nobody
-configures: the container still carries `QUARKUS_OIDC_CLIENT_PROJECTS_{CLIENT_ID,
-CREDENTIALS_SECRET,CLIENT_ENABLED}` — one such variable is enough to mint the map key, and both
-`client-enabled` and `discovery-enabled` default to true when nothing says otherwise. This block's
-three keys, `client-enabled=false`, `discovery-enabled=false` and `token-path=token`, are what keep
-that client from dialling its issuer during runtime init and failing the boot on one that accepts and
-never answers. Nothing injects it and no code asks it for anything. It goes once no such variable
-reaches the container any more — the config GC deletes the retired entries and the deployer's extras
-file stops stating them (qits-375) — not before.
+Three old named blocks are still shipped, `projects`, `ci` and `githost`, and none is a stub for a
+client nobody configures: the container still carries `QUARKUS_OIDC_CLIENT_PROJECTS_{CLIENT_ID,
+CREDENTIALS_SECRET,CLIENT_ENABLED}` and one leftover `_AUTH_SERVER_URL` apiece for `ci` and
+`githost` — one such variable is enough to mint each map key, and both `client-enabled` and
+`discovery-enabled` default to true when nothing says otherwise. Each block's three keys,
+`client-enabled=false`, `discovery-enabled=false` and `token-path=token`, are what keep that client
+from dialling its issuer during runtime init and failing the boot — `ci` and `githost` are pointed at
+the now-retired `dev-qits-platform-idp` alias, so left alone either would fail outright rather than
+build an inert client. Nothing injects any of them and no code asks them for anything. They go once
+no such variable reaches the container any more — the config GC deletes the retired entries and the
+deployer's extras file stops stating them (qits-375) — not before.
 
 **One toggle reaches every peer.** With the client off, calls go out with the forward-auth pair
 alone (`X-Qits-User: qits-platform-maintenance`, `X-Qits-Roles: qits:system`), which every call

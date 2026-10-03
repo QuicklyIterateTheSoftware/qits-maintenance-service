@@ -15,12 +15,13 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /**
- * The neutralisation of the {@code projects} client name this application's CONTAINER still
- * carries, pinned against the environment that makes it exist at all, beside the {@code qits}
- * client that reads the deployer's {@code QITS_RESOURCE_IDP_*} and nothing else.
+ * The neutralisation of the {@code projects}, {@code ci} and {@code githost} client names this
+ * application's CONTAINER still carries, pinned against the environment that makes each exist at
+ * all, beside the {@code qits} client that reads the deployer's {@code QITS_RESOURCE_IDP_*} and
+ * nothing else.
  *
  * <p><b>Why this cannot be a {@code @QuarkusTest}.</b> The whole statement is about the ENVIRONMENT
- * source: one {@code QUARKUS_OIDC_CLIENT_PROJECTS_*} variable mints the map key, and that source
+ * source: one {@code QUARKUS_OIDC_CLIENT_<NAME>_*} variable mints the map key, and that source
  * outranks the {@code maintenance} module's {@code META-INF/microprofile-config.properties}
  * (ordinal 100 — a library default, below {@code application.properties}' 250). A surefire JVM
  * cannot gain an environment variable, and a {@code QuarkusTestProfile} override is an ordinary
@@ -29,14 +30,15 @@ import org.junit.jupiter.api.Test;
  * EnvConfigSource} over the container's own variables, at the ordinals a deployed Quarkus gives
  * them, and asks SmallRye Config the questions directly.
  *
- * <p><b>What it holds, and why each half matters.</b> With no environment at all the {@code
- * projects} name is switched off by this file. With the container's variables set, {@code
- * client-enabled} resolves the environment's {@code true} — the properties {@code false} LOSES,
- * ordinal 300 over 100 — which is precisely why {@code discovery-enabled=false} and {@code
- * token-path} are in the file beside it: they have no environment twin, so they are what keeps an
- * env-enabled client from dialling its issuer during runtime init and from failing the boot on a
- * token endpoint it cannot discover. And the {@code qits} client takes the deployer's resource
- * triple and none of the old extras' values.
+ * <p><b>What it holds, and why each half matters.</b> With no environment at all all three names
+ * are switched off by this file. With the container's variables set, {@code client-enabled}
+ * resolves the environment's {@code true} — the properties {@code false} LOSES, ordinal 300 over
+ * 100 — which is precisely why {@code discovery-enabled=false} and {@code token-path} are in the
+ * file beside each: they have no environment twin, so they are what keeps an env-enabled client
+ * from dialling its issuer during runtime init and from failing the boot on a token endpoint it
+ * cannot discover — `ci` and `githost` mint from an {@code _AUTH_SERVER_URL} variable alone, which
+ * is enough. And the {@code qits} client takes the deployer's resource triple and none of the old
+ * extras' values.
  *
  * @see QitsOidcClientShippedConfigTest the same file read through a booted application
  */
@@ -61,10 +63,12 @@ class OidcClientNeutralisationTest {
 
   /**
    * What dev-qits-maintenance's container really carries (its envKeys, read 2026-10-02): the
-   * deployer's {@code idp:client} triple, and the old {@code projects} extras nothing reads any
-   * more — still reaching it until the config GC and the deployer's extras file let go of them
+   * deployer's {@code idp:client} triple, the old {@code projects} extras, and one leftover
+   * {@code _AUTH_SERVER_URL} apiece for {@code ci} and {@code githost} — none of it read any more,
+   * still reaching the container until the config GC and the deployer's extras file let go of them
    * (qits-375). Spelled as the environment spells them; the old extras deliberately carry values
-   * the {@code qits} client must NOT end up with.
+   * the {@code qits} client must NOT end up with, and the `ci`/`githost` addresses deliberately name
+   * the retired {@code dev-qits-platform-idp} alias, which no longer resolves.
    */
   private static Map<String, String> deployedEnvironment() {
     Map<String, String> env = new LinkedHashMap<>();
@@ -74,6 +78,8 @@ class OidcClientNeutralisationTest {
     env.put("QUARKUS_OIDC_CLIENT_PROJECTS_CLIENT_ENABLED", "true");
     env.put("QUARKUS_OIDC_CLIENT_PROJECTS_CLIENT_ID", "qits-platform-maintenance");
     env.put("QUARKUS_OIDC_CLIENT_PROJECTS_CREDENTIALS_SECRET", "old-extras-secret");
+    env.put("QUARKUS_OIDC_CLIENT_CI_AUTH_SERVER_URL", "http://dev-qits-platform-idp:8080/idp");
+    env.put("QUARKUS_OIDC_CLIENT_GITHOST_AUTH_SERVER_URL", "http://dev-qits-platform-idp:8080/idp");
     return env;
   }
 
@@ -92,10 +98,12 @@ class OidcClientNeutralisationTest {
   }
 
   @Test
-  void withNoEnvironmentTheProjectsNameIsSwitchedOffByThisFile() throws IOException {
+  void withNoEnvironmentAllThreeNamesAreSwitchedOffByThisFile() throws IOException {
     SmallRyeConfig config = config(Map.of());
 
     assertEquals("false", value(config, "quarkus.oidc-client.projects.client-enabled"));
+    assertEquals("false", value(config, "quarkus.oidc-client.ci.client-enabled"));
+    assertEquals("false", value(config, "quarkus.oidc-client.githost.client-enabled"));
   }
 
   @Test
@@ -136,6 +144,25 @@ class OidcClientNeutralisationTest {
     assertEquals("false", value(config, "quarkus.oidc-client.projects.discovery-enabled"));
     assertTrue(
         !value(config, "quarkus.oidc-client.projects.token-path").isBlank(),
+        "a discovery-disabled client with no token path fails runtime init");
+  }
+
+  @Test
+  void ciAndGithostMintFromAnAuthServerUrlAloneAndAreNeutralisedTheSameWay() throws IOException {
+    SmallRyeConfig config = config(deployedEnvironment());
+
+    // Neither name's _CLIENT_ENABLED is set at all — the leftover _AUTH_SERVER_URL variable alone
+    // is what mints the map key, with client-enabled and discovery-enabled both defaulting to TRUE.
+    // Were discovery left on, each would dial the retired dev-qits-platform-idp alias the deployment
+    // still points it at — unresolvable now that alias is gone — and fail the boot outright rather
+    // than build an inert client.
+    assertEquals("false", value(config, "quarkus.oidc-client.ci.discovery-enabled"));
+    assertEquals("false", value(config, "quarkus.oidc-client.githost.discovery-enabled"));
+    assertTrue(
+        !value(config, "quarkus.oidc-client.ci.token-path").isBlank(),
+        "a discovery-disabled client with no token path fails runtime init");
+    assertTrue(
+        !value(config, "quarkus.oidc-client.githost.token-path").isBlank(),
         "a discovery-disabled client with no token path fails runtime init");
   }
 

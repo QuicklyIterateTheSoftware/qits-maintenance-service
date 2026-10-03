@@ -61,10 +61,23 @@ class QitsOidcClientShippedConfigTest {
   }
 
   @Test
+  void theCiAndGithostBlocksStayDisabledAndInert() {
+    // Neither name is minted through by code and no deployment sets a _CLIENT_ENABLED for either —
+    // the container's leftover _AUTH_SERVER_URL alone is what mints the map key — and these three
+    // values are what stop that env-enabled client dialling its issuer during runtime init and
+    // failing the boot once the address it is pointed at stops resolving.
+    for (String name : new String[] {"ci", "githost"}) {
+      assertEquals("false", value("quarkus.oidc-client." + name + ".client-enabled"), name);
+      assertEquals("false", value("quarkus.oidc-client." + name + ".discovery-enabled"), name);
+      assertEquals("token", value("quarkus.oidc-client." + name + ".token-path"), name);
+    }
+  }
+
+  @Test
   void theOtherNamedClientsAreGone() {
     // Nothing mints through them and no deployment sets their extras, so there is no block to
     // configure: the keys resolve to nothing at all rather than to a disabled client.
-    for (String name : new String[] {"githost", "ci", "artifacts", "mirror"}) {
+    for (String name : new String[] {"artifacts", "mirror"}) {
       assertTrue(
           ConfigProvider.getConfig()
               .getOptionalValue("quarkus.oidc-client." + name + ".client-id", String.class)
