@@ -19,6 +19,7 @@ import eu.wohlben.qits.maintenance.dto.SbomCheckReportDto;
 import eu.wohlben.qits.maintenance.dto.ScanDto;
 import eu.wohlben.qits.maintenance.dto.TransitiveDto;
 import eu.wohlben.qits.maintenance.pending.Change;
+import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 
 /**
@@ -92,7 +93,14 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
       // Response.entity, and the same records are read back out of mt_sbom_check_run's JSON.
       SbomCheckReportDto.class,
       SbomCheckReportDto.EntryDto.class,
-      SbomCheckReportDto.TicketDto.class
+      SbomCheckReportDto.TicketDto.class,
+      // mt_gitlink_tree.pins is a JSON column written by MaintenanceStore.recordGitlinkTree as a
+      // List<TreePin> — Jackson touches it on the write side the same way it touches a
+      // Response.entity return, and the build-time analysis is no better at seeing through it. The
+      // read side rebuilds TreePin by hand off a List<Map<String, Object>> and does not need this,
+      // but the write does: without it every gitlink-tree scan dies in the binary with "could not
+      // write a json column" while the JVM suite stays green.
+      MaintenanceStore.TreePin.class
     })
 final class ApiWireReflection {
 

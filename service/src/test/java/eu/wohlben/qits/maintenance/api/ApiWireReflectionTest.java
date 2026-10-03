@@ -3,6 +3,7 @@ package eu.wohlben.qits.maintenance.api;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.maintenance.dto.RepositoryDto;
+import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 import java.io.IOException;
 import java.net.URISyntaxException;
@@ -65,6 +66,21 @@ class ApiWireReflectionTest {
               + " is served by this API and is not in ApiWireReflection; in a native binary it is a"
               + " 500 and nothing else fails");
     }
+  }
+
+  /**
+   * {@link MaintenanceStore.TreePin} is not a {@code dto} record, so the sweep below never sees it
+   * — it is written as a JSON column by {@code MaintenanceStore.recordGitlinkTree}, which is exactly
+   * the Jackson-touches-it-outside-a-declared-return-type case this class exists for. Guarded on its
+   * own because the sweep's completeness check cannot reach a type outside {@code dto}.
+   */
+  @Test
+  void treePinJsonColumnTypeIsRegisteredForReflection() {
+    assertTrue(
+        Set.of(REGISTRATION.targets()).contains(MaintenanceStore.TreePin.class),
+        "MaintenanceStore.TreePin is written as mt_gitlink_tree's JSON column and is not in"
+            + " ApiWireReflection; in a native binary that write dies with \"could not write a json"
+            + " column\" and nothing else fails");
   }
 
   /** Every record in the dto package, nested ones included, off whatever the domain jar is. */
