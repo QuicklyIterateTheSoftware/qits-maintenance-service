@@ -12,8 +12,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * {@link PeerTokens} mints through ONE named client, {@code qits}, for every peer now
- * (service-client-identity-plan.md, C4) — there used to be five, one per peer's own audience. There
+ * {@link PeerTokens} mints through ONE named client, {@code qits}, for every peer now (epic qits-540
+ * dossier, 'Plan (as of 2026-09-13)', C4) — there used to be five, one per peer's own audience. There
  * is no {@code credential} argument left to branch on: {@link #token()} either asks the one injected
  * client or it does not, which is the whole of what this proves.
  *

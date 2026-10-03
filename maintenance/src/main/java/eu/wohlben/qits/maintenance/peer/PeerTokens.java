@@ -15,15 +15,14 @@ import org.jboss.logging.Logger;
  *
  * <p><b>One client now, where there used to be five.</b> A token used to be cut FOR one service's
  * own audience — qits-githost refused a bearer whose audience named qits-ci — so a peer-scoped call
- * needed a peer-scoped client. service-client-identity-plan.md's C4 gave every token one platform
- * audience instead, {@code qits-platform}, which every receiver now accepts; one client mints it for
- * every peer this service calls.
+ * needed a peer-scoped client. The epic qits-540 dossier's 'Plan (as of 2026-09-13)', C4, gave every
+ * token one platform audience instead, {@code qits-platform}, which every receiver now accepts; one
+ * client mints it for every peer this service calls.
  *
- * <p><b>The switch is the extension's own</b>, {@code quarkus.oidc-client.qits.client-enabled}. Its
- * shipped fallback reads the OLD {@code projects} client's toggle, so a deployment that has not
- * touched its extras yet keeps behaving as it did before this commit. There is no key of ours beside
- * it — one switch cannot disagree with itself. Off, this answers empty and a call goes out with the
- * forward-auth headers alone.
+ * <p><b>The switch is the extension's own</b>, {@code quarkus.oidc-client.qits.client-enabled}. It
+ * reads only the deployer's {@code idp:client} resource now, with no fallback to the OLD
+ * {@code projects} client's toggle. There is no key of ours beside it — one switch cannot disagree
+ * with itself. Off, this answers empty and a call goes out with the forward-auth headers alone.
  *
  * <p><b>The release ask needs no client of its own.</b> It goes to qits-projects, on the credential
  * every catalog read already mints.

@@ -585,7 +585,6 @@ components:
   securitySchemes:
     SecurityScheme:
       type: openIdConnect
-      openIdConnectUrl: http://dev-qits-platform-idp:8080/idp/.well-known/openid-configuration
       description: Authentication
 paths:
   /maintenance/api/adoption/by-release:

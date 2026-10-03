@@ -95,7 +95,7 @@ public class MaintenanceRefusalIT {
       Two tracks of identity reach this service and neither of them is optional. A request with no
       Authorization header is a PERSON: the platform edge performed the login, stripped every
       client-supplied X-Qits-* header and asserted the one it decided on. A request with a bearer
-      is a MACHINE, validated against qits-platform-idp. Both land as roles, which is why every
+      is a MACHINE, validated against qits-idp. Both land as roles, which is why every
       route names the same pair — an operator presses Bump in a browser and a scheduled machine may
       ask for the same thing, so a machine-only guard would lock the operator out of the button
       this service exists to offer. What is NOT negotiable is that something has to arrive: with no

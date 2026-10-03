@@ -75,7 +75,7 @@
         <dependency>
             <!-- SecurityIdentity and the HttpAuthenticationMechanism SPI. Two tracks of identity
                  reach this service: qits-gateway's X-Qits-User / X-Qits-Roles headers (an operator
-                 pressing Bump now), and a bearer validated against qits-platform-idp (a machine).
+                 pressing Bump now), and a bearer validated against qits-idp (a machine).
                  Both land as roles, which is why every route here is @RolesAllowed and none is
                  open. -->
             <groupId>${project.groupId}</groupId>

@@ -603,7 +603,7 @@ subscribes and publishes nothing.**
 
 A request with no `Authorization` header is USER traffic — qits-gateway performed the login and
 asserted `X-Qits-User` / `X-Qits-Roles`. A request WITH a bearer is MACHINE traffic, validated by
-quarkus-oidc against qits-platform-idp.
+quarkus-oidc against qits-idp.
 
 **Both land as roles, which is why every route is `@RolesAllowed({"qits:admin", "qits:system"})`.**
 An operator presses Bump in a browser; a machine may post the same request. There is no anonymous
@@ -621,12 +621,12 @@ project. See README's "Rollout needs".
 gate rather than standing on its own, so with the gate off there is no OIDC tenant, nothing fetches
 a JWKS, and a clone-alone build needs no issuer. There is no third state.
 
-**ONE AUDIENCE AND IT IS A LITERAL**: `quarkus.oidc.token.audience=qits-platform`. qits-platform-idp
+**ONE AUDIENCE AND IT IS A LITERAL**: `quarkus.oidc.token.audience=qits-platform`. qits-idp
 stamps that value onto every token it mints whatever the client asked for, so the tenant admits
-every caller there is and the ROLES above are the whole of what separates them. Nothing here reads
-`qits.auth.machine.audience` — the shipped properties do not set it, and the one profile that turns
-the gate on states it itself, because qits-auth-core's `MachineAuth` refuses to start with the gate
-on and no audience configured.
+every caller there is and the ROLES above are the whole of what separates them. Nothing here
+configures `qits.auth.machine.audience` any more — qits-auth-core's `MachineAuth` reads the platform
+audience from its own shipped `qits.auth.machine.platform-audience=qits-platform` default, so no
+profile has to state one either.
 
 ## Tests
 

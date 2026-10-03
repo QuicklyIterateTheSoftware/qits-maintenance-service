@@ -912,30 +912,24 @@ broken. Remove it from the deployment's extras at the next edit of that file.
 service is platform tier, so a live platform injects the qualified name. Known debt, the same one
 qits-configuration and qits-platform-orchestrator carry.
 
-**Outbound credentials are one named oidc client, `qits`** (service-client-identity-plan.md, C4). It
-used to be five — a token was cut for one service's own audience, so a peer-scoped call needed a
-peer-scoped client — but every token now asks the one platform audience, `qits-platform`, which every
-receiver accepts, so one client mints for every peer. Its keys read `QITS_RESOURCE_IDP_*` first —
-what `qits-deployments` injects once this repository declares `resources: idp:client` (a later,
-separate commit) — and fall back to the `projects` client's old extras names below, so a deployment
-that has not moved to the resource yet keeps working unchanged:
+**Outbound credentials are one named oidc client, `qits`** (epic qits-540 dossier, 'Plan (as of
+2026-09-13)', C4). It used to be five — a token was cut for one service's own audience, so a
+peer-scoped call needed a peer-scoped client — but every token now asks the one platform audience,
+`qits-platform`, which every receiver accepts, so one client mints for every peer. Its id, secret and
+idp address come from the deployer's `idp:client` resource alone: `.config/qits/deployments.yml`
+declares it, and qits-deployments injects `QITS_RESOURCE_IDP_URL`, `QITS_RESOURCE_IDP_CLIENT_ID` and
+`QITS_RESOURCE_IDP_CLIENT_SECRET`. Configure none of them, and the old `projects` client's extras set
+nothing.
 
-```
-QUARKUS_OIDC_CLIENT_PROJECTS_CLIENT_ENABLED=true
-QUARKUS_OIDC_CLIENT_PROJECTS_CLIENT_ID=<this service's client id at qits-platform-idp>
-QUARKUS_OIDC_CLIENT_PROJECTS_CREDENTIALS_SECRET=<this service's idp client secret>
-```
-
-One old named block is still shipped, `projects`, and it is not a leftover: a live deployment names
-this service's credential under exactly that spelling, so the block is what the three variables
-above land on. Where a block exists the environment overrides its values, which is why this one ships
-`client-enabled=false`, `discovery-enabled=false` and `early-tokens-acquisition=false` — a
-deployment's `_CLIENT_ENABLED=true` then builds a client that is inert rather than one that
-discovers and fetches a token at boot, which is what the extension's own defaults would do. Nothing
-injects it and no code asks it for anything. It goes when `resources: idp:client` is declared and
-the old extras are off every deployment. The four other blocks (`githost`, `ci`, `artifacts`,
-`mirror`) are gone; a deployment still setting `QUARKUS_OIDC_CLIENT_GITHOST_*`, `_CI_*`,
-`_ARTIFACTS_*` or `_MIRROR_*` is setting keys nothing reads.
+One old named block is still shipped, `projects`, and it is not a stub for a client nobody
+configures: the container still carries `QUARKUS_OIDC_CLIENT_PROJECTS_{CLIENT_ID,
+CREDENTIALS_SECRET,CLIENT_ENABLED}` — one such variable is enough to mint the map key, and both
+`client-enabled` and `discovery-enabled` default to true when nothing says otherwise. This block's
+three keys, `client-enabled=false`, `discovery-enabled=false` and `token-path=token`, are what keep
+that client from dialling its issuer during runtime init and failing the boot on one that accepts and
+never answers. Nothing injects it and no code asks it for anything. It goes once no such variable
+reaches the container any more — the config GC deletes the retired entries and the deployer's extras
+file stops stating them (qits-375) — not before.
 
 **One toggle reaches every peer.** With the client off, calls go out with the forward-auth pair
 alone (`X-Qits-User: qits-platform-maintenance`, `X-Qits-Roles: qits:system`), which every call

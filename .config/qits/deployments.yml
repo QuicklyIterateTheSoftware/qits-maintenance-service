@@ -92,7 +92,7 @@ navigation-entries: platform.Maintenance:2
 # `dev-qits-maintenance` (derived from env + application), roles `qits:system`, fixed in qits-idp
 # code. The deployer stores the secret the way it stores a database password, and injects
 # QITS_RESOURCE_IDP_URL, QITS_RESOURCE_IDP_CLIENT_ID and QITS_RESOURCE_IDP_CLIENT_SECRET, which the
-# `qits` oidc client reads before its old fallback keys.
+# `qits` oidc client reads alone now — the old `projects` fallback keys are gone.
 #
 # Ticket qits-162, epic qits-540 contract C3.
 resources: postgresql:db:qits_platform_maintenance, postgresql:eventstream:qits_platform_maintenance_eventstream, idp:client

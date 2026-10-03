@@ -35,7 +35,7 @@ import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
  *
  * <p><b>Every route accepts the same three roles</b>, {@code qits:admin} (a person, through the
  * gateway's forward-auth headers), {@code qits:system} (a machine, through a bearer validated
- * against qits-platform-idp) and {@code qits:agent} (a commissioned agent). A bump is asked for by
+ * against qits-idp) and {@code qits:agent} (a commissioned agent). A bump is asked for by
  * an operator in a browser and could as well be asked for by a machine or by the agent doing the
  * work; a machine-only guard would lock the operator out of the button this service exists to
  * offer, and an operator-only one would make an agent beg for a press that chooses nothing. There

@@ -4,9 +4,10 @@ package eu.wohlben.qits.maintenance.peer;
  * Every address this service reads or writes.
  *
  * <p><b>Nine targets, one credential.</b> A target is an ADDRESS — a base url a path is appended
- * to; configured for eight of them, derived in code for {@link #NPM_MIRROR}. There used to be five oidc clients, one per peer SERVICE, because a token used to be
- * cut FOR one service's own audience; service-client-identity-plan.md's C4 replaced all five with
- * one named client, {@code qits}, addressed to the one platform audience every receiver now accepts.
+ * to; configured for eight of them, derived in code for {@link #NPM_MIRROR}. There used to be five
+ * oidc clients, one per peer SERVICE, because a token used to be cut FOR one service's own audience;
+ * the epic qits-540 dossier's 'Plan (as of 2026-09-13)', C4, replaced all five with one named client,
+ * {@code qits}, addressed to the one platform audience every receiver now accepts.
  * {@link PeerTokens} mints through it for every target below — the three registry targets on
  * qits-artifacts already shared one client because they are one service behind three path prefixes,
  * and now every target does.

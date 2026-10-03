@@ -52,9 +52,9 @@ import java.util.Map;
  *   <li><b>{@code qits.auth.machine.required}</b> — THE GATE. The shipped tenant is
  *       {@code quarkus.oidc.tenant-enabled=${qits.auth.machine.required:false}}, so this one key is
  *       the difference between a service that validates machine bearers and one that does not, and
- *       no other suite in this repository turns it on at all. {@code qits.auth.machine.audience}
- *       travels with it, because qits-auth-core's {@code MachineAuth} will not start with the gate
- *       on and no audience configured and the shipped properties carry none.
+ *       no other suite in this repository turns it on at all. No audience travels with it any more:
+ *       qits-auth-core's {@code MachineAuth} ships its own
+ *       {@code qits.auth.machine.platform-audience=qits-platform} default.
  *   <li><b>{@code quarkus.oidc.auth-server-url}</b> — where the idp is. Discovery stays off and
  *       {@code jwks-path} stays {@code jwks}, joined onto this URL, so the packaged artifact is
  *       otherwise exactly what ships.
@@ -98,7 +98,7 @@ public class StoryProfile extends PackagedSurfaceIT.PackagedUnderTarget {
    * The audience this service enforces, and it is the SHIPPED value:
    * {@code quarkus.oidc.token.audience=qits-platform} is spelled as a literal in
    * {@code application.properties}, so the audience under test is the deployed one and there is no
-   * expression to feed. It is the PLATFORM's rather than this service's — qits-platform-idp stamps
+   * expression to feed. It is the PLATFORM's rather than this service's — qits-idp stamps
    * it onto every token it mints, whatever the client asked for — which is why every caller a story
    * presents carries it and the roles are what tell them apart.
    */
@@ -106,7 +106,7 @@ public class StoryProfile extends PackagedSurfaceIT.PackagedUnderTarget {
 
   /**
    * An audience that is genuinely not this platform's, which is what the denied story presents. A
-   * peer's own name would not do: every token qits-platform-idp mints carries {@code qits-platform},
+   * peer's own name would not do: every token qits-idp mints carries {@code qits-platform},
    * so a sibling service's bearer is admitted here and its roles decide what it may do. The refusal
    * this catalogue can honestly claim is of a token cut for somewhere else entirely.
    */
@@ -191,11 +191,10 @@ public class StoryProfile extends PackagedSurfaceIT.PackagedUnderTarget {
     overrides.put("qits.maintenance.bump.internal.auto", "false");
 
     overrides.put("qits.auth.machine.required", "true");
-    // …and what the gate needs beside it. qits-auth-core's MachineAuth refuses to start with the
-    // gate on and no audience configured, and the shipped properties carry none: what a receiver
-    // enforces is quarkus.oidc.token.audience, a literal over there. So the profile that turns the
-    // gate on is the profile that states this, at the same platform audience the tenant enforces.
-    overrides.put("qits.auth.machine.audience", PLATFORM_AUDIENCE);
+    // No audience override needed beside it: qits-auth-core's MachineAuth now ships its own
+    // qits.auth.machine.platform-audience=qits-platform default, the same platform audience
+    // quarkus.oidc.token.audience enforces as a literal over there, so there is nothing left to
+    // state here.
     overrides.put("quarkus.oidc.auth-server-url", idp.baseUrl());
 
     return Map.copyOf(overrides);

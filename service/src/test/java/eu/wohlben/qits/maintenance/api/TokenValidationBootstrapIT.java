@@ -153,7 +153,7 @@ public class TokenValidationBootstrapIT {
   @UserStoryDescription(
       """
       A freshly deployed qits-platform-maintenance must validate service bearers before any
-      caller arrives: at startup it fetches the signing keys (JWKS) from qits-platform-idp —
+      caller arrives: at startup it fetches the signing keys (JWKS) from qits-idp —
       discovery stays off, the path is configured — so the very first machine request is
       accepted. What that bearer then buys is this service's whole surface, and the read it
       opens here is the inventory itself: every repository on the platform with what each has
@@ -167,7 +167,7 @@ public class TokenValidationBootstrapIT {
 
     story.note(
         "qits-platform-maintenance starts with the OIDC tenant on, beside a reachable"
-            + " qits-platform-idp");
+            + " qits-idp");
     given().get("/maintenance/q/health/ready").then().statusCode(200);
 
     // End (a), the idp side: the JWKS was served during startup — before this story presented any
@@ -293,7 +293,7 @@ public class TokenValidationBootstrapIT {
     // The audience half, which is what proves quarkus.oidc.token.audience=qits-platform is read
     // rather than assumed: this token is signed by the very key the JWKS published and is refused
     // anyway, because it was cut for somewhere that is not this platform. A PEER's token would not
-    // do here — qits-platform-idp stamps qits-platform onto every token it mints, so a sibling
+    // do here — qits-idp stamps qits-platform onto every token it mints, so a sibling
     // service's bearer is admitted and its roles decide what it may do, which is the third door
     // below. The audience says which platform, never which service.
     wrongAudienceBearer =
