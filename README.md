@@ -25,7 +25,7 @@ The contract — routes, model, config keys, schedules and the bump payload — 
 | external latest | qits-platform-mirror | `central` maven-metadata, `npmjs` packument |
 | applying a bump | qits-ci | `POST /ci/api/events/trigger`, event `MaintenanceBump` |
 | the bump's outcome | qits-ci + qits-githost | `GET /ci/api/runs/{id}`, then the branch head |
-| whether CI is busy | qits-ci | `GET /ci/api/runs/active` — the dispatch gate; an unreadable listing counts as busy |
+| how much room CI has | qits-ci | `GET /ci/api/runs/queue` — the dispatch gate: connected, unquarantined runners' slots minus every running and queued run; an unreadable snapshot counts as busy |
 | an internal release | qits-events | `SoftwareRelease` off the durable bus — see **The event bus** |
 | a branch's life | qits-events | `SCMRelease`, `SCMDeleteBranch`, `SCMPublishCommit` |
 | what a release CONTAINS | qits-artifacts | `GET /artifacts/sboms/<type>/<name>/-/<version>` — one CycloneDX document per released artifact; see **The dependency graph** |
@@ -218,7 +218,7 @@ tight loop. The first live run of that asked for 30 at once, and the wavefront w
 damage: a library's bump and its consumer's went out in the same breath, so the consumer built
 against the pin it was about to be handed anyway and needed a second bump the next night. So the
 cron stopped firing and opened a **dispatch window** instead, with `bump/BumpDispatcher` handing out
-one bump per tick inside it.
+one bump per tick inside it (since qits-882, as many per tick as qits-ci has free slots).
 
 **Which left the hour as the only thing that could arm any of it, and that was the next defect.**
 `open` had two callers — the cron and the by-hand door — so the path the design is actually built
@@ -235,10 +235,10 @@ it opens one itself the moment something dispatchable is owed:
 
 | gate | question | when it is not met |
 |---|---|---|
-| in flight | how many bumps of ours are REQUESTED or RUNNING | wait; the window stays open |
-| owed | is anything a candidate | **the window closes** — the ordinary ending |
+| owed | is anything a candidate | **the window closes** — the ordinary ending — unless a bump of ours is still REQUESTED or RUNNING |
 | quiet hours | is this an hour a branch is unwelcome in | wait, with the owed set reported |
-| qits-ci | `GET /ci/api/runs/active`, every entry counted | wait |
+| qits-ci | `GET /ci/api/runs/queue`: `free = slots - (running + queued) - our REQUESTED bumps` | wait — `NO_SLOTS` when no runner is connected and unquarantined, `CI_BUSY` when nothing is free |
+| ready | which owed bumps have no owed upstream | up to `free` of them go this tick; with none READY, at most one cycle break |
 
 **"Not now" is `bump.dispatch.quiet-hours`, and nothing else.** Comma-separated `HH:MM-HH:MM` ranges
 in `qits.maintenance.time-zone`, start inclusive and end exclusive, wrapping midnight allowed, and
@@ -270,17 +270,25 @@ is what a reader sees.
 
 **`GET /bumps/window` answers WHY, not just whether — and it answers with no window open.** Beside
 `openedAt`/`closesAt` (null when there is none) it carries the tick's own reasoning as the read finds
-it: `outcome`, the in-flight and CI counts, how many are owed and held, every stalled repository with
-qits-projects' sentence about it, what would go next, and **`queue` — the whole owed set in dispatch
+it: `outcome`, the in-flight count, qits-ci's `slots`, `ciActive` and `free`, how many are owed and
+held, every stalled repository with qits-projects' sentence about it, what would go next (`next`, and
+every pick this tick would send as `picks`), and **`queue` — the whole owed set in dispatch
 order**, each entry READY / BLOCKED (on whom) / HELD / STALLED / REFUSED. It used to 404 when no
 window was open, and `GET /bumps` holds only bumps that were *dispatched*, so "fifteen owed, nothing
 sent" and "the scheduler is dead" were the same picture from every surface — which is how an arming
 bug sat unnoticed for a day. Nothing on that read closes a window or dispatches anything.
 
-**Both counts are compared against `bump.dispatch.max-in-flight`.** At its default of 1 that is the
-request in its plain form: an empty CI queue and nothing of ours outstanding. **An unreadable
-listing is BUSY, never empty** — a gate that read "I could not ask" as "nothing is going" would fire
-the whole night at the one moment qits-ci is least able to say so.
+**As many go per tick as qits-ci has free slots (qits-882).** `slots` is qits-ci's own rule
+(`CiQueueForecast.slotCount`): the sum of `max(0, slots)` over runners that are `connected` and not
+`quarantined`. `free` subtracts every run qits-ci holds, running or queued, and every bump of ours
+still REQUESTED — asked for and not yet accepted, so in nobody's listing; a RUNNING bump's run is
+already among qits-ci's. The gate used to compare our unfinished bumps and qits-ci's whole active
+listing against a configured in-flight cap of 1, which meant one bump per tick and only when qits-ci
+was completely idle: on 2026-10-03 the window door answered CI_BUSY ("1 active run, 1 may be") with
+two READY repositories owed, while two connected runners offered 8 slots with 7 free. The cap was
+retired rather than raised, because how much qits-ci can take is a fact qits-ci reports. **An
+unreadable snapshot is BUSY, never empty** — a gate that read "I could not ask" as "nothing is
+going" would fire the whole night at the one moment qits-ci is least able to say so.
 
 **The candidates are recomputed every tick, never frozen as a night's plan.** `PendingChanges` is
 computed on every read anyway, so the tick after a bump releases sees its consumers' new pin instead
@@ -879,8 +887,7 @@ environment without a rebuild.
 | `qits.maintenance.bump.internal.auto` | `true` | whether the clock asks for those bumps. **The live deployment holds it `false` until the pre-split branches are drained** |
 | `qits.maintenance.bump.external.auto` | `false` | **reserved.** External bumps are manual-only; setting it logs a WARN once and does nothing |
 | `qits.maintenance.bump.poll-interval` | `15s` | how often an unfinished bump is looked at — and how often a dispatch is considered |
-| `qits.maintenance.bump.dispatch.gated` | `true` | one bump at a time against an idle qits-ci. `false` restores the old fire-everything loop |
-| `qits.maintenance.bump.dispatch.max-in-flight` | `1` | what "idle" means, compared to BOTH our unfinished bumps and qits-ci's whole active listing. Floored at 1 |
+| `qits.maintenance.bump.dispatch.gated` | `true` | bumps go bottom of the chain first, as many per tick as qits-ci has free slots. `false` restores the old fire-everything loop |
 | `qits.maintenance.bump.dispatch.release-state-ttl` | `60s` | how long qits-projects' answer about ONE release request is reused before a held candidate asks again. `0` asks every tick |
 | `qits.maintenance.bump.dispatch.quiet-hours` | *(empty)* | hours a branch is unwelcome in: `HH:MM-HH:MM[,…]` in `time-zone`, end exclusive, midnight-wrapping allowed. Suppresses the debt-driven opening only; `POST /bumps/window` overrides it |
 | `qits.maintenance.bump.internal.window` | `6h` | how long one window lasts before it is closed, logged and re-opened if work is still owed. It closes early the moment nothing is owed, and it is also how long a refusal stands |

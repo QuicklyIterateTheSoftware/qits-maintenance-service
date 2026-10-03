@@ -28,21 +28,28 @@ import java.util.List;
  * @param openedAt when the debt — or the button — opened it, null when no window is open
  * @param closesAt when it ends, null when no window is open
  * @param open whether anything would be dispatched right now
- * @param outcome which gate answered: {@code DISABLED}, {@code IN_FLIGHT}, {@code NOTHING_OWED},
- *     {@code ALL_STALLED}, {@code QUIET_HOURS}, {@code CI_UNREADABLE}, {@code CI_BUSY}, {@code
- *     WAITING_ON_RELEASES} or {@code DISPATCH}
+ * @param outcome which gate answered: {@code DISABLED}, {@code NOTHING_OWED}, {@code ALL_STALLED},
+ *     {@code QUIET_HOURS}, {@code CI_UNREADABLE}, {@code NO_SLOTS} (no runner connected and
+ *     unquarantined), {@code CI_BUSY} (every slot taken), {@code WAITING_ON_RELEASES} or {@code
+ *     DISPATCH}
  * @param summary the same thing as a sentence
  * @param inFlight bumps of this service's that have not ended, null when the gate answered before
  *     asking
- * @param allowed how many may be in flight — {@code bump.dispatch.max-in-flight}
- * @param ciActive what qits-ci's active listing holds, null when it was not asked or would not
+ * @param slots qits-ci's capacity — the slots of its connected, unquarantined runners — null when
+ *     it was not asked or would not answer
+ * @param free how many of those slots this tick may fill: slots minus qits-ci's active runs minus
+ *     this service's REQUESTED bumps (asked for, not yet accepted by qits-ci), floored at zero; null
+ *     when qits-ci was not asked or would not answer
+ * @param ciActive what qits-ci holds, running and queued, null when it was not asked or would not
  *     answer
  * @param owed repositories owed a bump that could still be sent one
  * @param held how many of those are waiting on a release of their own branch
  * @param stalled the ones waiting on a release that has STOPPED — these are not owed any more as
  *     far as the dispatcher is concerned, and each one names the request and what qits-projects said
  * @param queue THE WHOLE OWED SET, in the order it will be handed out, each entry with its reason
- * @param next what would be dispatched right now, null when nothing would be
+ * @param next what would be dispatched first right now, null when nothing would be
+ * @param picks everything this tick would dispatch, in order — up to {@code free} READY
+ *     repositories, or one cycle break — empty when nothing would be
  */
 public record BumpWindowDto(
     Instant openedAt,
@@ -51,13 +58,15 @@ public record BumpWindowDto(
     String outcome,
     String summary,
     Integer inFlight,
-    Integer allowed,
+    Integer slots,
+    Integer free,
     Integer ciActive,
     int owed,
     int held,
     List<StalledBumpDto> stalled,
     List<OwedBumpDto> queue,
-    String next) {
+    String next,
+    List<String> picks) {
 
   /**
    * One repository owed a bump, and why it is where it is in the queue.

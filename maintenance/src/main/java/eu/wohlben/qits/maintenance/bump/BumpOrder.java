@@ -77,9 +77,9 @@ import java.util.Set;
  * caller's order is the whole arbiter. That was worth saying out loud the day the caller's order
  * turned out to be the alphabet: {@code BumpDispatcher.assess} built the list by walking {@code
  * MaintenanceStore.repositories()}, which sorts by name, so a repository's first letter decided when
- * it was bumped. One bump goes at a time and each is held until its own release lands, so an
- * estate-wide fan-out drains at roughly one repository every five to fifteen minutes and the tail of
- * the alphabet is the tail of every night — the same repositories, every time, which is starvation
+ * it was bumped. One bump went at a time then and each is held until its own release lands, so an
+ * estate-wide fan-out drained at roughly one repository every five to fifteen minutes and the tail of
+ * the alphabet was the tail of every night — the same repositories, every time, which is starvation
  * rather than jitter. Measured 2026-09-13: {@code qits-projects-daemon} and {@code
  * qits-workspace-daemon} consume the identical two jars from one {@code qits-coding-agents} release
  * and are ready at the same instant; the first was dispatched at 19:53, the second at 21:28, nine
@@ -184,6 +184,54 @@ public final class BumpOrder {
     }
     // Every free one waits on another free one: a cycle, and somebody has to move first.
     return Optional.of(new Pick(leastBlocked, Set.copyOf(leastBlockedBy), true));
+  }
+
+  /**
+   * UP TO {@code n} BUMPS TO SEND NOW — every free candidate nothing else owed sits below, in the
+   * caller's order, as many as qits-ci has free slots for.
+   *
+   * <p><b>Two READY candidates can always go together</b>: neither has an owed upstream, so neither
+   * is waiting on the other, and sending both in one tick costs nothing the ordering exists to
+   * prevent. That is what makes a batch safe here and is the whole of qits-882 — the dispatcher used
+   * to hand out one per tick only when qits-ci was idle, while eight slots sat seven-free.
+   *
+   * <p><b>The cycle rule is unchanged and never multiplied.</b> Only when NOT ONE free candidate is
+   * READY does this fall back to {@link #next} — a single least-blocked pick marked {@code
+   * cycleBroken}, or nothing when everything waits on a release in flight. A cycle break is a
+   * guess, and one guess per tick against a graph one release smaller is the most this should ever
+   * make, however many slots are free.
+   *
+   * @param candidates every repository owed a bump this tick, held ones included, in a stable order
+   * @param producers {@link ArtifactGraph#producers()} — coordinate to publishing repository
+   * @param n how many may go — qits-ci's free slots; zero or less is an empty answer
+   * @return the picks in dispatch order: up to {@code n} READY ones, else at most one cycle break,
+   *     else none. For {@code n == 1} the head is exactly what {@link #next} returns
+   */
+  public static List<Pick> nextUpTo(
+      List<Candidate> candidates, Map<String, String> producers, int n) {
+    if (n <= 0 || candidates == null || candidates.isEmpty()) {
+      return List.of();
+    }
+    Set<String> owed = new LinkedHashSet<>();
+    for (Candidate candidate : candidates) {
+      owed.add(candidate.repository());
+    }
+    List<Pick> ready = new ArrayList<>();
+    for (Candidate candidate : candidates) {
+      if (candidate.held()) {
+        continue;
+      }
+      if (owedUpstreams(candidate, producers, owed).isEmpty()) {
+        ready.add(new Pick(candidate, Set.of(), false));
+        if (ready.size() == n) {
+          break;
+        }
+      }
+    }
+    if (!ready.isEmpty()) {
+      return List.copyOf(ready);
+    }
+    return next(candidates, producers).map(List::of).orElse(List.of());
   }
 
   /**

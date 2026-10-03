@@ -113,7 +113,7 @@ class BumpScheduleTest {
    */
   private void night() {
     schedule.onInternalSchedule();
-    for (int tick = 0; tick < 5 && dispatcher.tick().isPresent(); tick++) {
+    for (int tick = 0; tick < 5 && !dispatcher.tick().isEmpty(); tick++) {
       queue.awaitIdle(Duration.ofSeconds(30));
     }
     queue.awaitIdle(Duration.ofSeconds(30));

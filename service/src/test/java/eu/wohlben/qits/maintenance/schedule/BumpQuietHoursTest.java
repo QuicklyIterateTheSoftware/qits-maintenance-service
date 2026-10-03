@@ -114,7 +114,7 @@ class BumpQuietHoursTest {
   void theDoorOverridesTheQuietHour() {
     dispatcher.open(Instant.now());
 
-    assertTrue(dispatcher.tick().isPresent(), "the window was opened by hand and it is honoured");
+    assertTrue(!dispatcher.tick().isEmpty(), "the window was opened by hand and it is honoured");
     assertTrue(bumped());
   }
 }

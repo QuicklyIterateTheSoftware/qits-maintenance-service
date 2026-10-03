@@ -17,7 +17,7 @@ import java.util.Optional;
 
 /**
  * The three calls this service makes to qits-ci: apply a bump, read the run that applies it, and
- * ask whether qits-ci is busy.
+ * ask how much room qits-ci has.
  *
  * <p><b>{@code eventId} is the bump's row id and that is the dedupe key.</b> qits-ci records at most
  * one run per (event id, repository, config path), so a dispatch whose ANSWER this service lost —
@@ -50,8 +50,11 @@ public class CiClient {
 
   public static final String TRIGGER_PATH = "/ci/api/events/trigger";
 
-  /** Everything qits-ci has accepted and not finished, across every repository. */
-  public static final String ACTIVE_RUNS_PATH = "/ci/api/runs/active";
+  /**
+   * qits-ci's queue snapshot: everything it has accepted and not finished, across every
+   * repository, AND the runners that execute it — the capacity half the dispatch gate reads.
+   */
+  public static final String QUEUE_PATH = "/ci/api/runs/queue";
 
   /** The bump pipeline, packaged into qits-ci under this path. qits-ci records it as a run's {@code
    * configPath}, and it is the same for every bump, so the bump detail carries it as a constant
@@ -201,48 +204,70 @@ public class CiClient {
   }
 
   /**
-   * How busy qits-ci is right now.
+   * How much room qits-ci has right now.
    *
-   * @param active how many runs it has accepted and not finished, or null when the listing could
+   * @param slots how many runs its connected, unquarantined runners execute at once, or null when
+   *     the snapshot could not be read
+   * @param active how many runs it has accepted and not finished, or null when the snapshot could
    *     not be read
    * @param error why it could not be read
    */
-  public record QueueState(Integer active, String error) {
-
-    /** Whether the listing answered at all. An unreadable queue is not an empty one. */
-    public boolean readable() {
-      return active != null;
-    }
+  public record QueueState(Integer slots, Integer active, String error) {
 
     /**
-     * <b>Nothing accepted and nothing running — and an unreadable listing is never this.</b> A
-     * dispatch gate that read "could not ask" as "nothing is going" would fire the whole night's
-     * bumps at the one moment qits-ci is least able to say so.
+     * Whether the snapshot answered at all. <b>An unreadable queue is not an empty one</b>: a
+     * dispatch gate that read "could not ask" as "nothing is going" would fire the whole owed set
+     * at the one moment qits-ci is least able to say so.
      */
-    public boolean empty() {
-      return active != null && active == 0;
+    public boolean readable() {
+      return slots != null && active != null;
+    }
+
+    static QueueState unreadable(String error) {
+      return new QueueState(null, null, error);
     }
   }
 
   /**
-   * Whether qits-ci has anything queued or running.
+   * qits-ci's capacity and what is already using it, from one read of {@code GET
+   * /ci/api/runs/queue}.
    *
-   * <p><b>Every entry of the listing counts, whatever its status says.</b> qits-ci documents the
-   * two active states as {@code QUEUED} and {@code RUNNING} and this route returns exactly those —
-   * so the honest reading of "is the queue empty" is the SIZE of the listing, not a filter over a
-   * vocabulary. A third non-terminal status qits-ci invents tomorrow is still work in flight, and a
-   * gate matching on {@code QUEUED} would quietly stop seeing it.
+   * <p><b>{@code slots} is qits-ci's own rule, {@code CiQueueForecast.slotCount}</b>: the sum of
+   * {@code max(0, slots)} over the runners that are {@code connected} and not {@code quarantined}.
+   * A runner that is not connected would claim nothing whatever its row grants, and a quarantined
+   * one takes nothing but its health check — counting either would hand qits-ci builds nobody is
+   * going to run. A field that is missing reads as the cautious answer: not connected, not
+   * quarantined, no slots.
+   *
+   * <p><b>{@code active} is every entry of {@code running} and {@code queued}, whatever its status
+   * says.</b> qits-ci partitions QUEUED from everything else, so the honest reading of "how much is
+   * going" is the SIZE of both halves, not a filter over a vocabulary. A third non-terminal status
+   * qits-ci invents tomorrow is still work in flight, and a gate matching on a status would quietly
+   * stop seeing it.
+   *
+   * <p>A snapshot missing any of the three arrays is UNREADABLE rather than empty, for the reason
+   * {@link QueueState#readable()} gives.
    */
-  public QueueState activeRuns() {
-    PeerAnswer answer = peers.get(PeerTarget.CI, ACTIVE_RUNS_PATH).answer();
+  public QueueState queue() {
+    PeerAnswer answer = peers.get(PeerTarget.CI, QUEUE_PATH).answer();
     if (!answer.ok()) {
-      return new QueueState(null, "the active runs could not be read: " + answer.failure());
+      return QueueState.unreadable("the queue could not be read: " + answer.failure());
     }
     JsonNode body = answer.json();
-    if (body == null || !body.hasNonNull("runs") || !body.get("runs").isArray()) {
-      return new QueueState(null, "the active runs listing carried no `runs` array");
+    for (String field : List.of("running", "queued", "runners")) {
+      if (body == null || !body.hasNonNull(field) || !body.get(field).isArray()) {
+        return QueueState.unreadable("the queue snapshot carried no `" + field + "` array");
+      }
     }
-    return new QueueState(body.get("runs").size(), null);
+    int slots = 0;
+    for (JsonNode runner : body.get("runners")) {
+      boolean connected = runner.path("connected").asBoolean(false);
+      boolean quarantined = runner.path("quarantined").asBoolean(false);
+      if (connected && !quarantined) {
+        slots += Math.max(0, runner.path("slots").asInt(0));
+      }
+    }
+    return new QueueState(slots, body.get("running").size() + body.get("queued").size(), null);
   }
 
   private static List<String> runIds(JsonNode result) {

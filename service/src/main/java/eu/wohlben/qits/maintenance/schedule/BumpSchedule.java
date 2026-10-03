@@ -32,7 +32,7 @@ import org.jboss.logging.Logger;
  * consumer's in the same breath, so the consumer built against the pin it was about to be handed
  * anyway. Both were fixed by moving the DISPATCH somewhere else: the cron opened a window and
  * {@link BumpDispatchSchedule} handed out one bump at a time, from the bottom of the dependency
- * chain, while qits-ci was idle.
+ * chain, while qits-ci was idle — and, since qits-882, as many per tick as qits-ci has free slots.
  *
  * <p><b>Which left the hour as the only thing that could arm any of it, and that was the next
  * defect.</b> {@link BumpDispatcher} now opens its own window the moment something dispatchable is

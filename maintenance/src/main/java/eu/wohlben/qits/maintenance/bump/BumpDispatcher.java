@@ -31,7 +31,7 @@ import java.util.UUID;
 import org.jboss.logging.Logger;
 
 /**
- * ONE BUMP AT A TIME, ONLY WHEN qits-ci IS IDLE, AND ALWAYS FROM THE BOTTOM OF THE CHAIN.
+ * AS MANY BUMPS AS qits-ci HAS FREE SLOTS FOR, AND ALWAYS FROM THE BOTTOM OF THE CHAIN.
  *
  * <h2>What it replaced</h2>
  *
@@ -68,31 +68,42 @@ import org.jboss.logging.Logger;
  *
  * <p><b>So the window is now a CONSEQUENCE OF DEBT.</b> The tick asks the same questions in the same
  * order with or without a window row, and when it finds something dispatchable owed it opens the
- * window itself. Nothing else about the gate moves: one at a time, bottom of the chain first, holds,
- * stalls and the refusal set are all exactly as they were. What is left of the clock is {@link
+ * window itself. Nothing else about the gate moves: the capacity gate, bottom of the chain first,
+ * holds, stalls and the refusal set are all exactly as they were. What is left of the clock is {@link
  * MaintenanceConfig#bumpQuietHours()}, which says "not now" out loud instead of leaving it as an
  * implication of a cron, and which suppresses this arming only — {@code POST /bumps/window} is the
  * explicit override and is not quiet-hours gated, because a person pressing it has said so.
  *
- * <h2>The three gates, in the order they are asked</h2>
+ * <h2>The gates, in the order they are asked</h2>
  *
  * <ol>
  *   <li><b>Is the window open — or is one owed</b>. It closes by itself: when it expires, when the
- *       switches say no, and, the one that matters most, <b>as soon as nothing is owed</b>. A window
- *       that closed because the work is done is the ordinary ending, and a window that closed with
- *       work still owed is re-opened by the next tick that finds that work.
- *   <li><b>Is anything of ours in flight</b> — {@code activeBumps}, which counts a person's press
- *       as well as the clock's. A bump that is REQUESTED or RUNNING is a build this service asked
- *       for and has not seen the end of.
- *   <li><b>Is qits-ci idle</b> — {@link CiClient#activeRuns()}, and an unreadable listing counts as
- *       BUSY. The one thing a gate must never do is treat "I could not ask" as "nothing is going".
+ *       switches say no, and, the one that matters most, <b>as soon as nothing is owed and nothing
+ *       of ours is still running</b>. A window that closed because the work is done is the ordinary
+ *       ending, and a window that closed with work still owed is re-opened by the next tick that
+ *       finds that work.
+ *   <li><b>How many of qits-ci's slots are free</b> — {@link CiClient#queue()}, one read of {@code
+ *       GET /ci/api/runs/queue}, and an unreadable snapshot counts as BUSY. The one thing a gate must
+ *       never do is treat "I could not ask" as "nothing is going". {@code free = slots - active -
+ *       requested}: the connected, unquarantined runners' slots, minus every run qits-ci holds
+ *       (running or queued), minus the bumps of ours qits-ci has not accepted yet — REQUESTED, a
+ *       build this service asked for that is not in that listing to be counted. A RUNNING bump
+ *       already has its run in {@code active}, and counting it twice would hide a slot.
+ *   <li><b>Which owed bumps are READY</b> — up to {@code free} of them per tick, from {@link
+ *       BumpOrder#nextUpTo}. Never more than one cycle break per tick, however many slots are free.
  * </ol>
  *
- * <p><b>Both counts are compared against the same knob</b>, {@code
- * qits.maintenance.bump.dispatch.max-in-flight}. At its default of 1 that reads exactly as the
- * request: an empty CI queue and no bump of ours outstanding. Above 1 it is a depth rather than a
- * switch, and the two halves stay consistent — three allowed in flight means three runs may be
- * sitting in qits-ci's queue.
+ * <h2>Up to the free slots, not one at a time when idle — qits-882</h2>
+ *
+ * <p>The gate used to compare two counts — this service's unfinished bumps and qits-ci's whole
+ * active listing — against one configured in-flight cap that defaulted to 1: one bump per tick,
+ * and only when qits-ci was completely idle. That was right while qits-ci ran one build at
+ * a time, and wrong the day runners arrived. Measured 2026-10-03: {@code GET /bumps/window} answered
+ * CI_BUSY, "1 active run, 1 may be", with two READY repositories owed, while qits-ci had the runners
+ * {@code qits-ci} (2 slots, 1 held) and {@code workstation} (6 slots) connected — eight slots, seven
+ * of them free. The cap is gone rather than raised: how much qits-ci can take is a fact qits-ci
+ * reports about its runners, and a number configured here would be wrong the next time a runner
+ * connected, disconnected or was quarantined.
  *
  * <h2>Recomputed every tick, never a night's frozen plan</h2>
  *
@@ -263,8 +274,8 @@ public class BumpDispatcher {
     releaseStates.clear();
     store.openBumpWindow(now, closes);
     LOG.infof(
-        "The bump dispatch window is open until %s (%s); one bump goes at a time, from the bottom of"
-            + " the chain, whenever qits-ci is idle.",
+        "The bump dispatch window is open until %s (%s); bumps go from the bottom of the chain, as"
+            + " many per tick as qits-ci has free slots.",
         closes, why);
   }
 
@@ -334,48 +345,61 @@ public class BumpDispatcher {
    * @param outcome the short name of the gate that answered
    * @param summary the sentence for a person
    * @param inFlight bumps of ours not yet ended, or null when the gate answered before asking
-   * @param allowed how many may be in flight
-   * @param ciActive what qits-ci holds, null when it was not asked or could not be read
+   * @param slots qits-ci's connected, unquarantined runner slots, null when it was not asked or
+   *     could not be read
+   * @param free how many of those this tick may fill — slots minus qits-ci's active runs minus our
+   *     REQUESTED bumps, floored at zero — null when it was not asked or could not be read
+   * @param ciActive what qits-ci holds, running and queued, null when it was not asked or could not
+   *     be read
    * @param owed how many repositories are owed a bump and could still be sent one
    * @param held how many of those are waiting on a release in flight
    * @param stalled the ones waiting on a release that has stopped
    * @param queue the whole owed set in dispatch order, each entry with its reason
-   * @param pick what would be dispatched, or null
+   * @param picks what would be dispatched this tick, in order — empty on every outcome but DISPATCH
    */
   public record Decision(
       String outcome,
       String summary,
       Integer inFlight,
-      Integer allowed,
+      Integer slots,
+      Integer free,
       Integer ciActive,
       int owed,
       int held,
       List<Stalled> stalled,
       List<Owed> queue,
-      BumpOrder.Pick pick) {
+      List<BumpOrder.Pick> picks) {
 
     static Decision of(String outcome, String summary) {
-      return new Decision(outcome, summary, null, null, null, 0, 0, List.of(), List.of(), null);
+      return new Decision(
+          outcome, summary, null, null, null, null, 0, 0, List.of(), List.of(), List.of());
     }
 
-    Decision with(Integer inFlight, Integer allowed, Integer ciActive) {
-      return new Decision(
-          outcome, summary, inFlight, allowed, ciActive, owed, held, stalled, queue, pick);
+    /** The first pick — what {@code next} on the window door names — or null. */
+    public BumpOrder.Pick pick() {
+      return picks.isEmpty() ? null : picks.get(0);
     }
   }
 
   /**
-   * One dispatch decision.
+   * One dispatch decision, and every pick it made sent in order.
    *
-   * @return the bump that was asked for, or empty — which is every other outcome, and none of them
-   *     is a failure
+   * <p><b>A refusal of one pick does not stop the rest.</b> It lands in {@link #refused} with its
+   * WARN exactly as a lone pick's always did, and the next pick goes: the picks are all READY, so
+   * none of them was waiting on the one that failed.
+   *
+   * @return the bumps that were asked for, empty on every other outcome — none of which is a
+   *     failure
    */
-  public Optional<UUID> tick() {
+  public List<UUID> tick() {
     Decision decision = decide(Instant.now(), true);
-    if (decision.pick() == null) {
-      return Optional.empty();
+    List<UUID> sent = new ArrayList<>();
+    int stillOwed = decision.owed();
+    for (BumpOrder.Pick pick : decision.picks()) {
+      stillOwed--;
+      dispatch(pick, decision.owed(), stillOwed).ifPresent(sent::add);
     }
-    return dispatch(decision.pick(), decision.owed());
+    return List.copyOf(sent);
   }
 
   /**
@@ -416,8 +440,15 @@ public class BumpDispatcher {
       return Decision.of("DISABLED", "qits.maintenance.bump.internal.auto is false");
     }
 
-    int allowed = config.bumpMaxInFlight();
-    int inFlight = store.activeBumps().size();
+    List<MtBump> active = store.activeBumps();
+    int inFlight = active.size();
+    // A REQUESTED bump is a build this service asked qits-ci for and qits-ci has not accepted yet,
+    // so it is in nobody's queue listing — it would be a slot counted free twice. A RUNNING one has
+    // its run in that listing already. Targeted bumps count too, deliberately: everything else about
+    // a targeted bump is outside this gate, but it IS a CI run this service asked for.
+    int requested =
+        (int)
+            active.stream().filter(bump -> BumpStatus.REQUESTED.name().equals(bump.status)).count();
 
     // THE WALK RUNS EVEN WHEN THE ANSWER IS ALREADY NO, because "what is owed" is the question this
     // service could not answer about itself. `GET /bumps` holds only bumps that were dispatched, so
@@ -429,37 +460,16 @@ public class BumpDispatcher {
     List<Owed> owedList = queueOf(assessment);
     int heldCount = (int) candidates.stream().filter(BumpOrder.Candidate::held).count();
 
-    // ASKED BEFORE THE WINDOW IS CLOSED ON AN EMPTY CANDIDATE LIST, and the order is what keeps the
-    // window from shutting on its own work: the repository being bumped right now is not a candidate
-    // — an active bump is a skip — so a check the other way round would read "nothing is owed" while
-    // the night's last bump is still running.
-    //
-    // AND IT COUNTS TARGETED BUMPS TOO, deliberately. Everything else about a targeted bump is
-    // outside this gate — it is not a candidate, it holds no group's lock and it waits on no release
-    // — but it IS a CI run this service asked for, and the whole of what this number is for is not
-    // handing qits-ci more than it can take. A count that saw only the nightly half would open the
-    // valve at exactly the moment somebody's release request had a build going.
-    if (inFlight >= allowed) {
-      LOG.debugf(
-          "%d bump(s) are in flight and %d are allowed; nothing is dispatched.", inFlight, allowed);
-      return new Decision(
-          "IN_FLIGHT",
-          inFlight + " bump(s) of ours are still running and " + allowed + " may be",
-          inFlight,
-          allowed,
-          null,
-          candidates.size(),
-          heldCount,
-          stalled,
-          owedList,
-          null);
-    }
-
     if (candidates.isEmpty()) {
       // NOTHING DISPATCHABLE IS OWED, and a window whose remainder is stalled closes here too. It
       // must: staying open for work that cannot be done is a night that never ends and a gate that
       // reports nothing. The sentence names the stalled repositories, which is the one line the
       // fourth live failure of this gate did not have.
+      //
+      // BUT NOT WHILE A BUMP OF OURS IS STILL GOING. The repository being bumped right now is not a
+      // candidate — an active bump is a skip — so an empty list would otherwise shut the window on
+      // the night's last bump while it runs. The in-flight gate used to keep that from happening as
+      // a side effect of answering first; it is gone (qits-882), so the rule is said here instead.
       String why =
           stalled.isEmpty()
               ? "nothing is owed a bump"
@@ -468,20 +478,21 @@ public class BumpDispatcher {
                   + " wait on a release that has stopped ("
                   + stalledNames(stalled)
                   + ")";
-      if (commit) {
+      if (commit && inFlight == 0) {
         close(why);
       }
       return new Decision(
           stalled.isEmpty() ? "NOTHING_OWED" : "ALL_STALLED",
           why,
           inFlight,
-          allowed,
+          null,
+          null,
           null,
           0,
           0,
           stalled,
           owedList,
-          null);
+          List.of());
     }
 
     // SOMETHING DISPATCHABLE IS OWED — which, with no window row, is the whole of the reason to open
@@ -501,20 +512,21 @@ public class BumpDispatcher {
                 + quiet
                 + ")",
             inFlight,
-            allowed,
+            null,
+            null,
             null,
             candidates.size(),
             heldCount,
             stalled,
             owedList,
-            null);
+            List.of());
       }
       if (commit) {
         open(now, candidates.size() + " repositor(ies) are owed a bump");
       }
     }
 
-    CiClient.QueueState queue = ci.activeRuns();
+    CiClient.QueueState queue = ci.queue();
     if (!queue.readable()) {
       // Unreadable is BUSY. Dispatching blind here is precisely the wavefront this gate exists for.
       LOG.debugf("qits-ci's queue could not be read (%s); nothing is dispatched.", queue.error());
@@ -522,61 +534,107 @@ public class BumpDispatcher {
           "CI_UNREADABLE",
           "qits-ci's queue could not be read (" + queue.error() + "), which counts as busy",
           inFlight,
-          allowed,
+          null,
+          null,
           null,
           candidates.size(),
           heldCount,
           stalled,
           owedList,
-          null);
+          List.of());
     }
-    if (queue.active() >= allowed) {
+    int slots = queue.slots();
+    int ciActive = queue.active();
+    if (slots == 0) {
+      // No runner connected, or every one quarantined: nothing would claim a run, so sending one is
+      // a build that sits QUEUED until somebody notices. Its own outcome, because "busy" would send
+      // a reader to look for runs that are not there.
       LOG.debugf(
-          "qits-ci holds %d active run(s) and %d are allowed; nothing is dispatched.",
-          queue.active(), Integer.valueOf(allowed));
+          "qits-ci has 0 slots (no runner connected and unquarantined), %d active run(s); nothing is"
+              + " dispatched.",
+          ciActive);
       return new Decision(
-          "CI_BUSY",
-          "qits-ci holds " + queue.active() + " active run(s) and " + allowed + " may be",
+          "NO_SLOTS",
+          "qits-ci has no slot to run anything: no runner is connected, or every one is quarantined",
           inFlight,
-          allowed,
-          queue.active(),
+          0,
+          0,
+          ciActive,
           candidates.size(),
           heldCount,
           stalled,
           owedList,
-          null);
+          List.of());
+    }
+    int free = Math.max(0, slots - ciActive - requested);
+    if (free == 0) {
+      LOG.debugf(
+          "qits-ci has %d slot(s), %d active run(s) and %d bump(s) of ours waiting to reach it; 0"
+              + " free, nothing is dispatched.",
+          slots, ciActive, requested);
+      return new Decision(
+          "CI_BUSY",
+          "qits-ci has "
+              + slots
+              + " slot(s), "
+              + ciActive
+              + " active run(s) and "
+              + requested
+              + " bump(s) waiting to reach it; nothing is free",
+          inFlight,
+          slots,
+          0,
+          ciActive,
+          candidates.size(),
+          heldCount,
+          stalled,
+          owedList,
+          List.of());
     }
 
-    Optional<BumpOrder.Pick> pick = BumpOrder.next(candidates, artifacts.producers());
-    if (pick.isEmpty()) {
+    List<BumpOrder.Pick> picks = BumpOrder.nextUpTo(candidates, artifacts.producers(), free);
+    if (picks.isEmpty()) {
       // Everything owed is waiting on a release that has already been asked for. An ordinary state
       // and not a stall: DEBUG, no cycle break, and the window stays open for what comes after it.
       LOG.debugf(
-          "All %d owed bump(s) are waiting on a release of their own branch; nothing is dispatched.",
-          candidates.size());
+          "All %d owed bump(s) are waiting on a release of their own branch (%d of %d slot(s) free);"
+              + " nothing is dispatched.",
+          candidates.size(), free, slots);
       return new Decision(
           "WAITING_ON_RELEASES",
           "all " + candidates.size() + " owed bump(s) wait on a release of their own branch",
           inFlight,
-          allowed,
-          queue.active(),
+          slots,
+          free,
+          ciActive,
           candidates.size(),
           heldCount,
           stalled,
           owedList,
-          null);
+          List.of());
+    }
+    List<String> names = new ArrayList<>();
+    for (BumpOrder.Pick pick : picks) {
+      names.add(pick.candidate().repository());
     }
     return new Decision(
         "DISPATCH",
-        "the next bump is " + pick.get().candidate().repository(),
+        (picks.size() == 1 ? "the next bump is " : "the next " + picks.size() + " bumps are ")
+            + String.join(", ", names)
+            + " ("
+            + free
+            + " of "
+            + slots
+            + " slot(s) free)",
         inFlight,
-        allowed,
-        queue.active(),
+        slots,
+        free,
+        ciActive,
         candidates.size(),
         heldCount,
         stalled,
         owedList,
-        pick.get());
+        List.copyOf(picks));
   }
 
   private static String stalledNames(List<Stalled> stalled) {
@@ -587,7 +645,7 @@ public class BumpDispatcher {
     return String.join(", ", names);
   }
 
-  private Optional<UUID> dispatch(BumpOrder.Pick pick, int owed) {
+  private Optional<UUID> dispatch(BumpOrder.Pick pick, int owed, int stillOwed) {
     BumpOrder.Candidate candidate = pick.candidate();
     if (pick.cycleBroken()) {
       // Every candidate waits on another candidate. The graph is not guaranteed acyclic and this
@@ -602,7 +660,7 @@ public class BumpDispatcher {
       LOG.infof(
           "Dispatched the scheduled bump %s of %s/%s (%d changes); %d repositor(ies) are still"
               + " owed one.",
-          id, candidate.repository(), candidate.group(), candidate.changes().size(), owed - 1);
+          id, candidate.repository(), candidate.group(), candidate.changes().size(), stillOwed);
       return Optional.of(id);
     } catch (RuntimeException e) {
       synchronized (refused) {
@@ -729,10 +787,10 @@ public class BumpDispatcher {
    * walk produces is the arbiter of everything the topology does not decide</b>, and for as long as
    * it was {@link MaintenanceStore#repositories()}'s that arbiter was the alphabet.
    *
-   * <p>That is starvation rather than unfairness, because of how slowly this queue drains: one bump
-   * goes at a time and each is HELD until its own release lands, so a fan-out over the whole estate
-   * moves at roughly one repository every five to fifteen minutes and the tail of the alphabet is
-   * always the tail of the night — every night, for the same repositories. Measured 2026-09-13:
+   * <p>That is starvation rather than unfairness, because of how slowly this queue drained: one bump
+   * went at a time then and each is HELD until its own release lands, so a fan-out over the whole
+   * estate moved at roughly one repository every five to fifteen minutes and the tail of the
+   * alphabet was always the tail of the night — every night, for the same repositories. Measured 2026-09-13:
    * {@code qits-projects-daemon} and {@code qits-workspace-daemon} consume the identical two jars
    * from one {@code qits-coding-agents} release and are equally ready the moment it lands; the first
    * was dispatched at 19:53 and the second at 21:28, nine repositories later, for no reason but its
