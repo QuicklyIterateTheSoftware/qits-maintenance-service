@@ -1141,6 +1141,45 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
   }
 
   /**
+   * Forgets the release request a bump recorded, because qits-projects says it was WITHDRAWN.
+   *
+   * <p><b>A withdrawn request counts as no request at all</b> (owner decision 2026-10-04, qits-886).
+   * {@link #bumpReleaseAsked} cannot say so — a null there means "leave the column alone" — so this
+   * is the one writer that puts the column back to null. That returns the row to {@link
+   * #bumpsOwedARelease}, and the sweep asks for a fresh request while the branch is still pushed and
+   * ahead of main, or writes {@code converged} when it is not.
+   *
+   * <p>The observation columns are cleared with it: a null request id beside a WITHDRAWN state would
+   * read on the bump page as a release that stopped, when what it is is an ask that is owed again.
+   * The message says what happened instead.
+   *
+   * <p><b>Only the request that was read is cleared.</b> If the column no longer holds it — the sweep
+   * already asked again and stored the fresh one — this writes nothing.
+   *
+   * @param requestId the request qits-projects answered WITHDRAWN for
+   * @param message the bump's sentence, saying so
+   */
+  @ActivateRequestContext
+  public void bumpReleaseWithdrawn(UUID id, String requestId, String message) {
+    DbRetry.runInNewTx(
+        "forget the withdrawn release request of bump " + id,
+        () -> {
+          MtBump row = MtBump.findById(id);
+          if (row == null || !requestId.equals(row.releaseRequestId)) {
+            return;
+          }
+          row.releaseRequestId = null;
+          row.releaseState = null;
+          row.releaseDetail = null;
+          row.releaseStateAt = null;
+          if (message != null) {
+            row.message = message;
+          }
+          getEntityManager().flush();
+        });
+  }
+
+  /**
    * Every bump that pushed a branch and has not settled its release ask — what the sweep re-attempts.
    *
    * <p>Bounded by construction rather than by a limit: every outcome of the ask writes the column, so
@@ -1204,7 +1243,8 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
    * The newest bumps still on their way. A bump is pending while it is asked for or running, and
    * after a green run while its branch is not released: the release is still owed (a pushed commit
    * and no answer yet), or the release request is still open. {@code converged} and {@code refused}
-   * end it, as do a released or withdrawn request, a failure and nothing to do.
+   * end it, as do a request that shipped, a failure and nothing to do. A withdrawn request does not:
+   * the dispatcher clears it, which puts the bump back to an ask that is owed.
    */
   @ActivateRequestContext
   public List<MtBump> pendingBumps(int limit) {

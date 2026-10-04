@@ -60,6 +60,8 @@ class GroupBumpEndingTest {
 
   @Inject WorkQueue queue;
 
+  @Inject BumpDispatcher dispatcher;
+
   @BeforeEach
   void scriptThePeers() {
     queue.awaitIdle(Duration.ofSeconds(30));
@@ -178,5 +180,46 @@ class GroupBumpEndingTest {
         "rr-healed",
         store.bump(id).orElseThrow().releaseRequestId,
         "the stranded branch got its release request without anybody touching it");
+  }
+
+  /**
+   * <b>A WITHDRAWN REQUEST IS NO REQUEST, AND THE SWEEP ASKS AGAIN</b> (owner decision 2026-10-04,
+   * qits-886). Live: qits-maintenance-frontend's bump pointed at a request a person withdrew after an
+   * infrastructure-red gate, its branch one commit ahead of main and no request open — and nothing
+   * would ever re-ask, because the sweep only reads rows whose column is empty and no writer could
+   * empty it.
+   *
+   * <p>The whole chain, end to end: the dispatcher's hold reads WITHDRAWN and clears the id; the row
+   * is back on the sweep's listing; {@code retryRelease} finds the branch PUSHED and ahead of main
+   * and asks qits-projects, and the fresh request is what the row records.
+   */
+  @Test
+  void aBumpWhoseRequestWasWithdrawnIsReAskedByTheSweep() {
+    UUID id = triggerWithBranchAt(Fixture.BUMPED_SHA);
+    MtBump done = completeGreen(id);
+    assertEquals("rr-group", done.releaseRequestId);
+
+    Fixture.scriptReleaseRequestState(peers, "rr-group", "WITHDRAWN", "withdrawn by a person");
+    BumpDispatcher.Assessment assessment = dispatcher.assess();
+    assertTrue(assessment.stalled().isEmpty(), "a withdrawal is not a stall");
+    assertNull(
+        store.bump(id).orElseThrow().releaseRequestId,
+        "the withdrawn request is forgotten: " + store.bump(id).orElseThrow().message);
+    assertTrue(
+        store.bumpsOwedARelease().stream().anyMatch(row -> row.id.equals(id)),
+        "and the sweep sees the row again");
+
+    Fixture.scriptReleaseRequestAccepted(peers, "rr-fresh");
+    bumps.retryRelease(id);
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    assertEquals(
+        "rr-fresh",
+        store.bump(id).orElseThrow().releaseRequestId,
+        "the branch got a fresh release request without anybody pressing anything");
+    assertEquals(
+        2,
+        peers.bodiesFor(Fixture.RELEASE_REQUESTS_PATH).size(),
+        "the ending's ask, and the sweep's one after the withdrawal");
   }
 }

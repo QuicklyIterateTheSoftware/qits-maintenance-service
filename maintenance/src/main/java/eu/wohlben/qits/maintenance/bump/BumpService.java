@@ -924,7 +924,7 @@ public class BumpService {
    * fifteen seconds for the length of an outage. This is idempotent: the base is derived from the
    * frozen change list and the branch, so N attempts leave one base and the newest note.
    */
-  private static String note(MtBump bump, String note) {
+  static String note(MtBump bump, String note) {
     return note == null || note.isBlank() ? pushedMessage(bump) : pushedMessage(bump) + " — " + note;
   }
 

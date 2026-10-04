@@ -261,9 +261,12 @@ its consumers, and keeps the window open. That rests on the release being on its
 2026-09-10 it was not — one repository's release request was REJECTED for a red gating build at
 07:14, and four hours later the window was still open, qits-ci idle, that repository the only thing
 owed, nothing dispatched and nothing saying why. So the hold reads the request
-(`ReleaseRequestClient.state`): PENDING, READY and RELEASED hold; REJECTED, FAILED, CONFLICTED and
-WITHDRAWN make the candidate **stalled** — dropped from the night, so its consumers go and the window
-can close — and an unreadable answer holds, like an unreadable CI queue. It is asked again every
+(`ReleaseRequestClient.state`): PENDING and READY hold, and so do RELEASED, FINALIZED and OBSOLETE —
+a version was cut, and the next scan of main ends the hold; REJECTED, FAILED and CONFLICTED make the
+candidate **stalled** — dropped from the night, so its consumers go and the window can close — and an
+unreadable answer holds, like an unreadable CI queue. WITHDRAWN counts as **no request at all**
+(qits-886): the bump's `releaseRequestId` is cleared, the candidate is held, and the release sweep
+asks qits-projects for a fresh request while the branch is pushed and ahead of main. It is asked again every
 tick and never stored as a verdict, because qits-projects re-arms a rejection on the next merged sha;
 `bump.dispatch.release-state-ttl` (60s) is how long one answer is reused, and `mt_bump.release_state`
 is what a reader sees.

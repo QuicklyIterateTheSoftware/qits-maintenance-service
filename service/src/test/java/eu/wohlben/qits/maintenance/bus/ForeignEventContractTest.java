@@ -137,7 +137,7 @@ class ForeignEventContractTest {
    * {@code components/qits-githost/qits-githost-service/githost-events/src/main/java/eu/wohlben/qits/githost/events/SCMPublishCommit.java}.
    *
    * <p><b>The whole component list is transcribed, not only the five this service consumes.</b> The
-   * listener's own record carries five; this one carries fifteen, because the point of the canonical
+   * listener's own record carries five; this one carries fourteen, because the point of the canonical
    * bytes below is that they are what a real publisher emits — including every field the listener
    * ignores, which is exactly what proves the mapper ignores them rather than refusing the payload.
    */
@@ -155,7 +155,6 @@ class ForeignEventContractTest {
       Instant authoredAt,
       Instant committedAt,
       String message,
-      boolean suppressCi,
       Instant receivedAt)
       implements QitsEvent {
 
@@ -249,7 +248,6 @@ class ForeignEventContractTest {
             WHEN,
             WHEN,
             "a commit",
-            false,
             WHEN));
   }
 
@@ -393,11 +391,11 @@ class ForeignEventContractTest {
 
   /**
    * The push event is the one whose transcription is deliberately PARTIAL, so this is also the test
-   * that the partiality is safe: fifteen components go onto the wire and the listener's five-field
-   * record binds without complaining about the ten it does not know.
+   * that the partiality is safe: fourteen components go onto the wire and the listener's five-field
+   * record binds without complaining about the nine it does not know.
    */
   @Test
-  void anScmPublishCommitBindsIntoTheFiveFieldRecordDespiteCarryingTenFieldsMore()
+  void anScmPublishCommitBindsIntoTheFiveFieldRecordDespiteCarryingNineFieldsMore()
       throws Exception {
     String payload = scmPublishCommitPayload("qits-ci-service", "main", "abc1234");
 
@@ -413,10 +411,10 @@ class ForeignEventContractTest {
     for (String field : List.of("repoId", "projectId", "repoName", "branch", "sha")) {
       assertTrue(json.has(field), "the canonical payload carries no " + field);
     }
-    // The ten this service ignores are really there — which is what makes the binding above a
+    // The ones this service ignores are really there — which is what makes the binding above a
     // statement about the mapper's tolerance rather than about a payload that happened to be small.
     assertTrue(json.has("parents"), "the publisher really does send the fields we ignore");
-    assertTrue(json.has("suppressCi"), "the publisher really does send the fields we ignore");
+    assertTrue(json.has("message"), "the publisher really does send the fields we ignore");
   }
 
   /**

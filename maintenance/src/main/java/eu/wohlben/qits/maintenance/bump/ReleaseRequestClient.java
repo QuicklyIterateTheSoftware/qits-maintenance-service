@@ -242,17 +242,42 @@ public class ReleaseRequestClient {
   /**
    * What qits-projects says has become of one release request.
    *
+   * <p>Every state falls on exactly one of three sides, and the side is what a hold acts on:
+   *
+   * <ul>
+   *   <li><b>Waited on</b> — {@link #ON_ITS_WAY} (PENDING, READY: the release is coming) and {@link
+   *       #SHIPPED} (RELEASED, FINALIZED, OBSOLETE: a version was cut, and the next scan of main
+   *       ends the hold by emptying the pending set).
+   *   <li><b>{@link #withdrawn() Withdrawn}</b> — no request at all. Owner decision 2026-10-04,
+   *       qits-886: "treat withdrawn the same as non existing", a person's withdrawal included. The
+   *       dispatcher clears the bump's request id, and the sweep asks qits-projects for a fresh
+   *       request while the branch is still pushed and ahead of main.
+   *   <li><b>{@link #stalled() Stalled}</b> — REJECTED, FAILED, CONFLICTED, and anything this
+   *       service does not know the name of.
+   * </ul>
+   *
    * @param state the state verbatim — {@code PENDING}, {@code READY}, {@code RELEASED}, {@code
-   *     REJECTED}, {@code FAILED}, {@code CONFLICTED}, {@code WITHDRAWN} — or null when it could not
-   *     be read
+   *     FINALIZED}, {@code OBSOLETE}, {@code REJECTED}, {@code FAILED}, {@code CONFLICTED}, {@code
+   *     WITHDRAWN} — or null when it could not be read
    * @param detail that service's own sentence about why, when it has one ({@code detail}, or the
    *     conflict when the fold is what failed)
    * @param error why it could not be read, or null
    */
   public record ReleaseState(String state, String detail, String error) {
 
-    /** The states in which a release is still on its way, or has already arrived. */
-    private static final Set<String> COMING = Set.of("PENDING", "READY", "RELEASED");
+    /** The states in which a release is still on its way. */
+    private static final Set<String> ON_ITS_WAY = Set.of("PENDING", "READY");
+
+    /**
+     * The states in which a version has been cut. <b>FINALIZED and OBSOLETE are here, not among
+     * the stalled</b>: FINALIZED is RELEASED with main merged, and qits-projects marks a request
+     * OBSOLETE only once it is RELEASED and before it finalized — both shipped. Reading them as
+     * stalled reported repositories whose bump had landed as waiting on a release that stopped
+     * (qits-events-service, 2026-10-04).
+     */
+    private static final Set<String> SHIPPED = Set.of("RELEASED", "FINALIZED", "OBSOLETE");
+
+    private static final String WITHDRAWN = "WITHDRAWN";
 
     /** Whether qits-projects answered at all. */
     public boolean readable() {
@@ -260,9 +285,18 @@ public class ReleaseRequestClient {
     }
 
     /**
+     * <b>Whether the request is gone</b> — withdrawn, by a person or by qits-projects, which counts
+     * as no request at all. Not stalled: a fresh request is asked for instead.
+     */
+    public boolean withdrawn() {
+      return WITHDRAWN.equals(state);
+    }
+
+    /**
      * <b>Whether nothing is coming from this request as it stands.</b> Red gates, a mechanical
-     * failure, a fold that will not apply, an explicit withdrawal — none of them moves {@code main},
-     * so a bump waiting on one is waiting for something that has stopped happening.
+     * failure, a fold that will not apply — none of them moves {@code main}, so a bump waiting on
+     * one is waiting for something that has stopped happening. A withdrawal is not among them (see
+     * {@link #withdrawn()}), and neither is a request that shipped.
      *
      * <p><b>It is not a verdict for ever, and must never be recorded as one.</b> qits-projects
      * re-arms REJECTED, FAILED and CONFLICTED back to PENDING on the next merged sha — a push to the
@@ -273,7 +307,10 @@ public class ReleaseRequestClient {
      * safe reading of that is the one the whole gate takes elsewhere — carry on waiting.
      */
     public boolean stalled() {
-      return state != null && !COMING.contains(state);
+      return state != null
+          && !ON_ITS_WAY.contains(state)
+          && !SHIPPED.contains(state)
+          && !withdrawn();
     }
 
     /** The sentence a person reads: the state, and what that service said about it. */

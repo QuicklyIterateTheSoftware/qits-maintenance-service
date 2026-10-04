@@ -44,8 +44,10 @@ import java.util.List;
  *     answer
  * @param owed repositories owed a bump that could still be sent one
  * @param held how many of those are waiting on a release of their own branch
- * @param stalled the ones waiting on a release that has STOPPED — these are not owed any more as
- *     far as the dispatcher is concerned, and each one names the request and what qits-projects said
+ * @param stalled the ones waiting on a release that has STOPPED — a request REJECTED, FAILED or
+ *     CONFLICTED, or an ask REFUSED. These are not owed any more as far as the dispatcher is
+ *     concerned, and each one names the request and what qits-projects said. A request that shipped
+ *     (RELEASED, FINALIZED, OBSOLETE) or was withdrawn is HELD and counted in {@code held} instead
  * @param queue THE WHOLE OWED SET, in the order it will be handed out, each entry with its reason
  * @param next what would be dispatched first right now, null when nothing would be
  * @param picks everything this tick would dispatch, in order — up to {@code free} READY
@@ -76,7 +78,8 @@ public record BumpWindowDto(
    * @param changes how many changes that bump would carry
    * @param reason {@code READY} (the head of the list is what goes next), {@code BLOCKED} (owed
    *     repositories sit below it), {@code HELD} (its branch is pushed and it waits on its own
-   *     release), {@code STALLED} (that release has stopped) or {@code REFUSED} (this gate could not
+   *     release — on its way, shipped and awaiting the scan of main, or a fresh request after a
+   *     withdrawal), {@code STALLED} (that release has stopped) or {@code REFUSED} (this gate could not
    *     ask for it)
    * @param detail the sentence for that reason — what it waits on, or what said no
    */
@@ -89,7 +92,9 @@ public record BumpWindowDto(
    * @param repository the repository
    * @param group the group whose branch is waiting
    * @param releaseRequestId the request in qits-projects, null when the ask itself was refused
-   * @param state REJECTED, FAILED, CONFLICTED, WITHDRAWN — or REFUSED for the ask
+   * @param state REJECTED, FAILED, CONFLICTED — or REFUSED for the ask. Never WITHDRAWN, which
+   *     counts as no request and is asked again, and never RELEASED, FINALIZED or OBSOLETE, which
+   *     shipped and wait for the scan of main
    * @param reason that service's sentence, usually the gating run that went red
    */
   public record StalledBumpDto(

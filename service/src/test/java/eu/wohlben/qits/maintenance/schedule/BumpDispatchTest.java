@@ -400,6 +400,89 @@ class BumpDispatchTest {
     assertFalse(
         dispatcher.windowOpen(Instant.now()),
         "and the night ends rather than standing open on a build that needs a person");
+    assertEquals(
+        "rr-rejected",
+        store.bump(id).orElseThrow().releaseRequestId,
+        "a rejection is re-armed by qits-projects, so the request is kept — only WITHDRAWN is"
+            + " forgotten");
+  }
+
+  /**
+   * <b>WITHDRAWN COUNTS AS NO REQUEST AT ALL</b> (owner decision 2026-10-04, qits-886). It used to
+   * stall like a rejection, but qits-projects re-arms nothing it withdrew, and nothing here could
+   * put the request id back to null — so the sweep never re-asked, and qits-maintenance-frontend sat
+   * one commit ahead of main with no request open and the window door calling it stalled. Now the
+   * id is cleared, the observation with it, and the candidate is HELD for the sweep's fresh ask —
+   * not re-dispatched, since its branch already carries the change.
+   */
+  @Test
+  void aWithdrawnReleaseRequestIsForgottenAndHeldForAFreshAsk() {
+    Fixture.scriptCiQueueEmpty(peers);
+    dispatcher.open(Instant.now());
+
+    UUID id = only(dispatcher.tick());
+    queue.awaitIdle(Duration.ofSeconds(30));
+    store.bumpFinished(id, BumpStatus.SUCCEEDED, "SUCCESS", "pushed", Instant.now());
+    store.bumpReleaseAsked(id, "rr-withdrawn", "the release request rr-withdrawn is PENDING");
+    Fixture.scriptReleaseRequestState(peers, "rr-withdrawn", "WITHDRAWN", "withdrawn by a person");
+
+    BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
+    assertTrue(decision.stalled().isEmpty(), "a withdrawal is not a stall");
+    assertEquals(1, decision.owed());
+    assertEquals(1, decision.held());
+
+    var row = store.bump(id).orElseThrow();
+    assertEquals(null, row.releaseRequestId, "the request is forgotten, so the sweep asks again");
+    assertEquals(
+        null, row.releaseState, "and no WITHDRAWN is left beside a null id to read as stopped");
+    assertTrue(row.message.contains("withdrawn"), row.message);
+    assertTrue(
+        store.bumpsOwedARelease().stream().anyMatch(owed -> owed.id.equals(id)),
+        "the row is back on the release sweep's listing");
+
+    assertTrue(dispatcher.tick().isEmpty());
+    assertEquals(1, store.bumps(Fixture.REPOSITORY, 50).size(), "no second, pointless CI run");
+    assertTrue(dispatcher.windowOpen(Instant.now()), "a fresh request is still coming");
+  }
+
+  /**
+   * <b>FINALIZED SHIPPED</b>, and reading it as stalled listed qits-events-service as waiting on a
+   * release that stopped on the morning it had released (2026-10-04). It holds like RELEASED: the
+   * next scan of main empties the pending set.
+   */
+  @Test
+  void aFinalizedReleaseHoldsRatherThanStalls() {
+    assertAShippedReleaseHolds("rr-finalized", "FINALIZED");
+  }
+
+  /**
+   * <b>OBSOLETE SHIPPED TOO</b>: qits-projects marks a request OBSOLETE only once it is RELEASED and
+   * before it finalized, so a version was cut.
+   */
+  @Test
+  void anObsoleteReleaseHoldsRatherThanStalls() {
+    assertAShippedReleaseHolds("rr-obsolete", "OBSOLETE");
+  }
+
+  private void assertAShippedReleaseHolds(String requestId, String state) {
+    Fixture.scriptCiQueueEmpty(peers);
+    dispatcher.open(Instant.now());
+
+    UUID id = only(dispatcher.tick());
+    queue.awaitIdle(Duration.ofSeconds(30));
+    store.bumpFinished(id, BumpStatus.SUCCEEDED, "SUCCESS", "pushed", Instant.now());
+    store.bumpReleaseAsked(id, requestId, "the release request " + requestId + " is PENDING");
+    Fixture.scriptReleaseRequestState(peers, requestId, state, null);
+
+    BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
+    assertTrue(decision.stalled().isEmpty(), state + " shipped and is not a stall");
+    assertEquals(1, decision.owed());
+    assertEquals(1, decision.held());
+    assertTrue(dispatcher.tick().isEmpty());
+    assertEquals(1, store.bumps(Fixture.REPOSITORY, 50).size());
+    assertTrue(dispatcher.windowOpen(Instant.now()));
+    assertEquals(requestId, store.bump(id).orElseThrow().releaseRequestId, "nothing to re-ask");
+    assertEquals(state, store.bump(id).orElseThrow().releaseState);
   }
 
   /**

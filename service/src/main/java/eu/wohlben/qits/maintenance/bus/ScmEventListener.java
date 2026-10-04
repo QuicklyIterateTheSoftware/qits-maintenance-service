@@ -58,7 +58,10 @@ import org.jboss.logging.Logger;
  * never a {@code maintenance/} one, and there is nothing left to match. A maintenance branch's whole
  * ending is the {@code SCMDeleteBranch} that follows the release (a request's named sources are
  * deleted when it lands), which is the same signal a person deleting it by hand sends, and NONE is
- * the right answer to both: the next bump starts fresh from main. That delete is also what clears a
+ * the right answer to both: the next bump starts fresh from main. Until qits-886 that ending was
+ * dead: the release deletes its sources through qits-githost's REST door, and the door announced
+ * nothing, so a released bump's branch row read PUSHED for a branch that no longer existed. The door
+ * announces every ref it moves now, the delete included. That delete is also what clears a
  * STALE row — a branch somebody rewrote is one this service stops writing to until it is gone, and
  * this is how it learns that it is.
  *
@@ -69,16 +72,21 @@ import org.jboss.logging.Logger;
  * still the clock's standing instruction or a person's press: {@link ScanTrigger#EVENT} scans and
  * never bumps, or every repository somebody touched during the day would grow a branch.
  *
- * <p><b>A RELEASE draws the same conclusion, and has to draw it from its own signature.</b> Main
- * moves two ways on this platform and only one of them is a push this listener can see: a release
- * merges its tag into {@code main} through qits-githost's REST door, a second writer that fires no
- * post-receive and is documented to publish nothing. So the push half's main-branch test can never
- * match a release, and until {@link #onReleasedManifests} existed every release on this platform left
- * the inventory holding a stale manifest until the next scheduled scan. Both halves queue the same
- * {@link ScanTrigger#EVENT} scan through the same debounce; neither bumps.
+ * <p><b>A RELEASE draws the same conclusion twice, and the first one from its own signature.</b>
+ * Main moves two ways on this platform: a person's push, and a release merging its tag into {@code
+ * main} at FINALIZED through qits-githost's REST door. That door used to fire no post-receive and
+ * publish nothing, so the push half's main-branch test could never match a release — which is why
+ * {@link #onReleasedManifests} exists. Since qits-886 the door announces the merge as an ordinary
+ * {@code SCMPublishCommit} (the branch's short name, with {@code repoName}), so the finalize merge
+ * IS a push this listener sees, and the push half rescans main once it has moved. That second scan
+ * is what heals a row a scheduled scan read between the release and the finalize merge
+ * (qits-events-service, 2026-10-04: the 01:00 scan read main six minutes before it was merged, and
+ * reported a change owed that had already shipped). Both halves queue the same {@link
+ * ScanTrigger#EVENT} scan through the same debounce; neither bumps.
  *
  * <p><b>But the release half reads the TAG where the push half reads the branch</b>, and that is the
- * difference that makes it correct rather than merely early. {@code main} is finalized after the
+ * difference that makes it correct rather than merely early — and why it stays now that the merge is
+ * announced too. {@code main} is finalized after the
  * release — at once for a repository that deploys nothing, after the deployment for one that does —
  * so a release-triggered scan of the branch reads the PREVIOUS release's manifests and stamps the row
  * as freshly checked, which is worse than not scanning at all. Measured on 2026-09-09,
@@ -199,8 +207,8 @@ public class ScmEventListener implements QitsDurableEventListener {
    * The {@code SCMPublishCommit} fields this listener consumes, transcribed from qits-githost's
    * {@code githost-events/…/SCMPublishCommit.java}.
    *
-   * <p>That record carries eleven more components — the head commit's parents, author, both
-   * timestamps, the message and {@code suppressCi} — and none of them is here. Only what is
+   * <p>That record carries more components — the head commit's parents, author, both timestamps
+   * and the message — and none of them is here. Only what is
    * consumed is transcribed: the mapper ignores what it is not told about, which is what lets
    * qits-githost add a field without this becoming a poison payload. {@code sha} is kept because it
    * is what a log line needs to say WHICH push queued a scan; the scan itself resolves the head for
@@ -277,11 +285,15 @@ public class ScmEventListener implements QitsDurableEventListener {
    * <b>A release changed this repository's manifests, so they are re-read — AT THE TAG.</b>
    *
    * <p>This is the same conclusion {@link #onPush} draws from a push, reached from the other
-   * signature because <b>a release does not produce a push this listener can see</b>. A release
-   * merges onto {@code main} through qits-githost's REST door, a second writer that fires no
-   * post-receive and is documented to publish nothing. So {@link #onPush}'s main-branch test can
-   * never match a release, and until this existed every release left the inventory holding whatever
-   * the last scheduled scan happened to read.
+   * signature because <b>a release did not use to produce a push this listener could see</b>. A
+   * release merges onto {@code main} through qits-githost's REST door, which until qits-886 fired no
+   * post-receive and published nothing, so {@link #onPush}'s main-branch test never matched a
+   * release, and until this existed every release left the inventory holding whatever the last
+   * scheduled scan happened to read. The door announces the finalize merge now, and {@link #onPush}
+   * rescans main when it lands; this half stays because it is the one that is true at the moment of
+   * release — main is merged later, after the deployment for a repository that deploys — and
+   * because the release ledger and the latest rows are tag-grade facts that a read of main cannot
+   * give.
    *
    * <p><b>Which was worst for the pins this service moves itself.</b> A bump lands on
    * {@code maintenance/<group>}, is released, and the pin it changed still read the old version here
@@ -447,7 +459,10 @@ public class ScmEventListener implements QitsDurableEventListener {
 
   // --- SCMDeleteBranch ------------------------------------------------------------------------
 
-  /** A maintenance branch is gone — released, or deleted by hand. */
+  /**
+   * A maintenance branch is gone — released (the release deletes its named sources through
+   * qits-githost's REST door, which announces it since qits-886), or deleted by hand.
+   */
   private void onDelete(EventFrame frame) {
     ScmDeleteBranchPayload deleted = decode(frame, ScmDeleteBranchPayload.class);
     if (deleted == null) {
@@ -481,7 +496,11 @@ public class ScmEventListener implements QitsDurableEventListener {
 
   // --- SCMPublishCommit -----------------------------------------------------------------------
 
-  /** A push landed. If it was on the repository's own main branch, its manifests are re-read. */
+  /**
+   * A push landed. If it was on the repository's own main branch, its manifests are re-read — and
+   * that includes a release's finalize merge into main, which qits-githost's REST door announces as
+   * an ordinary push since qits-886.
+   */
   private void onPush(EventFrame frame) {
     ScmPublishCommitPayload push = decode(frame, ScmPublishCommitPayload.class);
     if (push == null) {

@@ -482,10 +482,11 @@ class ScmEventListenerTest {
 
   /**
    * <b>The gap that let a released repository stay stale, and the read that closes it.</b> A release
-   * changes a repository's manifests and produces no push this listener can see — the merge goes
-   * through qits-githost's REST door, which fires no post-receive. So the scan is queued here, and it
-   * is queued <b>at the tag</b>: {@code main} is finalized after the release, so a scan of the branch
-   * would read the previous release's pins and stamp the row as freshly checked. Measured live
+   * changes a repository's manifests, and the push it eventually produces — the finalize merge into
+   * {@code main}, which qits-githost's REST door announces since qits-886 — comes later, after the
+   * deployment for a repository that deploys. So the scan is queued here as well, and it is queued
+   * <b>at the tag</b>: a scan of the branch at release time would read the previous release's pins
+   * and stamp the row as freshly checked. Measured live
    * 2026-09-09 on qits-artifacts-frontend — scan 32ms after the event, pins two days old.
    */
   @Test

@@ -176,12 +176,20 @@ import org.jboss.logging.Logger;
  * a dead one holds for ever: nothing unwinds a hold except main moving, and main was never going to
  * move.
  *
- * <p>So a held candidate's release request is read — {@link ReleaseRequestClient#state} — and there
- * are three answers, not two:
+ * <p>So a held candidate's release request is read — {@link ReleaseRequestClient#state} — and these
+ * are the answers:
  *
  * <ul>
- *   <li><b>PENDING, READY, RELEASED</b> — HELD, exactly as before. Something is coming.
- *   <li><b>REJECTED, FAILED, CONFLICTED, WITHDRAWN</b> — <b>STALLED</b>: dropped from the candidate
+ *   <li><b>PENDING, READY</b> — HELD, exactly as before. Something is coming.
+ *   <li><b>RELEASED, FINALIZED, OBSOLETE</b> — HELD. A version was cut, so the hold ends the way
+ *       every hold does: a scan re-reads main and the pending set empties. FINALIZED and OBSOLETE
+ *       used to read as stalled, which listed repositories whose bump had shipped as waiting on a
+ *       release that stopped (qits-events-service, 2026-10-04).
+ *   <li><b>WITHDRAWN</b> — HELD, and the request is <b>forgotten</b>: a withdrawn request counts as
+ *       none (owner decision 2026-10-04, qits-886). The bump's request id is cleared, and the
+ *       release sweep asks qits-projects for a fresh request while the branch is pushed and ahead
+ *       of main. It used to be STALLED, and nothing could ever re-ask.
+ *   <li><b>REJECTED, FAILED, CONFLICTED</b> — <b>STALLED</b>: dropped from the candidate
  *       list altogether. It stops blocking its consumers (they are waiting on a version that is not
  *       going to be cut, and building against the pin that exists is the honest answer), and it
  *       stops keeping the window open (a night must not stay open for work that cannot be done).
@@ -199,8 +207,10 @@ import org.jboss.logging.Logger;
  *
  * <p><b>A stalled candidate is never re-dispatched by the clock, and that is deliberate.</b> Its
  * branch already carries the change, so a fresh bump could only come back NOTHING_TO_DO; what the
- * repository needs is a person, or the upstream release that re-arms the fold. Pressing Bump by hand
- * goes through {@link BumpService#request} and is not gated here at all.
+ * repository needs is a person, or the push that re-arms the request. A withdrawn one is not
+ * re-dispatched either — it needs no new bump, only a new request for the branch it already has,
+ * and that is the release sweep's job. Pressing Bump by hand goes through {@link
+ * BumpService#request} and is not gated here at all.
  */
 @ApplicationScoped
 public class BumpDispatcher {
@@ -299,7 +309,7 @@ public class BumpDispatcher {
    * @param repository the repository, as the catalog spells it
    * @param group the group whose branch is waiting
    * @param requestId the release request in qits-projects
-   * @param state that request's state — REJECTED, FAILED, CONFLICTED, WITHDRAWN
+   * @param state that request's state — REJECTED, FAILED, CONFLICTED — or REFUSED for the ask
    * @param reason that service's own sentence, which is usually the failing gating run
    */
   public record Stalled(
@@ -353,7 +363,8 @@ public class BumpDispatcher {
    *     be read
    * @param owed how many repositories are owed a bump and could still be sent one
    * @param held how many of those are waiting on a release in flight
-   * @param stalled the ones waiting on a release that has stopped
+   * @param stalled the ones waiting on a release request that has stopped — REJECTED, FAILED,
+   *     CONFLICTED, or an ask that was REFUSED; never one that shipped or was withdrawn
    * @param queue the whole owed set in dispatch order, each entry with its reason
    * @param picks what would be dispatched this tick, in order — empty on every outcome but DISPATCH
    */
@@ -475,7 +486,7 @@ public class BumpDispatcher {
               ? "nothing is owed a bump"
               : "nothing is owed a bump that can be sent; "
                   + stalled.size()
-                  + " wait on a release that has stopped ("
+                  + " wait on a release request that has stopped ("
                   + stalledNames(stalled)
                   + ")";
       if (commit && inFlight == 0) {
@@ -716,7 +727,7 @@ public class BumpDispatcher {
 
   /**
    * The owed set as a reader gets it: dispatchable ones in {@link BumpOrder}'s order, then the ones
-   * waiting on a release that has stopped, then the ones this gate refused to ask for.
+   * waiting on a release request that has stopped, then the ones this gate refused to ask for.
    *
    * <p>The three groups are one listing rather than three fields because the question behind the
    * door is one question — "what is owed, and why has none of it gone" — and answering it out of
@@ -731,6 +742,8 @@ public class BumpDispatcher {
           switch (standing.reason()) {
             case "READY" -> "nothing owed sits below it";
             case "BLOCKED" -> "it waits on " + String.join(", ", standing.blockedBy());
+            // HELD: a request on its way, one that shipped and waits for the scan of main, or an ask
+            // the sweep is still making — including the fresh one after a withdrawal.
             default -> "its branch is pushed and it waits on its own release";
           };
       owed.add(
@@ -748,7 +761,11 @@ public class BumpDispatcher {
               one.group(),
               0,
               "STALLED",
-              "its release request " + one.requestId() + " is " + one.state() + ": " + one.reason()));
+              (one.requestId() == null
+                      ? "its release ask was " + one.state()
+                      : "its release request " + one.requestId() + " is " + one.state())
+                  + ": "
+                  + one.reason()));
     }
     for (Refused one : assessment.refused()) {
       owed.add(
@@ -902,9 +919,10 @@ public class BumpDispatcher {
    *
    * <p>Held on everything that is not a plain "this has stopped": a request id nothing can be asked
    * about (the {@code converged} sentinel, an ask that has not been made yet — the sweep is still
-   * re-attempting it), a repository with no catalog id to address qits-projects with, and any answer
-   * that could not be read. <b>{@code refused} is the one sentinel that stalls</b>: qits-projects
-   * refused the ask itself, so there is no request and nothing is coming.
+   * re-attempting it), a repository with no catalog id to address qits-projects with, a request that
+   * is on its way or has shipped, a withdrawn one (cleared in {@link #releaseState}, so the sweep
+   * asks again), and any answer that could not be read. <b>{@code refused} is the one sentinel that
+   * stalls</b>: qits-projects refused the ask itself, so there is no request and nothing is coming.
    */
   private Hold releaseHold(MtRepository row, String group, MtBump bump) {
     String requestId = bump.releaseRequestId;
@@ -921,6 +939,9 @@ public class BumpDispatcher {
     }
     ReleaseRequestClient.ReleaseState state = releaseState(row.catalogId, requestId, bump);
     if (!state.stalled()) {
+      // WITHDRAWN lands here too: the request id is cleared by now, and the next sweep asks for a
+      // fresh request. Until it has, the branch is still pushed and still carries these changes, so
+      // re-dispatching would only come back NOTHING_TO_DO — the same hold as an ask not yet made.
       return Hold.HELD;
     }
     return new Hold(
@@ -936,6 +957,15 @@ public class BumpDispatcher {
   /**
    * qits-projects' answer about one request, reused within the ttl and written onto the bump row
    * whenever it is freshly read.
+   *
+   * <p><b>A fresh WITHDRAWN clears the request instead</b> (owner decision 2026-10-04, qits-886:
+   * "treat withdrawn the same as non existing", a person's withdrawal included). With the id gone the
+   * row is back in {@link MaintenanceStore#bumpsOwedARelease}, and {@link BumpService#retryRelease}
+   * re-checks that the branch is PUSHED and ahead of main and asks qits-projects again, which mints a
+   * fresh request after a withdrawal. Before this, a withdrawn bump read as STALLED for ever: nothing
+   * could put the column back to null, so nothing would ever re-ask (qits-maintenance-frontend,
+   * 2026-10-03). Only a fresh, readable answer does it — a cached one was fresh once, and cleared
+   * the row then.
    */
   private ReleaseRequestClient.ReleaseState releaseState(
       String catalogId, String requestId, MtBump bump) {
@@ -946,7 +976,19 @@ public class BumpDispatcher {
     }
     ReleaseRequestClient.ReleaseState state = releases.state(catalogId, requestId);
     releaseStates.put(requestId, new Seen(state, now));
-    if (state.readable()) {
+    if (state.withdrawn()) {
+      store.bumpReleaseWithdrawn(
+          bump.id,
+          requestId,
+          BumpService.note(
+              bump,
+              "release request " + requestId + " was withdrawn, which counts as none; the sweep"
+                  + " asks for a fresh one"));
+      LOG.infof(
+          "The release request %s of %s was withdrawn; it counts as no request, and the sweep asks"
+              + " for a fresh one while %s is ahead of main.",
+          requestId, bump.repository, bump.branch);
+    } else if (state.readable()) {
       String before = bump.releaseState;
       store.bumpReleaseState(bump.id, state.state(), state.detail(), now);
       if (state.stalled() && !state.state().equals(before)) {

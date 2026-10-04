@@ -838,8 +838,10 @@ Each is a decision, not an omission:
   twentieth was rejected at 07:14 for a red gating build, and four hours later the window was still
   open, qits-ci idle, that one repository still "owed", nothing dispatched and no line anywhere
   saying why. So `ReleaseRequestClient.state` reads the one request the bump names, on the tick that
-  needs it: PENDING/READY/RELEASED holds, everything else makes the candidate STALLED and drops it
-  out of the night, and an unreadable answer holds. The answer is never stored as a verdict — that
+  needs it: PENDING/READY holds, RELEASED/FINALIZED/OBSOLETE holds (shipped; the next scan of main
+  ends it), REJECTED/FAILED/CONFLICTED make the candidate STALLED and drop it out of the night, and an
+  unreadable answer holds. WITHDRAWN counts as no request (qits-886, owner decision 2026-10-04): the
+  bump's request id is cleared and the release sweep asks for a fresh one. The answer is never stored as a verdict — that
   service re-arms REJECTED, FAILED and CONFLICTED to PENDING on the next merged sha — only cached
   for `bump.dispatch.release-state-ttl` and written onto the bump row for a reader.
 - **Automatic EXTERNAL bumps.** `qits.maintenance.bump.external.auto` exists so the deployment
