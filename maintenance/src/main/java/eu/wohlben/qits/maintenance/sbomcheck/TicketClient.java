@@ -13,30 +13,43 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * The SBOM check's four calls into qits-projects' entities API — file a ticket, read one, comment
- * on one, drop one — on {@link PeerTarget#PROJECTS}, the address the catalog read and the release
- * ask already use.
+ * The SBOM check's four calls into qits-projects' {@code /work} API (epic qits-965, qits-974) —
+ * file a ticket, read one, comment on one, drop one — on {@link PeerTarget#PROJECTS}, the address
+ * the catalog read and the release ask already use.
  *
- * <p>The routes and body shapes are qits-projects' own ({@code service/…/entities/api/}): {@code
- * POST /projects/api/entities} with the archetype plus the ticket create schema (answers 201 with
- * the entity in the merged shape — {@code id}, {@code qualifiedId}, {@code slug}); {@code GET
- * /projects/api/entities/{id}} ({@code status}, {@code ticketType}); {@code POST …/{id}/comments}
- * {@code {"body": …}}; {@code POST …/{id}/status} {@code {"target": "DROPPED"}}.
+ * <p>The routes and body shapes are qits-projects' own ({@code service/…/entities/api/WorkEntityDoors}
+ * and its {@code /work} controllers, which replaced the old archetype-addressed {@code /entities}
+ * family qits-974 moved this client off): {@code POST /projects/api/work} with the archetype plus
+ * the ticket create schema (answers 201 with the entity in the merged shape — {@code id}, {@code
+ * qualifiedId}, {@code slug}); {@code GET /projects/api/work/{qualifiedId}} ({@code status}, {@code
+ * ticketType}); {@code POST …/{qualifiedId}/comments} {@code {"body": …}}; {@code POST
+ * …/{qualifiedId}/status} {@code {"target": "DROPPED"}}. qits-projects names the path segment
+ * {@code qualifiedId} but resolves either a qualified id ({@code qits-703}) or a UUID there.
+ *
+ * <p><b>Addressed by qualified id where one is known, a UUID otherwise — no schema migration.</b>
+ * {@code mt_sbom_ticket.ticket_id} stays the entity UUID {@link #file} answers ({@code NOT NULL},
+ * and dropping it would be a migration); {@code ticket_slug} already held the qualified id ({@link
+ * Filed#slug}) whenever qits-projects answered one, with no column to add for it. So {@link
+ * SbomCheckService} resolves whichever of the two a row holds — preferring the slug — into a single
+ * reference string, and {@link #read}, {@link #comment} and {@link #drop} take that reference
+ * rather than requiring the UUID they used to: either addresses the same {@code /work} door.
  *
  * <p><b>Every failure THROWS here, unlike the rest of this service's peer reads.</b> The caller is
  * one ticket decision of the SBOM check, which catches per group and reports the sentence: a write
  * that may or may not have happened must not be mistaken for one that did, and nothing about a
  * ticket call is retried in place.
  *
- * <p><b>ROLLOUT NOTE, measured against qits-projects main on 2026-10-02:</b> all four doors ({@code
- * POST /projects/api/entities}, {@code GET …/{id}}, {@code POST …/{id}/comments}, {@code POST
- * …/{id}/status}) admit {@code qits:system}, which this service presents on every call — settled
- * before {@code qits.maintenance.sbom.check.file-tickets} shipped on.
+ * <p><b>ROLLOUT NOTE, measured against qits-projects main on 2026-10-02:</b> all four entities doors
+ * ({@code POST /projects/api/entities}, {@code GET …/{id}}, {@code POST …/{id}/comments}, {@code
+ * POST …/{id}/status}) admitted {@code qits:system}, which this service presents on every call —
+ * settled before {@code qits.maintenance.sbom.check.file-tickets} shipped on. Their {@code /work}
+ * replacements (qits-974) carry the same role list ({@code qits:admin}, {@code qits:agent}, {@code
+ * qits:system}) per qits-projects' openapi document.
  */
 @ApplicationScoped
 public class TicketClient {
 
-  static final String ENTITIES = "/projects/api/entities";
+  static final String WORK = "/projects/api/work";
 
   private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -75,7 +88,7 @@ public class TicketClient {
     body.put("title", title);
     body.put("impetus", impetus);
     body.put("description", description);
-    PeerExchange exchange = peers.post(PeerTarget.PROJECTS, ENTITIES, body.toString());
+    PeerExchange exchange = peers.post(PeerTarget.PROJECTS, WORK, body.toString());
     PeerAnswer answer = exchange.answer();
     if (!answer.ok()) {
       throw failed("file a ticket in project " + projectId, exchange);
@@ -94,39 +107,43 @@ public class TicketClient {
     return new Filed(UUID.fromString(id), slug == null ? null : cap(slug, 64));
   }
 
-  /** One ticket's status and type; EMPTY when qits-projects has no such entity any more. */
-  public Optional<TicketState> read(UUID ticketId) {
-    PeerExchange exchange = peers.get(PeerTarget.PROJECTS, ENTITIES + "/" + ticketId);
+  /**
+   * One ticket's status and type; EMPTY when qits-projects has no such entity any more.
+   *
+   * @param ticketRef the ticket's qualified id or its entity UUID, as text — either resolves
+   */
+  public Optional<TicketState> read(String ticketRef) {
+    PeerExchange exchange = peers.get(PeerTarget.PROJECTS, WORK + "/" + ticketRef);
     PeerAnswer answer = exchange.answer();
     if (answer.notFound()) {
       return Optional.empty();
     }
     if (!answer.ok()) {
-      throw failed("read ticket " + ticketId, exchange);
+      throw failed("read ticket " + ticketRef, exchange);
     }
     return Optional.of(
         new TicketState(text(answer.json(), "status"), text(answer.json(), "ticketType")));
   }
 
-  /** Adds a comment to a ticket's thread. */
-  public void comment(UUID ticketId, String text) {
+  /** Adds a comment to a ticket's thread. {@code ticketRef}: see {@link #read}. */
+  public void comment(String ticketRef, String text) {
     ObjectNode body = JSON.createObjectNode();
     body.put("body", text);
     PeerExchange exchange =
-        peers.post(PeerTarget.PROJECTS, ENTITIES + "/" + ticketId + "/comments", body.toString());
+        peers.post(PeerTarget.PROJECTS, WORK + "/" + ticketRef + "/comments", body.toString());
     if (!exchange.answer().ok()) {
-      throw failed("comment on ticket " + ticketId, exchange);
+      throw failed("comment on ticket " + ticketRef, exchange);
     }
   }
 
-  /** Moves a ticket to DROPPED. */
-  public void drop(UUID ticketId) {
+  /** Moves a ticket to DROPPED. {@code ticketRef}: see {@link #read}. */
+  public void drop(String ticketRef) {
     ObjectNode body = JSON.createObjectNode();
     body.put("target", "DROPPED");
     PeerExchange exchange =
-        peers.post(PeerTarget.PROJECTS, ENTITIES + "/" + ticketId + "/status", body.toString());
+        peers.post(PeerTarget.PROJECTS, WORK + "/" + ticketRef + "/status", body.toString());
     if (!exchange.answer().ok()) {
-      throw failed("drop ticket " + ticketId, exchange);
+      throw failed("drop ticket " + ticketRef, exchange);
     }
   }
 

@@ -17,7 +17,8 @@ import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
-/** The four calls into qits-projects' entities API, as the bodies and paths its controllers take. */
+/** The four calls into qits-projects' {@code /work} API, as the bodies and paths its controllers
+ * take (qits-974, epic qits-965). */
 class TicketClientTest {
 
   private static final ObjectMapper JSON = new ObjectMapper();
@@ -62,7 +63,7 @@ class TicketClientTest {
 
     assertEquals(new TicketClient.Filed(id, "qits-901"), filed);
     PeerCall call = peers.calls.get(0);
-    assertEquals("http://qits-projects:8080/projects/api/entities", call.url());
+    assertEquals("http://qits-projects:8080/projects/api/work", call.url());
     JsonNode body = JSON.readTree(call.body());
     assertEquals("TICKET", body.get("archetype").asText());
     assertEquals("qits", body.get("project").asText());
@@ -73,33 +74,49 @@ class TicketClientTest {
   }
 
   @Test
-  void readCommentAndDropUseTheEntityDoors() throws Exception {
+  void readCommentAndDropUseTheWorkDoorsByQualifiedId() throws Exception {
+    Stub peers = new Stub();
+    TicketClient client = new TicketClient();
+    client.peers = peers;
+    String ref = "qits-901";
+
+    peers.answer(200, "{\"status\":\"REFINED\",\"ticketType\":\"MAINTENANCE\"}");
+    TicketClient.TicketState state = client.read(ref).orElseThrow();
+    assertEquals("REFINED", state.status());
+    assertTrue(state.maintenance());
+
+    peers.answer(200, "{}");
+    client.comment(ref, "hello");
+    client.drop(ref);
+    assertEquals(
+        "http://qits-projects:8080/projects/api/work/" + ref, peers.calls.get(0).url());
+    assertEquals(
+        "http://qits-projects:8080/projects/api/work/" + ref + "/comments",
+        peers.calls.get(1).url());
+    assertEquals("hello", JSON.readTree(peers.calls.get(1).body()).get("body").asText());
+    assertEquals(
+        "http://qits-projects:8080/projects/api/work/" + ref + "/status",
+        peers.calls.get(2).url());
+    assertEquals("DROPPED", JSON.readTree(peers.calls.get(2).body()).get("target").asText());
+
+    peers.answer(404, "{}");
+    assertTrue(client.read(ref).isEmpty(), "a ticket that is gone reads as empty");
+    peers.answer(403, "{\"message\":\"no\"}");
+    assertThrows(TicketClient.TicketCallFailed.class, () -> client.comment(ref, "x"));
+  }
+
+  /** A row that never got a qualified id back still resolves — a bare UUID works on {@code /work}
+   * too (qits-965). */
+  @Test
+  void readCommentAndDropAlsoWorkByBareUuid() throws Exception {
     Stub peers = new Stub();
     TicketClient client = new TicketClient();
     client.peers = peers;
     UUID id = UUID.randomUUID();
 
-    peers.answer(200, "{\"status\":\"REFINED\",\"ticketType\":\"MAINTENANCE\"}");
-    TicketClient.TicketState state = client.read(id).orElseThrow();
-    assertEquals("REFINED", state.status());
-    assertTrue(state.maintenance());
-
-    peers.answer(200, "{}");
-    client.comment(id, "hello");
-    client.drop(id);
-    assertEquals("http://qits-projects:8080/projects/api/entities/" + id, peers.calls.get(0).url());
+    peers.answer(200, "{\"status\":\"REPORTED\",\"ticketType\":\"MAINTENANCE\"}");
+    client.read(id.toString());
     assertEquals(
-        "http://qits-projects:8080/projects/api/entities/" + id + "/comments",
-        peers.calls.get(1).url());
-    assertEquals("hello", JSON.readTree(peers.calls.get(1).body()).get("body").asText());
-    assertEquals(
-        "http://qits-projects:8080/projects/api/entities/" + id + "/status",
-        peers.calls.get(2).url());
-    assertEquals("DROPPED", JSON.readTree(peers.calls.get(2).body()).get("target").asText());
-
-    peers.answer(404, "{}");
-    assertTrue(client.read(id).isEmpty(), "a ticket that is gone reads as empty");
-    peers.answer(403, "{\"message\":\"no\"}");
-    assertThrows(TicketClient.TicketCallFailed.class, () -> client.comment(id, "x"));
+        "http://qits-projects:8080/projects/api/work/" + id, peers.calls.get(0).url());
   }
 }
