@@ -439,6 +439,62 @@ public class AutomationService {
     return first;
   }
 
+  // --- the targeted door ---------------------------------------------------------------------------
+
+  /**
+   * Opens an {@code estate-pins} run onto a branch the CALLER names, carrying the changes the CALLER
+   * names — what {@code POST /repositories/{name}/branches/bumps} asked of the TARGETED mode, kept
+   * working until that door is retired.
+   *
+   * <p>No request and no fold: the caller names neither, so nothing is superseded or carried and the
+   * ending is the run's verdict. Locked on the BRANCH — one run per ref, whoever opened it — and the
+   * changes are validated here, synchronously, because there is a caller on the other end to tell.
+   *
+   * @throws NoSuchRepositoryException the inventory has no such repository — a 404
+   * @throws eu.wohlben.qits.maintenance.error.BumpAlreadyActiveException one is going onto that
+   *     branch — a 409
+   * @throws BumpDisabledException {@code qits.maintenance.bump.enabled} is false — a 409
+   * @throws BadRequestException the branch or a change is not something the step would accept
+   */
+  public UUID requestTargeted(
+      String repository, String branch, List<Change> changes, BumpTrigger trigger) {
+    if (!config.bumpEnabled()) {
+      throw new BumpDisabledException();
+    }
+    MtRepository row =
+        store.repository(repository).orElseThrow(() -> new NoSuchRepositoryException(repository));
+    List<Change> asked = changes == null ? List.of() : List.copyOf(changes);
+    List<String> problems =
+        BumpPayload.problems(BumpService.TARGETED_GROUP, branch, baseRef(row), asked);
+    if (!problems.isEmpty()) {
+      throw new BadRequestException(String.join("; ", problems));
+    }
+    UUID id =
+        store.openAutomation(
+            new AutomationOpening(
+                repository,
+                EstatePinsAutomation.KIND,
+                null,
+                null,
+                null,
+                null,
+                branch,
+                null,
+                config.environment(),
+                trigger,
+                asked,
+                Map.of(),
+                BumpStatus.REQUESTED,
+                null),
+            true,
+            Instant.now());
+    queueDispatch(id);
+    LOG.infof(
+        "Opened the %s estate-pins run %s of %s onto %s with %d changes",
+        trigger, id, repository, branch, asked.size());
+    return id;
+  }
+
   // --- dispatch -----------------------------------------------------------------------------------
 
   /** Queues one row's dispatch on the worker. */

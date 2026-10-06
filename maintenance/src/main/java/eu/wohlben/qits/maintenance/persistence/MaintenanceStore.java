@@ -876,61 +876,6 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
         });
   }
 
-  /**
-   * Opens a bump onto a branch this service does not own.
-   *
-   * <p><b>THE LOCK IS KEYED ON THE BRANCH, and that is the whole difference from {@link #openBump}
-   * above.</b> "One bump at a time" is not a property of a group — it is a property of a REF. The
-   * push is ff-only and never forced, so two runs writing one branch make the second a rejection at
-   * best and two commits computed from two readings at worst. For a group bump the group is a
-   * faithful stand-in for the ref, because the ref is named from it and nothing else writes it. For a
-   * targeted bump it is not a stand-in at all: the caller names the branch, and one repository may
-   * have several release requests open at once, each on its own workspace branch, each legitimately
-   * wanting its own pins. Locking those against each other by repository would serialize unrelated
-   * work and refuse the second caller a bump it is entitled to; locking them by branch refuses
-   * exactly the thing that cannot be done twice.
-   *
-   * <p><b>And the two locks do not see each other, deliberately.</b> A targeted bump onto a
-   * workspace branch and a group bump onto {@code maintenance/dependencies} are two refs, so neither
-   * has any reason to hold the other up — which is why both checks carry the mode as well as their
-   * key, rather than sharing one query and hoping the sentinel group name never collides with a real
-   * one.
-   *
-   * <p>The check is inside the transaction for the reason {@link #openBump}'s is.
-   */
-  @ActivateRequestContext
-  public UUID openTargetedBump(
-      String repository,
-      String group,
-      String branch,
-      String environment,
-      BumpTrigger trigger,
-      List<?> changes,
-      Instant now) {
-    return DbRetry.inNewTx(
-        "open a targeted bump of " + repository + " onto " + branch,
-        () -> {
-          MtBump active = activeTargetedBumpRow(repository, branch);
-          if (active != null) {
-            throw BumpAlreadyActiveException.onBranch(repository, branch, active.id);
-          }
-          MtBump row = new MtBump();
-          row.id = UUID.randomUUID();
-          row.repository = repository;
-          row.groupName = group;
-          row.mode = BumpMode.TARGETED.name();
-          row.branch = branch;
-          row.environment = environment;
-          row.trigger = trigger.name();
-          row.status = BumpStatus.REQUESTED.name();
-          row.changes = writeJson(changes);
-          row.startedAt = now;
-          row.persist();
-          getEntityManager().flush();
-          return row.id;
-        });
-  }
-
   /** Records the branch head a run starts from, so the ending can tell whether it moved. */
   @ActivateRequestContext
   public void bumpStartHead(UUID id, String head) {
@@ -1244,14 +1189,6 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
     return DbRetry.inNewTx(
         "read the active bump of one group",
         () -> Optional.ofNullable(activeBumpRow(repository, group)));
-  }
-
-  /** The targeted bump holding one caller's branch, if there is one. */
-  @ActivateRequestContext
-  public Optional<MtBump> activeTargetedBump(String repository, String branch) {
-    return DbRetry.inNewTx(
-        "read the active targeted bump of one branch",
-        () -> Optional.ofNullable(activeTargetedBumpRow(repository, branch)));
   }
 
   /**
@@ -1719,23 +1656,6 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
             repository,
             group,
             BumpMode.GROUP.name(),
-            List.of(BumpStatus.REQUESTED.name(), BumpStatus.RUNNING.name()))
-        .firstResult();
-  }
-
-  /** The TARGETED bump holding one branch, if there is one. Keyed on the ref, which is the thing
-   * that cannot be written twice at once — see {@link #openTargetedBump}. */
-  private static MtBump activeTargetedBumpRow(String repository, String branch) {
-    return activeBranchBumpRow(repository, branch, BumpMode.TARGETED);
-  }
-
-  /** The active bump of one mode holding one branch, if there is one. */
-  private static MtBump activeBranchBumpRow(String repository, String branch, BumpMode mode) {
-    return MtBump.find(
-            "repository = ?1 and branch = ?2 and mode = ?3 and status in ?4",
-            repository,
-            branch,
-            mode.name(),
             List.of(BumpStatus.REQUESTED.name(), BumpStatus.RUNNING.name()))
         .firstResult();
   }

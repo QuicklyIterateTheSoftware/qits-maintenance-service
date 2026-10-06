@@ -7,7 +7,6 @@ import eu.wohlben.qits.maintenance.entity.MtBranch;
 import eu.wohlben.qits.maintenance.entity.MtBump;
 import eu.wohlben.qits.maintenance.entity.MtGroup;
 import eu.wohlben.qits.maintenance.entity.MtRepository;
-import eu.wohlben.qits.maintenance.error.BadRequestException;
 import eu.wohlben.qits.maintenance.error.BumpDisabledException;
 import eu.wohlben.qits.maintenance.error.NoSuchGroupException;
 import eu.wohlben.qits.maintenance.error.NoSuchRepositoryException;
@@ -76,45 +75,23 @@ import org.jboss.logging.Logger;
  * it, Auto Release tags it and the merge back to main follows the deployment, all in qits-projects.
  * Nothing here waits for a version, polls the request or records a release.
  *
- * <h2>Two modes, because there are two kinds of branch</h2>
+ * <h2>Every paragraph above is about a branch this service OWNS</h2>
  *
- * <p><b>Every paragraph above is about a branch this service OWNS</b> — {@code maintenance/<group>},
- * named from the group, created by the step, tracked by an {@code mt_branch} row and deleted by the
- * release that lands it. Nobody else commits to it, which is exactly what licenses reading its head
- * twice and calling the difference the run's work.
+ * <p>{@code maintenance/<group>}, named from the group, created by the step, tracked by an {@code
+ * mt_branch} row and deleted by the release that lands it. Nobody else commits to it, which is
+ * exactly what licenses reading its head twice and calling the difference the run's work.
  *
- * <p><b>{@link #requestTargeted} writes onto a branch the CALLER owns</b>, and none of that holds
- * there. A wrapper release request wants its gitlink pins inside the fold CI will gate and a person
- * will approve, rather than banked by the release afterwards — so the pins have to land on the
- * workspace branch that request is built from. That branch belongs to qits-projects: it moves
- * because the workspace commits to it, it is not ours to delete, and it already has a release
- * request open on it. So the targeted mode:
- *
- * <ul>
- *   <li><b>reads no head before the trigger and never compares one.</b> A workspace commit landing
- *       between the trigger and the run's end is ordinary, and the before/after comparison would
- *       read it as this bump's success — or, under a red run, as STALE, which would be this service
- *       declaring a live workspace branch abandoned and refusing to write to it ever again;
- *   <li><b>writes no {@code mt_branch} row.</b> There is no branch of ours to record, and the row's
- *       unique {@code (repository, group_name)} index is an OWNERSHIP claim over a ref this service
- *       does not own;
- *   <li><b>opens no release request.</b> The caller already has one — that request is why the pins
- *       are wanted — and a second ask would be a second request for the same work;
- *   <li><b>is judged by its CI run and reports the commit it left behind.</b> Green is SUCCEEDED
- *       with {@code mt_bump.result_sha}, red is FAILED, and there is no third arm.
- * </ul>
- *
- * <p><b>What both modes still share is the whole of the rest</b>: the payload, the validation, the
- * dedupe key, the 503-is-a-retry rule, the poller and the one-at-a-time lock. The mode is a reading
- * of the ending, not a second machine.
- *
- * <h2>And the release-request automations, which are not read here at all</h2>
+ * <h2>The release-request automations are not read here at all</h2>
  *
  * <p><b>An AUTOMATION row is {@link AutomationService}'s</b> (qits-978): its dispatch, its caps and
  * its ending are written once there for every kind, and this class only routes — {@link #dispatch}
  * and the poll's ending hand such a row over, and the sweep reaches it like any other active bump.
- * What used to be the BASELINES mode is the {@code screenshot-baselines} kind, and {@link
- * #requestBaselines} is a delegate to its re-run.
+ * What were the TARGETED and BASELINES modes are the {@code estate-pins} and {@code
+ * screenshot-baselines} kinds — a write onto a branch the CALLER owns, judged by its CI run, and a
+ * write onto a branch of the automation's own, head-compared and joined — and {@link
+ * #requestTargeted} and {@link #requestBaselines} are delegates kept for the two doors that still
+ * call them. Neither kind writes an {@code mt_branch} row or asks for a release: the request the
+ * commit belongs to is already open.
  */
 @ApplicationScoped
 public class BumpService {
@@ -129,15 +106,15 @@ public class BumpService {
   public static final String BRANCH_PREFIX = "maintenance/";
 
   /**
-   * What a TARGETED bump puts in {@code mt_bump.group_name}, which is not null and has no honest
-   * value: a targeted bump carries the changes the caller named and belongs to no group at all.
+   * The payload's {@code group} on every run that writes a release request's OWN branches — the
+   * {@code estate-pins} automation, and what the TARGETED mode put in {@code group_name} before V18.
+   * Such a run carries the changes its plan (or the caller) named and belongs to no group at all.
    *
-   * <p><b>A stated sentinel rather than a blank or the branch name.</b> The column reaches two
-   * places, and both want a word. It goes out as the payload's {@code group}, which the step refuses
-   * unless it is {@code [0-9A-Za-z._-]+} — so a branch name with a slash in it could not be used
-   * even if it made sense. And the step writes it into the commit subject on somebody else's branch:
-   * {@code bump(targeted): 3 dependencies} tells whoever reads that history what put the commit
-   * there, which is exactly what a workspace owner finding an unexpected commit needs to know.
+   * <p><b>A stated sentinel rather than a blank or the branch name.</b> The step refuses a group
+   * unless it is {@code [0-9A-Za-z._-]+} — so a branch name with a slash in it could not be used even
+   * if it made sense — and writes it into the commit subject on somebody else's branch: {@code
+   * bump(targeted): 3 dependencies} tells whoever reads that history what put the commit there,
+   * which is exactly what a workspace owner finding an unexpected commit needs to know.
    *
    * <p><b>It is a LABEL, never a key.</b> {@code mt_bump.mode} is the discriminator: every query that
    * means "the group path" says so by mode, so a repository that really did declare a group spelled
@@ -204,28 +181,13 @@ public class BumpService {
 
   /**
    * Opens a bump onto a branch the CALLER names, carrying the changes the CALLER names, and queues
-   * its dispatch.
+   * its dispatch — <b>a delegate to the {@code estate-pins} release-request automation</b>
+   * (qits-999), kept until the {@code /branches/bumps} door that calls it is retired.
    *
-   * <p><b>Everything is stated rather than derived, and that is the shape of the mode.</b> The group
-   * path is given a group and works out the branch (from the naming rule) and the changes (from the
-   * pins, the latest versions and the grouping file). Here there is no group to derive either from:
-   * the caller is holding a release request on a particular branch and a particular set of pins it
-   * wants inside that request's fold, and neither of those is a fact this service could recompute —
-   * a recomputation would answer a different question and put a different commit on somebody else's
-   * branch.
-   *
-   * <p><b>The changes are frozen for the same reason they are on the group path</b>: they are what
-   * was asked for, so a retry after a 503 sends the same list under the same dedupe key.
-   *
-   * <p><b>The repository must be in the inventory, and that is the only thing read.</b> Not for its
-   * pins — none are used — but for the two things the dispatch needs and cannot invent: the project
-   * the git host addresses it under, and the base ref the step starts from if the branch has somehow
-   * gone. A repository this service has never scanned can be named in a payload but cannot be
-   * addressed, which is a 404 rather than a run that fails over there.
-   *
-   * <p><b>An empty change list is accepted and ends NOTHING_TO_DO.</b> It is the honest ending: the
-   * caller asked for nothing to be written and nothing was, and refusing it would make every caller
-   * carry a special case for "the fold is already right".
+   * <p>The row is an AUTOMATION row of kind {@code estate-pins} with no request and no fold — the
+   * caller names a branch and a change list rather than a fold — and it runs exactly as a TARGETED
+   * bump ran: the bump pipeline under the {@code targeted} group, judged by its CI run, reporting the
+   * commit it left in {@code result_sha}, locked on the branch, an empty list ending NOTHING_TO_DO.
    *
    * @param repository the repository, as the catalog spells it
    * @param branch the caller's branch, without {@code refs/heads/} — validated as a plain ref
@@ -236,44 +198,11 @@ public class BumpService {
    * @throws BumpDisabledException {@code qits.maintenance.bump.enabled} is false — a 409
    * @throws eu.wohlben.qits.maintenance.error.BadRequestException the branch or a change is not
    *     something the step would accept — a 400, refused here rather than as a red run over there
+   * @see AutomationService#requestTargeted
    */
   public UUID requestTargeted(
       String repository, String branch, List<Change> changes, BumpTrigger trigger) {
-    if (!config.bumpEnabled()) {
-      // The switch stops this door as well as the schedule and the group button. A platform that
-      // wants to write into nobody's repository for a week means this one too.
-      throw new BumpDisabledException();
-    }
-    MtRepository row =
-        store.repository(repository).orElseThrow(() -> new NoSuchRepositoryException(repository));
-    List<Change> asked = changes == null ? List.of() : List.copyOf(changes);
-
-    // REFUSED HERE RATHER THAN AT DISPATCH, unlike the group path, and the difference is who is
-    // listening. A scheduled bump has nobody on the other end of the call, so a bad payload is best
-    // recorded on its row; a targeted bump is a synchronous ask from another service, which can be
-    // told plainly that the branch it named is not a ref — and told before a row exists that its
-    // caller would then have to poll to discover the refusal. The rules are the same rules; only
-    // the moment moves.
-    List<String> problems =
-        BumpPayload.problems(TARGETED_GROUP, branch, baseRef(row), asked);
-    if (!problems.isEmpty()) {
-      throw new BadRequestException(String.join("; ", problems));
-    }
-
-    UUID id =
-        store.openTargetedBump(
-            repository,
-            TARGETED_GROUP,
-            branch,
-            config.environment(),
-            trigger,
-            asked,
-            Instant.now());
-    queue.submit("targeted bump " + id + " of " + repository + " onto " + branch, () -> dispatch(id));
-    LOG.infof(
-        "Opened the %s targeted bump %s of %s onto %s with %d changes",
-        trigger, id, repository, branch, asked.size());
-    return id;
+    return automations.requestTargeted(repository, branch, changes, trigger);
   }
 
   /**
@@ -318,17 +247,13 @@ public class BumpService {
     }
     List<Change> changes = changes(bump);
     if (changes.isEmpty()) {
-      // NOTHING TO WRITE, AND NO RUN IS STARTED FOR IT. On the group path the pins moved between
-      // the request and here; on the targeted path the caller asked for an empty list, which is what
-      // a fold that is already right looks like from over there. Both are the same ending and
-      // neither is a failure — the only difference is the sentence.
+      // NOTHING TO WRITE, AND NO RUN IS STARTED FOR IT: the pins moved between the request and
+      // here. Not a failure.
       store.bumpFinished(
           id,
           BumpStatus.NOTHING_TO_DO,
           null,
-          mode == BumpMode.TARGETED
-              ? "the bump named no changes to write onto " + bump.branch
-              : "nothing is pending in this group",
+          "nothing is pending in this group",
           Instant.now());
       return;
     }
@@ -354,10 +279,6 @@ public class BumpService {
 
     if (mode.ownsTheBranch()) {
       // The head BEFORE the run, which is what an unmoved branch is compared against afterwards.
-      // A TARGETED bump reads nothing here, and the omission is the mode: the branch is the
-      // caller's, its head moves while this runs, and a "before" would only ever be evidence about
-      // somebody else's afternoon. It would also be an mt_branch row claiming a ref this service
-      // does not own — see BumpMode.
       recordBranchHead(repository.get(), bump.groupName, branch);
     }
 
@@ -476,8 +397,8 @@ public class BumpService {
       return;
     }
     if (!BumpMode.of(bump.mode).ownsTheBranch()) {
-      // A TARGETED bump is owed no release ask at all — the caller already holds the request its
-      // pins are for. `bumpsOwedARelease` filters these out, so this is unreachable from the sweep;
+      // An automation is owed no release ask at all — the request its commit belongs to is
+      // already open. `bumpsOwedARelease` filters these out, so this is unreachable from the sweep;
       // it is written anyway because "the ask is owed" is decided in two places and the one that
       // MAKES the ask should be the one that cannot be talked into it.
       return;
@@ -509,7 +430,7 @@ public class BumpService {
       // head == base is the settled case and writes CONVERGED: there is nothing on the branch, and
       // there never will be under this bump. An UNREADABLE head is not — the git host being quiet
       // for a tick must not close an ask that is genuinely owed, so it is left for the next sweep,
-      // which is the same policy `finishTargeted` applies to a head it could not read.
+      // which is the same policy an automation's ending applies to a head it could not read.
       if (head != null && base != null) {
         store.bumpReleaseAsked(
             id,
@@ -585,66 +506,7 @@ public class BumpService {
       automations.finish(bump, passed, ciRunStatus);
       return;
     }
-    if (BumpMode.of(bump.mode) == BumpMode.TARGETED) {
-      finishTargeted(bump, passed, ciRunStatus);
-      return;
-    }
     finishGroup(bump, passed, ciRunStatus);
-  }
-
-  /**
-   * The verdict on a bump onto a branch the CALLER owns: <b>the run's own result, and nothing about
-   * where the branch head happens to be.</b>
-   *
-   * <p><b>There is no before-head, no comparison and no STALE arm, and every one of those absences
-   * is the point.</b> The workspace commits to this branch while the run is going — that is what a
-   * workspace branch IS — so the three things the group ending reads out of a moved head are all
-   * wrong here:
-   *
-   * <ul>
-   *   <li>a moved head under a green run would be called this bump's success even when the mover was
-   *       somebody typing in their editor;
-   *   <li>an UNMOVED head under a green run would be called NOTHING_TO_DO even when the step pushed,
-   *       merely because the read raced;
-   *   <li>and a moved head under a RED run would be called STALE — this service declaring a live
-   *       workspace branch to be somebody's abandoned hand-written mess and refusing to write to it
-   *       ever again. That is the failure that would hurt, because it is silent and permanent.
-   * </ul>
-   *
-   * <p><b>So the CI run decides and the git host only answers a second question.</b> Green is
-   * SUCCEEDED — the step applied the changes and its ff-only push was accepted, which is exactly
-   * what the caller asked for — and red is FAILED, plainly, with the CI status on the row. The
-   * branch head is then read ONCE, after the run, and recorded as {@code result_sha}: the caller
-   * asked for pins to be put in a fold it is about to gate, and "which commit holds them" is the
-   * question it goes on to ask. A head that could not be read afterwards costs the sha and a
-   * sentence, never the verdict — the run was green either way, and turning another service's
-   * momentary silence into a failed bump is the mistake this whole method exists to avoid.
-   *
-   * <p><b>Nothing here writes an {@code mt_branch} row and nothing here asks for a release.</b> The
-   * branch is not ours to track and the caller already holds the release request these pins are for.
-   */
-  private void finishTargeted(MtBump bump, boolean passed, String ciRunStatus) {
-    Instant now = Instant.now();
-    if (!passed) {
-      store.bumpFinished(
-          bump.id, BumpStatus.FAILED, ciRunStatus, "the ci run ended " + ciRunStatus, now);
-      LOG.warnf(
-          "The targeted bump %s of %s onto %s ended %s", bump.id, bump.repository, bump.branch,
-          ciRunStatus);
-      return;
-    }
-    String after =
-        store.repository(bump.repository).map(row -> branchHead(row, bump.branch)).orElse(null);
-    int written = changes(bump).size();
-    String message =
-        after == null
-            ? written + " dependencies on " + bump.branch
-                + "; the run passed and its head could not be read"
-            : written + " dependencies on " + bump.branch + " at " + after;
-    store.bumpFinished(bump.id, BumpStatus.SUCCEEDED, ciRunStatus, message, after, now);
-    LOG.infof(
-        "The targeted bump %s wrote %d change(s) onto %s of %s; it now stands at %s",
-        bump.id, written, bump.branch, bump.repository, after == null ? "an unreadable head" : after);
   }
 
   /**
@@ -652,8 +514,8 @@ public class BumpService {
    *
    * <p>The branch head is read again here, and the comparison against what was recorded before the
    * trigger is what separates the three endings. It may be read that way because nothing else
-   * commits to {@code maintenance/<group>} — which is precisely what a targeted bump cannot assume;
-   * see {@link #finishTargeted}.
+   * commits to {@code maintenance/<group>} — which is precisely what an automation writing a
+   * request's own branches cannot assume; see {@code AutomationService.finish}.
    */
   private void finishGroup(MtBump bump, boolean passed, String ciRunStatus) {
     Instant now = Instant.now();

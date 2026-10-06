@@ -102,8 +102,9 @@ class TargetedBumpApiTest {
         .get(BASE + "/bumps/" + id)
         .then()
         .statusCode(200)
-        .body("mode", equalTo("TARGETED"))
-        .body("group", equalTo(BumpService.TARGETED_GROUP))
+        .body("mode", equalTo("AUTOMATION"))
+        .body("group", equalTo("estate-pins"))
+        .body("configPath", equalTo(".config/qits/platform-pipelines/maintenance-bump.yml"))
         .body("branch", equalTo(BRANCH))
         .body("status", equalTo("RUNNING"))
         // Nothing was written yet, and the field says so rather than guessing.

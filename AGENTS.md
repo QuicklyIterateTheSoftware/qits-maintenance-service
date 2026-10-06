@@ -195,7 +195,10 @@ work that reaches the front after the barrier does not exist yet.
 
 ## Bumping
 
-**THERE ARE TWO MODES AND EVERY RULE BELOW IS ABOUT THE FIRST ONE.** A GROUP bump writes
+**THERE ARE TWO MODES AND EVERY RULE BELOW IS ABOUT THE FIRST ONE.** (The next two paragraphs
+describe TARGETED and BASELINES as they were written; since V18 both are release-request automation
+kinds — `estate-pins` and `screenshot-baselines` — with the same behaviour, run by
+`AutomationService`. See the paragraph after them.) A GROUP bump writes
 `maintenance/<group>` — a branch this service names, creates, tracks in `mt_branch`, releases and
 lets the release delete. A TARGETED bump (`POST /repositories/{name}/branches/bumps`,
 `BumpService.requestTargeted`) writes a branch the CALLER names and owns: a workspace branch whose
@@ -240,7 +243,13 @@ run's verdict. Rows are `mode = AUTOMATION` with `automation_kind`, `fold_sha`, 
 rows V18 has not reached. **Carry-over is the loop's terminator**: a fold whose changed paths all lie
 under the applicable kinds' committable paths, after a FRESH or COMMITTED fold, is FRESH with no
 run — which only holds while no automation's output is another automation's input, so keep kinds'
-paths disjoint (`AutomationRegistryTest`). The old baselines door is a delegate to the re-run.
+paths disjoint (`AutomationRegistryTest`). The old baselines door is a delegate to the re-run, and
+`/branches/bumps` opens an `estate-pins` row with no request. **`estate-pins` is qits-projects'
+`EstatePinRefresh`, ported** (qits-999): a wrapper (archetype `PROJECT`), per source branch but never
+main, each `.gitmodules` entry naming a sibling of the same project with an `mt_release` is compared
+against the branch's gitlink, and the change list is byte for byte what `HttpEstatePins` sent —
+which is why `automation/WrapperGitmodules` ports the wrapper's own reader rather than using
+`GitmodulesParser`. No difference is FRESH with no run, and that is the estate loop's terminator.
 
 **Two callers on the group path, and no scan is one of them.** The button is `POST
 /repositories/{name}/groups/{group}/bumps`; the clock is `schedule/BumpSchedule` at 02:00, INTERNAL

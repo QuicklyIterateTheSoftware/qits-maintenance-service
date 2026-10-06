@@ -32,7 +32,7 @@ public class BumpAlreadyActiveException extends MaintenanceException {
    * <p>Its own sentence rather than the one above with a branch substituted for a group: a caller
    * reading "a bump of qits-qits/workspace/ws-7 is already active" would go looking for a group by
    * that name. What is held here is a REF, and two targeted bumps onto two different branches of one
-   * repository are refused by nothing — see {@code MaintenanceStore.openTargetedBump}.
+   * repository are refused by nothing — see {@code MaintenanceStore.openAutomation}.
    */
   public static BumpAlreadyActiveException onBranch(
       String repository, String branch, UUID activeBumpId) {

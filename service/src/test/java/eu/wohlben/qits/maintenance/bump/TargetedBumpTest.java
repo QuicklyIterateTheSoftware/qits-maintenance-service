@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.maintenance.api.Fixture;
+import eu.wohlben.qits.maintenance.automation.EstatePinsAutomation;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
 import eu.wohlben.qits.maintenance.entity.MtBranch;
 import eu.wohlben.qits.maintenance.entity.MtBump;
@@ -139,12 +140,13 @@ class TargetedBumpTest {
 
     MtBump running = store.bump(id).orElseThrow();
     assertEquals(BumpStatus.RUNNING.name(), running.status);
-    assertEquals(BumpMode.TARGETED.name(), running.mode, "the mode is on the row from the start");
-    assertEquals(WORKSPACE_BRANCH, running.branch, "the branch is the caller's, not a derived one");
     assertEquals(
-        BumpService.TARGETED_GROUP,
-        running.groupName,
-        "a targeted bump belongs to no group and says so with the stated sentinel");
+        BumpMode.AUTOMATION.name(),
+        running.mode,
+        "since qits-999 the door opens an estate-pins automation, on the row from the start");
+    assertEquals(EstatePinsAutomation.KIND, running.automationKind);
+    assertEquals(WORKSPACE_BRANCH, running.branch, "the branch is the caller's, not a derived one");
+    assertNull(running.releaseRequestId, "the caller named a branch, not a request");
 
     // The step pushed; the branch now stands somewhere else.
     Fixture.scriptForeignBranchAt(peers, WORKSPACE_BRANCH, AFTER_SHA);
