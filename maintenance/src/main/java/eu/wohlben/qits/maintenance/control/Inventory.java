@@ -60,6 +60,8 @@ public class Inventory {
 
   @Inject BumpDispatcher dispatcher;
 
+  @Inject eu.wohlben.qits.maintenance.automation.AutomationService automations;
+
   /** The other half of the dependency picture — what the releases CONTAIN. See {@link ArtifactGraph}. */
   @Inject ArtifactGraph graph;
 
@@ -300,13 +302,13 @@ public class Inventory {
 
   /** The newest bumps, of one repository or of all of them. */
   public List<BumpDto> bumps(String repository, int limit) {
-    return store.bumps(repository, limit).stream().map(Inventory::bump).toList();
+    return store.bumps(repository, limit).stream().map(this::bump).toList();
   }
 
   /** The newest bumps still on their way, of every repository. */
   public eu.wohlben.qits.maintenance.dto.PendingBumpsDto pendingBumps(int limit) {
     return new eu.wohlben.qits.maintenance.dto.PendingBumpsDto(
-        store.pendingBumps(limit).stream().map(Inventory::bump).toList());
+        store.pendingBumps(limit).stream().map(this::bump).toList());
   }
 
   /** One bump. */
@@ -425,7 +427,7 @@ public class Inventory {
         pin.location);
   }
 
-  private static BumpDto bump(MtBump row) {
+  private BumpDto bump(MtBump row) {
     return new BumpDto(
         row.id,
         row.repository,
@@ -442,9 +444,11 @@ public class Inventory {
         row.ciRunId == null || row.ciRunId.isBlank()
             ? List.of()
             : List.of(row.ciRunId.split(",")),
+        // An automation runs the kind file qits-ci's shared core composes, or the bump pipeline —
+        // which of the two is the kind's to say.
         eu.wohlben.qits.maintenance.model.BumpMode.of(row.mode)
-                == eu.wohlben.qits.maintenance.model.BumpMode.BASELINES
-            ? eu.wohlben.qits.maintenance.bump.CiClient.BASELINES_CONFIG_PATH
+                == eu.wohlben.qits.maintenance.model.BumpMode.AUTOMATION
+            ? automations.configPath(row)
             : eu.wohlben.qits.maintenance.bump.CiClient.CONFIG_PATH,
         row.ciRunStatus,
         row.startedAt,

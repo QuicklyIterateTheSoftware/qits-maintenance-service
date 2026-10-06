@@ -1,5 +1,7 @@
 package eu.wohlben.qits.maintenance.bump;
 
+import eu.wohlben.qits.maintenance.automation.AutomationService;
+import eu.wohlben.qits.maintenance.automation.ScreenshotBaselinesAutomation;
 import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
 import eu.wohlben.qits.maintenance.entity.MtBranch;
 import eu.wohlben.qits.maintenance.entity.MtBump;
@@ -9,7 +11,6 @@ import eu.wohlben.qits.maintenance.error.BadRequestException;
 import eu.wohlben.qits.maintenance.error.BumpDisabledException;
 import eu.wohlben.qits.maintenance.error.NoSuchGroupException;
 import eu.wohlben.qits.maintenance.error.NoSuchRepositoryException;
-import eu.wohlben.qits.maintenance.error.ReleaseRequestNotOpenException;
 import eu.wohlben.qits.maintenance.githost.GitHostReader;
 import eu.wohlben.qits.maintenance.githost.TreeLookup;
 import eu.wohlben.qits.maintenance.model.BranchState;
@@ -24,12 +25,9 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
-import java.util.regex.Pattern;
 import java.util.UUID;
 import org.jboss.logging.Logger;
 
@@ -109,6 +107,14 @@ import org.jboss.logging.Logger;
  * <p><b>What both modes still share is the whole of the rest</b>: the payload, the validation, the
  * dedupe key, the 503-is-a-retry rule, the poller and the one-at-a-time lock. The mode is a reading
  * of the ending, not a second machine.
+ *
+ * <h2>And the release-request automations, which are not read here at all</h2>
+ *
+ * <p><b>An AUTOMATION row is {@link AutomationService}'s</b> (qits-978): its dispatch, its caps and
+ * its ending are written once there for every kind, and this class only routes — {@link #dispatch}
+ * and the poll's ending hand such a row over, and the sweep reaches it like any other active bump.
+ * What used to be the BASELINES mode is the {@code screenshot-baselines} kind, and {@link
+ * #requestBaselines} is a delegate to its re-run.
  */
 @ApplicationScoped
 public class BumpService {
@@ -139,25 +145,6 @@ public class BumpService {
    */
   public static final String TARGETED_GROUP = "targeted";
 
-  /** What a BASELINES bump puts in {@code group_name}: a label, like {@link #TARGETED_GROUP}. */
-  public static final String BASELINES_GROUP = "baselines";
-
-  /** The branch a release request's baselines are pushed to, before the request id. */
-  public static final String BASELINES_BRANCH_PREFIX = "maintenance/baselines/";
-
-  /** The branch qits-projects folds a release request into, before the request id. */
-  public static final String FOLD_BRANCH_PREFIX = "release/";
-
-  /** A release request id as qits-projects mints it. */
-  private static final Pattern REQUEST_ID =
-      Pattern.compile("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$");
-
-  /** A work item's qualified id, the scope of a commit subject: {@code qits-112}. */
-  private static final Pattern WORK_ITEM = Pattern.compile("^[A-Za-z0-9][A-Za-z0-9-]*-[0-9]{1,18}$");
-
-  /** The states in which a release request still takes a branch. */
-  private static final Set<String> OPEN = Set.of("PENDING", "READY", "REJECTED", "FAILED", "CONFLICTED");
-
   @Inject MaintenanceStore store;
 
   @Inject MaintenanceConfig config;
@@ -169,6 +156,9 @@ public class BumpService {
   @Inject ReleaseRequestClient releases;
 
   @Inject WorkQueue queue;
+
+  /** The engine every release-request automation runs on; AUTOMATION rows are its to read. */
+  @Inject AutomationService automations;
 
   /**
    * Opens a bump and queues its dispatch.
@@ -288,64 +278,19 @@ public class BumpService {
 
   /**
    * Asks for one release request's screenshot baselines to be rendered in the CI image and joined
-   * to it, and does NOT wait.
-   *
-   * <p>The run starts from the request's fold ({@code release/<request>}) — the exact tree its gate
-   * renders — and commits only the reference images it wrote, onto {@code
-   * maintenance/baselines/<request>}. A green run that moved that branch joins it to the request.
-   * Missing references are written like changed ones, so a repository's first baselines come from
-   * here too.
+   * to it, and does NOT wait — <b>a delegate to the release-request automations' re-run</b> of the
+   * {@code screenshot-baselines} kind (qits-978), kept until the door that calls it is retired.
    *
    * @param repository the repository, as the catalog spells it
    * @param requestId the open release request the images are for
    * @param workItem the commit subject's scope ({@code qits-112}), or null: the step then takes it
    *     from the newest commit on the fold that names one
-   * @throws NoSuchRepositoryException the inventory has no such repository — a 404
-   * @throws ReleaseRequestNotOpenException the request is settled or cannot be read — a 409
-   * @throws eu.wohlben.qits.maintenance.error.BumpAlreadyActiveException one is going for that
-   *     request — a 409
-   * @throws BumpDisabledException {@code qits.maintenance.bump.enabled} is false — a 409
+   * @see AutomationService#run
    */
   public UUID requestBaselines(
       String repository, String requestId, String workItem, BumpTrigger trigger) {
-    if (!config.bumpEnabled()) {
-      throw new BumpDisabledException();
-    }
-    if (requestId == null || !REQUEST_ID.matcher(requestId).matches()) {
-      throw new BadRequestException("a release request id is a UUID: " + requestId);
-    }
-    String item = workItem == null || workItem.isBlank() ? null : workItem.trim();
-    if (item != null && !WORK_ITEM.matcher(item).matches()) {
-      throw new BadRequestException("a work item is <project>-<n>, for example qits-112: " + item);
-    }
-    MtRepository row =
-        store.repository(repository).orElseThrow(() -> new NoSuchRepositoryException(repository));
-    if (row.catalogId == null || row.catalogId.isBlank()) {
-      throw new ReleaseRequestNotOpenException(
-          repository + " has no catalog id, so its release requests cannot be addressed");
-    }
-    ReleaseRequestClient.ReleaseState state = releases.state(row.catalogId, requestId);
-    if (!state.readable()) {
-      throw new ReleaseRequestNotOpenException(state.sentence());
-    }
-    if (!OPEN.contains(state.state())) {
-      throw new ReleaseRequestNotOpenException(
-          "the release request " + requestId + " is " + state.state() + " and takes no branch");
-    }
-    String branch = BASELINES_BRANCH_PREFIX + requestId;
-    UUID id =
-        store.openBaselinesBump(
-            repository,
-            BASELINES_GROUP,
-            branch,
-            config.environment(),
-            trigger,
-            requestId,
-            item,
-            Instant.now());
-    queue.submit("baselines bump " + id + " of " + repository + " for " + requestId, () -> dispatch(id));
-    LOG.infof("Opened the %s baselines bump %s of %s for %s", trigger, id, repository, requestId);
-    return id;
+    return automations.run(
+        repository, requestId, ScreenshotBaselinesAutomation.KIND, workItem, trigger);
   }
 
   /**
@@ -365,8 +310,10 @@ public class BumpService {
       return;
     }
     BumpMode mode = BumpMode.of(bump.mode);
-    if (mode == BumpMode.BASELINES) {
-      dispatchBaselines(bump);
+    if (mode == BumpMode.AUTOMATION) {
+      // Its own engine: carry-over asked again, the per-branch and estate-wide caps, and a payload
+      // shaped by the kind's target.
+      automations.dispatch(bump);
       return;
     }
     List<Change> changes = changes(bump);
@@ -634,8 +581,8 @@ public class BumpService {
    * {@link BumpMode}.
    */
   private void finish(MtBump bump, boolean passed, String ciRunStatus) {
-    if (BumpMode.of(bump.mode) == BumpMode.BASELINES) {
-      finishBaselines(bump, passed, ciRunStatus);
+    if (BumpMode.of(bump.mode) == BumpMode.AUTOMATION) {
+      automations.finish(bump, passed, ciRunStatus);
       return;
     }
     if (BumpMode.of(bump.mode) == BumpMode.TARGETED) {
@@ -698,123 +645,6 @@ public class BumpService {
     LOG.infof(
         "The targeted bump %s wrote %d change(s) onto %s of %s; it now stands at %s",
         bump.id, written, bump.branch, bump.repository, after == null ? "an unreadable head" : after);
-  }
-
-  /**
-   * Sends one BASELINES bump to qits-ci. The branch head is read first: nothing else writes {@code
-   * maintenance/baselines/<request>}, so the ending can tell a run that pushed from one that found
-   * every image unchanged.
-   */
-  private void dispatchBaselines(MtBump bump) {
-    Optional<MtRepository> repository = store.repository(bump.repository);
-    if (repository.isEmpty()) {
-      store.bumpFinished(
-          bump.id, BumpStatus.FAILED, null, "the repository left the inventory", Instant.now());
-      return;
-    }
-    String baseRef = FOLD_BRANCH_PREFIX + bump.releaseRequestId;
-    List<String> problems = BumpPayload.problems(bump.groupName, bump.branch, baseRef, List.of());
-    if (!problems.isEmpty()) {
-      store.bumpFinished(
-          bump.id, BumpStatus.FAILED, null, String.join("; ", problems), Instant.now());
-      return;
-    }
-    store.bumpStartHead(bump.id, branchHead(repository.get(), bump.branch));
-
-    Map<String, String> extra = new LinkedHashMap<>();
-    extra.put("releaseRequest", bump.releaseRequestId);
-    if (bump.workItem != null) {
-      extra.put("workItem", bump.workItem);
-    }
-    CiClient.TriggerResult result =
-        ci.trigger(
-            CiClient.BASELINES_EVENT_NAME,
-            bump.id.toString(),
-            bump.repository,
-            bump.groupName,
-            bump.branch,
-            baseRef,
-            List.of(),
-            extra);
-    switch (result.outcome()) {
-      case ACCEPTED -> {
-        store.bumpDispatched(bump.id, result.eventId(), result.runIds());
-        LOG.infof("qits-ci accepted the baselines bump %s as run(s) %s", bump.id, result.runIds());
-      }
-      case RETRY ->
-          store.bumpFinished(bump.id, BumpStatus.REQUESTED, null, result.message(), Instant.now());
-      case FAILED -> {
-        store.bumpFinished(bump.id, BumpStatus.FAILED, null, result.message(), Instant.now());
-        LOG.warnf("The baselines bump %s failed at the trigger: %s", bump.id, result.message());
-      }
-    }
-  }
-
-  /**
-   * The verdict on a BASELINES bump: red is FAILED; green with an unmoved branch is NOTHING_TO_DO
-   * ("unchanged"); green with a moved branch is SUCCEEDED once the branch is joined to the request.
-   *
-   * <p>A join qits-projects refuses (the request settled meanwhile) fails the bump with its reason.
-   * A join it did not answer leaves the bump SUCCEEDED with the reason on the row: the images are on
-   * the branch, and joining again by hand ({@code qits release-request join}) adds them.
-   */
-  private void finishBaselines(MtBump bump, boolean passed, String ciRunStatus) {
-    Instant now = Instant.now();
-    if (!passed) {
-      store.bumpFinished(
-          bump.id,
-          BumpStatus.FAILED,
-          ciRunStatus,
-          "the baselines run ended " + ciRunStatus + "; its step log says why",
-          now);
-      return;
-    }
-    Optional<MtRepository> repository = store.repository(bump.repository);
-    String after = repository.map(row -> branchHead(row, bump.branch)).orElse(null);
-    String before = bump.resultSha;
-    if (after == null || after.equals(before)) {
-      store.bumpFinished(
-          bump.id,
-          BumpStatus.NOTHING_TO_DO,
-          ciRunStatus,
-          "unchanged: every screenshot of release request " + bump.releaseRequestId
-              + " matches its reference",
-          before,
-          now);
-      return;
-    }
-    String repoId = repository.map(row -> row.catalogId).orElse(null);
-    ReleaseRequestClient.RequestResult joined =
-        repoId == null
-            ? new ReleaseRequestClient.RequestResult(
-                ReleaseRequestClient.RequestResult.Outcome.REFUSED,
-                ReleaseRequestClient.REFUSED,
-                bump.repository + " has no catalog id")
-            : releases.join(repoId, bump.releaseRequestId, bump.branch);
-    store.bumpJoined(bump.id, joined.outcome().name(), joined.message(), now);
-    String base = "new baselines on " + bump.branch + " at " + after;
-    switch (joined.outcome()) {
-      case REQUESTED, CONVERGED ->
-          store.bumpFinished(
-              bump.id,
-              BumpStatus.SUCCEEDED,
-              ciRunStatus,
-              base + ", joined to release request " + bump.releaseRequestId,
-              after,
-              now);
-      case REFUSED ->
-          store.bumpFinished(
-              bump.id, BumpStatus.FAILED, ciRunStatus, base + "; " + joined.message(), after, now);
-      case RETRY ->
-          store.bumpFinished(
-              bump.id,
-              BumpStatus.SUCCEEDED,
-              ciRunStatus,
-              base + "; not joined yet: " + joined.message(),
-              after,
-              now);
-    }
-    LOG.infof("The baselines bump %s of %s: %s", bump.id, bump.repository, joined.message());
   }
 
   /**

@@ -96,6 +96,29 @@ components:
           type: string
         via:
           type: string
+    AutomationDto:
+      type: object
+      properties:
+        kind:
+          type: string
+        label:
+          type: string
+        state:
+          type: string
+        detail:
+          type: string
+        bumpId:
+          type: string
+        runIds:
+          type: array
+          items:
+            type: string
+        branch:
+          type: string
+        resultSha:
+          type: string
+        updatedAt:
+          $ref: "#/components/schemas/Instant"
     BaselinesRequest:
       type: object
       properties:
@@ -414,6 +437,17 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ArtifactPinDto"
+    ReleaseRequestAutomationsDto:
+      type: object
+      properties:
+        requestId:
+          type: string
+        foldSha:
+          type: string
+        automations:
+          type: array
+          items:
+            $ref: "#/components/schemas/AutomationDto"
     RepositoryDependentsDto:
       type: object
       properties:
@@ -489,6 +523,13 @@ components:
         lastScanAt:
           $ref: "#/components/schemas/Instant"
         headSha:
+          type: string
+    RunRequest:
+      type: object
+      properties:
+        workItem:
+          type: string
+        repository:
           type: string
     SbomCheckReportDto:
       type: object
@@ -585,6 +626,25 @@ components:
           type: string
         behind:
           type: boolean
+    TriggerRequest:
+      type: object
+      properties:
+        repository:
+          type: string
+        foldSha:
+          type: string
+        previousFoldSha:
+          type: string
+        changedSincePrevious:
+          type: array
+          items:
+            type: string
+        sourceBranches:
+          type: array
+          items:
+            type: string
+        workItem:
+          type: string
     UUID:
       type: string
       format: uuid
@@ -915,6 +975,116 @@ paths:
           description: Not Allowed
       tags:
       - Pins Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+        - qits:system
+        - qits:agent
+  /maintenance/api/release-requests/{requestId}/automations:
+    post:
+      summary: Settle a release request's automations at one fold
+      parameters:
+      - name: requestId
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TriggerRequest"
+        required: true
+      responses:
+        "200":
+          description: Every applicable kind's state at the fold
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReleaseRequestAutomationsDto"
+        "400":
+          description: "Not a request id, not a sha, or not a work item"
+        "404":
+          description: No such repository in the inventory
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      tags:
+      - Release Request Automation Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+        - qits:system
+        - qits:agent
+    get:
+      summary: A release request's automations at one fold
+      parameters:
+      - name: requestId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: foldSha
+        in: query
+        schema:
+          type: string
+      responses:
+        "200":
+          description: Every kind with a row at the fold
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReleaseRequestAutomationsDto"
+        "400":
+          description: "Not a request id, or not a sha"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      tags:
+      - Release Request Automation Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+        - qits:system
+        - qits:agent
+  /maintenance/api/release-requests/{requestId}/automations/{kind}/runs:
+    post:
+      summary: Re-run one automation on a release request's current fold
+      parameters:
+      - name: kind
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: requestId
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RunRequest"
+        required: true
+      responses:
+        "202":
+          description: "Requested; poll GET /bumps/{id}"
+        "400":
+          description: "Not a request id, or not a work item"
+        "404":
+          description: "No such kind, or no such repository"
+        "409":
+          description: "The request takes no branch or has no fold, one is already\
+            \ active for (request, kind), or bumping is disabled"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      tags:
+      - Release Request Automation Controller
       security:
       - SecurityScheme:
         - qits:admin

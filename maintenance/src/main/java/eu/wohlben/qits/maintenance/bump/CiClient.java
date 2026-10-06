@@ -45,8 +45,15 @@ public class CiClient {
   /** The event name the bump pipeline selects on. */
   public static final String EVENT_NAME = "MaintenanceBump";
 
-  /** The event name the screenshot-baselines pipeline selects on. */
-  public static final String BASELINES_EVENT_NAME = "ScreenshotBaselines";
+  /**
+   * The event qits-ci's one shared release-request-automation core selects on, by the payload's
+   * {@code kind} (qits-978). Every kind whose {@code pipeline()} names it is a kind file under
+   * {@link #AUTOMATION_CONFIG_DIR} over there.
+   */
+  public static final String AUTOMATION_EVENT_NAME = "ReleaseRequestAutomation";
+
+  /** Where qits-ci packages the kind files the automation core composes, {@code <kind>.yml}. */
+  public static final String AUTOMATION_CONFIG_DIR = ".config/qits/platform-pipelines/automations/";
 
   public static final String TRIGGER_PATH = "/ci/api/events/trigger";
 
@@ -60,10 +67,6 @@ public class CiClient {
    * configPath}, and it is the same for every bump, so the bump detail carries it as a constant
    * rather than reading it back per run. */
   public static final String CONFIG_PATH = ".config/qits/platform-pipelines/maintenance-bump.yml";
-
-  /** The screenshot-baselines pipeline, packaged into qits-ci beside the bump pipeline. */
-  public static final String BASELINES_CONFIG_PATH =
-      ".config/qits/platform-pipelines/screenshot-baselines.yml";
 
   private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -114,9 +117,9 @@ public class CiClient {
   }
 
   /**
-   * The trigger, naming the event and so the qits-ci pipeline that answers it: {@link #EVENT_NAME}
-   * for a bump, {@link #BASELINES_EVENT_NAME} for screenshot baselines. {@code extra} adds
-   * top-level payload fields, such as a baselines bump's {@code workItem}.
+   * The trigger, naming the event and so the qits-ci pipeline that answers it — {@link #EVENT_NAME}
+   * for a bump and for an automation that writes a request's own branches. {@code extra} adds
+   * top-level payload fields, such as an automation's {@code kind}.
    */
   public TriggerResult trigger(
       String eventName,
@@ -134,7 +137,58 @@ public class CiClient {
     payload.put("baseRef", baseRef);
     payload.set("changes", JSON.valueToTree(changes));
     extra.forEach(payload::put);
+    return trigger(eventName, bumpId, payload);
+  }
 
+  /**
+   * One release-request automation's trigger on qits-ci's shared core, {@link
+   * #AUTOMATION_EVENT_NAME}: <b>{@code {kind, repository, requestId, foldSha, baseRef, branch,
+   * commitPaths, workItem?, …extras}}</b>.
+   *
+   * <p>The core's prelude holds every one of them to a rule before the kind's script runs — {@code
+   * branch} under {@code maintenance/automations/<kind>/}, {@code baseRef} under {@code release/}, a
+   * hex {@code foldSha} the fetched fold must still equal ("superseded before start") — and its
+   * postlude stages {@code commitPaths} and nothing else. So the paths travel as a JSON ARRAY of git
+   * pathspecs, never as one string a shell would split.
+   *
+   * @param bumpId the {@code mt_bump} row id, the event's dedupe key as for every trigger here
+   * @param workItem the commit subject's scope, or null: the prelude then takes it from the fold
+   * @param extras the kind's plan's own fields, added at the top level and never over one above
+   */
+  public TriggerResult triggerAutomation(
+      String bumpId,
+      String kind,
+      String repository,
+      String requestId,
+      String foldSha,
+      String baseRef,
+      String branch,
+      List<String> commitPaths,
+      String workItem,
+      Map<String, Object> extras) {
+    ObjectNode payload = JSON.createObjectNode();
+    payload.put("kind", kind);
+    payload.put("repository", repository);
+    payload.put("requestId", requestId);
+    payload.put("foldSha", foldSha);
+    payload.put("baseRef", baseRef);
+    payload.put("branch", branch);
+    payload.set("commitPaths", JSON.valueToTree(commitPaths));
+    if (workItem != null) {
+      payload.put("workItem", workItem);
+    }
+    if (extras != null) {
+      extras.forEach((key, value) -> {
+        if (!payload.has(key)) {
+          payload.set(key, JSON.valueToTree(value));
+        }
+      });
+    }
+    return trigger(AUTOMATION_EVENT_NAME, bumpId, payload);
+  }
+
+  /** The trigger itself, whatever its payload: the post and the reading of its three answers. */
+  private TriggerResult trigger(String eventName, String bumpId, ObjectNode payload) {
     ObjectNode body = JSON.createObjectNode();
     body.put("name", eventName);
     body.put("eventId", bumpId);

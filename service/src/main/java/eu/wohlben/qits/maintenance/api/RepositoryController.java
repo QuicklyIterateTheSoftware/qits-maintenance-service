@@ -1,5 +1,7 @@
 package eu.wohlben.qits.maintenance.api;
 
+import eu.wohlben.qits.maintenance.automation.AutomationService;
+import eu.wohlben.qits.maintenance.automation.ScreenshotBaselinesAutomation;
 import eu.wohlben.qits.maintenance.bump.BumpService;
 import eu.wohlben.qits.maintenance.control.Adoption;
 import eu.wohlben.qits.maintenance.control.ArtifactGraph;
@@ -49,6 +51,9 @@ public class RepositoryController {
   @Inject Inventory inventory;
 
   @Inject BumpService bumps;
+
+  /** The release-request automations, whose screenshot re-run the baselines door now is. */
+  @Inject AutomationService automations;
 
   /** What this repository's RELEASES contain, and who contains them. See {@link ArtifactGraph}. */
   @Inject ArtifactGraph graph;
@@ -257,11 +262,13 @@ public class RepositoryController {
    * Renders one release request's screenshot tests in the CI image and joins the reference images
    * that changed to that request. Does NOT wait.
    *
-   * <p>The run starts from the request's fold, writes every reference that is missing or differs
-   * ({@code UPDATE_SNAPSHOT=all npm run test:browser}), commits only {@code __screenshots__/}
-   * files onto {@code maintenance/baselines/<request>} and joins that branch to the request. Nothing
-   * reaches {@code main} except through the request's own gates and approval. {@code GET
-   * /bumps/{id}} follows it: SUCCEEDED (joined), NOTHING_TO_DO (unchanged) or FAILED with the reason.
+   * <p><b>The re-run of the {@code screenshot-baselines} release-request automation</b> (qits-978),
+   * kept under its old address until the door is retired — {@code POST
+   * /release-requests/{requestId}/automations/screenshot-baselines/runs} is the same call. The run
+   * starts from the request's fold, writes every reference that is missing or differs, commits only
+   * the kind's paths onto {@code maintenance/automations/screenshot-baselines/<request>} and joins
+   * that branch to the request. {@code GET /bumps/{id}} follows it: SUCCEEDED (joined),
+   * NOTHING_TO_DO (unchanged) or FAILED with the reason.
    *
    * <p>The same three roles as every route here.
    */
@@ -281,9 +288,10 @@ public class RepositoryController {
       @PathParam("requestId") String requestId,
       BaselinesRequest request) {
     UUID id =
-        bumps.requestBaselines(
+        automations.run(
             name,
             requestId == null ? null : requestId.trim(),
+            ScreenshotBaselinesAutomation.KIND,
             request == null ? null : request.workItem(),
             BumpTrigger.MANUAL);
     return Response.status(Response.Status.ACCEPTED)

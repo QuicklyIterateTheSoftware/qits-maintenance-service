@@ -20,6 +20,11 @@ package eu.wohlben.qits.maintenance.model;
  * IS, reads as itself in a listing, and a fourth reading of the same facts is a constant here rather
  * than a second boolean nobody can combine with the first.
  *
+ * <p><b>Since V18 there are two modes again, GROUP and AUTOMATION</b>: TARGETED and BASELINES became
+ * two kinds of release-request automation, which is a column ({@code automation_kind}) rather than
+ * a mode. Their words stay readable through {@link #of} for rows a migration has not reached, and
+ * nothing new writes them.
+ *
  * <p><b>No check constraint backs it</b>, for the reason {@code ScanTrigger} and the five status
  * enums have none: the invariant lives at the single writer — {@code MaintenanceStore} takes this
  * enum and nothing else writes the column — and a constraint would make a new constant a migration.
@@ -34,7 +39,11 @@ public enum BumpMode {
   GROUP,
 
   /**
-   * The branch is the CALLER'S, and it was named in the request rather than derived from anything
+   * <b>Read only, for rows written before V18.</b> V18 maps every one of them to {@link #AUTOMATION}
+   * with {@code automation_kind = estate-pins}, and nothing writes this word any more; it stays so
+   * that {@link #of} reads a row a migration has not reached as what it was.
+   *
+   * <p>The branch is the CALLER'S, and it was named in the request rather than derived from anything
    * here.
    *
    * <p>A wrapper release request wants its gitlink pins IN the fold it is going to gate, which means
@@ -47,14 +56,32 @@ public enum BumpMode {
   TARGETED,
 
   /**
-   * The branch is this service's, {@code maintenance/baselines/<request>}, and it carries no
+   * <b>Read only, for rows written before V18</b>, which maps them to {@link #AUTOMATION} with
+   * {@code automation_kind = screenshot-baselines}. Nothing writes this word any more.
+   *
+   * <p>The branch is this service's, {@code maintenance/baselines/<request>}, and it carries no
    * dependency at all: one run renders a release request's screenshot tests in the CI image and
    * commits the reference images it wrote. A green run that moved the branch JOINS it to that
    * release request rather than opening a new one, because the images belong to the work already
    * under review. It writes no {@code mt_branch} row: the release request, not this service, decides
    * when the branch is done.
    */
-  BASELINES;
+  BASELINES,
+
+  /**
+   * <b>A release-request automation</b> (epic qits-978): a regeneration that has to land INSIDE a
+   * release request — its estate pins, its screenshot baselines — run on every fold of that request
+   * and held against it until it is fresh.
+   *
+   * <p><b>Which regeneration is a COLUMN, {@code mt_bump.automation_kind}, and no longer a mode.</b>
+   * TARGETED and BASELINES were two modes because each was written by hand, with its own dispatch
+   * and its own ending; the two differed only in whose branch the commit lands on, and that is now
+   * the kind's own {@code target()}. A third regeneration is one more implementation of {@code
+   * automation.ReleaseRequestAutomation}, never one more constant here. The engine that reads these
+   * rows is {@code automation.AutomationService}; a row in this mode writes no {@code mt_branch} row
+   * and asks for no release, because the request it belongs to is already open.
+   */
+  AUTOMATION;
 
   /** Whether a row in this mode owns the branch it writes — which is the whole of the difference. */
   public boolean ownsTheBranch() {

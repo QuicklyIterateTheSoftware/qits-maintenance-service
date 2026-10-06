@@ -22,11 +22,19 @@ public enum BumpStatus {
 
   /** THE RUN PASSED AND THE BRANCH HEAD DID NOT MOVE. The step found nothing to write — the
    * versions were already there — which is a real outcome and not a failure. */
-  NOTHING_TO_DO;
+  NOTHING_TO_DO,
+
+  /**
+   * <b>A release-request automation whose request moved to another fold before it ended.</b> Its
+   * outcome answers a question nobody is asking any more, so it is recorded and discarded; a push it
+   * made still re-folds the request, and the newer fold has a row of its own. Only {@code
+   * BumpMode.AUTOMATION} rows reach it.
+   */
+  SUPERSEDED;
 
   /** Whether nothing further will happen to a bump in this state. */
   public boolean terminal() {
-    return this == SUCCEEDED || this == FAILED || this == NOTHING_TO_DO;
+    return this == SUCCEEDED || this == FAILED || this == NOTHING_TO_DO || this == SUPERSEDED;
   }
 
   /** Whether a bump in this state holds the (repository, group) lock a second request is refused

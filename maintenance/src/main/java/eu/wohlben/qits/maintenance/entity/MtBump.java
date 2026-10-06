@@ -44,8 +44,8 @@ public class MtBump extends PanacheEntityBase {
   public String groupName;
 
   /**
-   * {@code BumpMode}'s names: GROUP or TARGETED — <b>whose branch this is writing</b>, which is what
-   * decides how the ending is read.
+   * {@code BumpMode}'s names: GROUP or AUTOMATION (TARGETED and BASELINES on rows V18 has not reached)
+   * — <b>whose branch this is writing</b>, which is what decides how the ending is read.
    *
    * <p>GROUP owns {@link #branch}: the head before and after the run is the measurement, an {@code
    * mt_branch} row tracks it, and a green run that pushed asks for a release. TARGETED does not own
@@ -132,14 +132,60 @@ public class MtBump extends PanacheEntityBase {
    * <p>Null for ever on a bump that is not SUCCEEDED: there is no branch to release.
    */
   /**
-   * The work item a {@code BASELINES} bump names in its commit subject, for example {@code
-   * qits-112}. Null on every other mode.
+   * The work item an {@code AUTOMATION} row names in its commit subject, for example {@code
+   * qits-112} (a {@code BASELINES} row before V18). Null on every GROUP row, and on an automation
+   * whose caller named none.
    */
   @Column(name = "work_item", length = 64)
   public String workItem;
 
   @Column(name = "release_request_id", length = 255)
   public String releaseRequestId;
+
+  /**
+   * <b>Which release-request automation this row is</b> — {@code screenshot-baselines}, {@code
+   * estate-pins} — on a {@link #mode AUTOMATION} row, and null on every GROUP row. The kind's wire
+   * name, which is also its {@code ReleaseRequestAutomation.kind()} and the segment of its branch.
+   *
+   * <p>A COLUMN rather than a mode (V18): the old TARGETED and BASELINES modes were two kinds written
+   * by hand, and a third kind is one more implementation, never one more mode.
+   */
+  @Column(name = "automation_kind", length = 64)
+  public String automationKind;
+
+  /**
+   * <b>The fold this automation outcome is FOR</b> — the request's {@code mergedSha} when the row was
+   * opened. An outcome is only ever a statement about one fold: qits-projects holds the request until
+   * every applicable kind is fresh for the sha it is about to release, and a row for any other sha
+   * answers nothing about that one. Null on GROUP rows, on rows V18 mapped across (they predate the
+   * column) and on rows the targeted door opens (its caller names a branch, not a request).
+   */
+  @Column(name = "fold_sha", length = 64)
+  public String foldSha;
+
+  /**
+   * The fold before {@link #foldSha}, as the trigger named it — what carry-over is decided against,
+   * here and again when a waiting row is finally dispatched. Null when there was none.
+   */
+  @Column(name = "previous_fold_sha", length = 64)
+  public String previousFoldSha;
+
+  /**
+   * Whether every path that changed between {@link #previousFoldSha} and {@link #foldSha} lay under
+   * the committable paths of the kinds that applied — <b>"this fold is only automations' own
+   * output"</b>. True is what lets a waiting row be carried instead of run, and what the circuit
+   * breaker counts. Null when it is not known: no previous fold, an unreadable diff, a re-run.
+   */
+  @Column(name = "automation_only")
+  public Boolean automationOnly;
+
+  /**
+   * The kind's own payload fields, as its plan answered them at the fold — a JSON object, frozen on
+   * the row for the reason {@link #changes} is: the dispatch may be a sweep later than the plan.
+   * Null when the plan named none.
+   */
+  @Column(name = "automation_extras", columnDefinition = "text")
+  public String automationExtras;
 
   /**
    * What qits-projects last said about that request — {@code PENDING}, {@code READY}, {@code

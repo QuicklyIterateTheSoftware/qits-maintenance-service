@@ -931,51 +931,6 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
         });
   }
 
-  /**
-   * Opens a {@code BASELINES} bump for one release request, unless one is already going onto its
-   * branch.
-   *
-   * <p>The lock is the branch, as for a targeted bump: one release request has one baselines
-   * branch, and two runs must not push it at once. {@code release_request_id} holds the request the
-   * branch is joined to — known from the start here, where a group bump learns it only after the
-   * release ask.
-   */
-  @ActivateRequestContext
-  public UUID openBaselinesBump(
-      String repository,
-      String group,
-      String branch,
-      String environment,
-      BumpTrigger trigger,
-      String releaseRequestId,
-      String workItem,
-      Instant now) {
-    return DbRetry.inNewTx(
-        "open a baselines bump of " + repository + " for " + releaseRequestId,
-        () -> {
-          MtBump active = activeBranchBumpRow(repository, branch, BumpMode.BASELINES);
-          if (active != null) {
-            throw BumpAlreadyActiveException.onBranch(repository, branch, active.id);
-          }
-          MtBump row = new MtBump();
-          row.id = UUID.randomUUID();
-          row.repository = repository;
-          row.groupName = group;
-          row.mode = BumpMode.BASELINES.name();
-          row.branch = branch;
-          row.environment = environment;
-          row.trigger = trigger.name();
-          row.status = BumpStatus.REQUESTED.name();
-          row.changes = writeJson(List.of());
-          row.releaseRequestId = releaseRequestId;
-          row.workItem = workItem;
-          row.startedAt = now;
-          row.persist();
-          getEntityManager().flush();
-          return row.id;
-        });
-  }
-
   /** Records the branch head a run starts from, so the ending can tell whether it moved. */
   @ActivateRequestContext
   public void bumpStartHead(UUID id, String head) {
@@ -1253,14 +1208,17 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
         () -> {
           List<MtBump> pending =
               MtBump.find(
-                      "status in ?1 or (status = ?2 and ((releaseRequestId is null and resultSha"
-                          + " is not null) or (releaseRequestId not in ?3 and (releaseState is"
-                          + " null or releaseState in ?4))))",
+                      // The release arm is a GROUP bump's: an automation's request id is the
+                      // request it belongs to, never one it asked for, so a green one is over.
+                      "status in ?1 or (status = ?2 and mode = ?5 and ((releaseRequestId is null"
+                          + " and resultSha is not null) or (releaseRequestId not in ?3 and"
+                          + " (releaseState is null or releaseState in ?4))))",
                       Sort.by("startedAt").descending(),
                       List.of(BumpStatus.REQUESTED.name(), BumpStatus.RUNNING.name()),
                       BumpStatus.SUCCEEDED.name(),
                       List.of("converged", "refused"),
-                      List.of("PENDING", "READY", "REJECTED", "FAILED", "CONFLICTED"))
+                      List.of("PENDING", "READY", "REJECTED", "FAILED", "CONFLICTED"),
+                      BumpMode.GROUP.name())
                   .page(0, limit)
                   .list();
           return pending;
@@ -1377,6 +1335,318 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
           return newest;
         });
   }
+
+  // --- release-request automations -----------------------------------------------------------
+
+  /**
+   * One automation row to open — everything {@link #openAutomation} writes, named rather than
+   * positional because eleven strings in a row are a transposition waiting to happen.
+   *
+   * @param repository the repository, as the catalog spells it
+   * @param kind the kind's wire name, {@code mt_bump.automation_kind}; also the row's group label
+   * @param requestId the release request, or null for a row the targeted door opens
+   * @param foldSha the fold this outcome is for, or null for the same row
+   * @param previousFoldSha the fold before it, as the trigger named it, or null
+   * @param automationOnly whether only the applicable kinds' own paths changed since then, or null
+   * @param branch the ref the run writes
+   * @param workItem the commit subject's scope, or null
+   * @param environment which environment's ci runs it
+   * @param trigger FOLD, MANUAL — or SCHEDULED, which nothing here writes
+   * @param changes a MaintenanceBump run's changes, frozen here as a bump's are; empty otherwise
+   * @param extras the kind's own payload fields, or empty
+   * @param status REQUESTED to queue a run; NOTHING_TO_DO or FAILED to record an outcome no run is
+   *     needed for (a FRESH plan, a carry-over, a breaker that is still tripped)
+   * @param message the sentence, for a row opened already ended
+   */
+  public record AutomationOpening(
+      String repository,
+      String kind,
+      String requestId,
+      String foldSha,
+      String previousFoldSha,
+      Boolean automationOnly,
+      String branch,
+      String workItem,
+      String environment,
+      BumpTrigger trigger,
+      List<?> changes,
+      Map<String, Object> extras,
+      BumpStatus status,
+      String message) {}
+
+  /**
+   * Opens one release-request automation row, <b>locked per (repository, kind, request)</b>.
+   *
+   * <p><b>The lock is a transaction-scoped advisory lock</b>, taken before anything is read, because
+   * the two callers that race here are ordinary rather than rare: qits-projects posts every fold and
+   * then its thirty-second sweep posts the same fold again whenever the first answer was not final,
+   * and a re-run press can land between the two. Without it both would read "no row for this fold",
+   * both would insert, and one fold would carry two runs.
+   *
+   * <p>Inside the lock, in order:
+   *
+   * <ul>
+   *   <li><b>{@code exclusive}</b> (the re-run door, the targeted door): an active row of this
+   *       (request, kind) — or, with no request, of this (repository, kind, branch) — is a 409, named;
+   *   <li><b>otherwise</b> (a fold): a FOLD row for the same (request, kind, fold, branch) is the
+   *       answer already, and its id comes back unchanged — the trigger is idempotent per fold;
+   *   <li><b>every WAITING row of this (request, kind) on another fold is SUPERSEDED</b>: only the
+   *       newest waiting fold is kept, because a run for a fold the request has left answers nothing.
+   *       A RUNNING one is left to end; its ending compares its fold and supersedes itself.
+   * </ul>
+   *
+   * @return the row's id — the new one, or the one this fold already had
+   */
+  @ActivateRequestContext
+  public UUID openAutomation(AutomationOpening opening, boolean exclusive, Instant now) {
+    String scope =
+        opening.requestId() != null ? opening.requestId() : "branch:" + opening.branch();
+    return DbRetry.inNewTx(
+        "open the " + opening.kind() + " automation of " + opening.repository() + " for " + scope,
+        () -> {
+          getEntityManager()
+              .createNativeQuery(
+                  "select count(*) from (select pg_advisory_xact_lock(hashtext(?1))) as locked")
+              .setParameter(
+                  1, "automation|" + opening.repository() + "|" + opening.kind() + "|" + scope)
+              .getSingleResult();
+          if (exclusive) {
+            MtBump active =
+                opening.requestId() != null
+                    ? MtBump.find(
+                            "mode = ?1 and releaseRequestId = ?2 and automationKind = ?3"
+                                + " and status in ?4",
+                            BumpMode.AUTOMATION.name(),
+                            opening.requestId(),
+                            opening.kind(),
+                            ACTIVE)
+                        .firstResult()
+                    : MtBump.find(
+                            "mode = ?1 and repository = ?2 and automationKind = ?3 and branch = ?4"
+                                + " and status in ?5",
+                            BumpMode.AUTOMATION.name(),
+                            opening.repository(),
+                            opening.kind(),
+                            opening.branch(),
+                            ACTIVE)
+                        .firstResult();
+            if (active != null) {
+              throw BumpAlreadyActiveException.onBranch(
+                  opening.repository(), active.branch, active.id);
+            }
+          } else if (opening.trigger() == BumpTrigger.FOLD
+              && opening.requestId() != null
+              && opening.foldSha() != null) {
+            MtBump existing =
+                MtBump.find(
+                        "mode = ?1 and releaseRequestId = ?2 and automationKind = ?3 and foldSha = ?4"
+                            + " and branch = ?5 and trigger = ?6",
+                        BumpMode.AUTOMATION.name(),
+                        opening.requestId(),
+                        opening.kind(),
+                        opening.foldSha(),
+                        opening.branch(),
+                        opening.trigger().name())
+                    .firstResult();
+            if (existing != null) {
+              return existing.id;
+            }
+          }
+          if (opening.requestId() != null && opening.foldSha() != null) {
+            supersedeWaitingRows(opening.requestId(), opening.kind(), opening.foldSha(), now);
+          }
+          MtBump row = new MtBump();
+          row.id = UUID.randomUUID();
+          row.repository = opening.repository();
+          row.groupName = opening.kind();
+          row.mode = BumpMode.AUTOMATION.name();
+          row.automationKind = opening.kind();
+          row.branch = opening.branch();
+          row.environment = opening.environment();
+          row.trigger = opening.trigger().name();
+          row.status = opening.status().name();
+          row.changes = writeJson(opening.changes());
+          row.automationExtras =
+              opening.extras() == null || opening.extras().isEmpty()
+                  ? null
+                  : writeJson(opening.extras());
+          row.releaseRequestId = opening.requestId();
+          row.foldSha = opening.foldSha();
+          row.previousFoldSha = opening.previousFoldSha();
+          row.automationOnly = opening.automationOnly();
+          row.workItem = opening.workItem();
+          row.message = opening.message();
+          row.startedAt = now;
+          row.finishedAt = opening.status().terminal() ? now : null;
+          row.persist();
+          getEntityManager().flush();
+          return row.id;
+        });
+  }
+
+  /**
+   * Every automation row of one request at one fold, oldest first — what the trigger and the read
+   * door answer from.
+   */
+  @ActivateRequestContext
+  public List<MtBump> automations(String requestId, String foldSha) {
+    if (requestId == null || foldSha == null) {
+      return List.of();
+    }
+    return DbRetry.inNewTx(
+        "read the automations of one fold",
+        () ->
+            MtBump.<MtBump>find(
+                    "mode = ?1 and releaseRequestId = ?2 and foldSha = ?3",
+                    Sort.by("startedAt"),
+                    BumpMode.AUTOMATION.name(),
+                    requestId,
+                    foldSha)
+                .list());
+  }
+
+  /** Every row of one (request, kind), newest first — what the circuit breaker walks. */
+  @ActivateRequestContext
+  public List<MtBump> automationHistory(String requestId, String kind) {
+    if (requestId == null || kind == null) {
+      return List.of();
+    }
+    return DbRetry.inNewTx(
+        "read the automation history of one request",
+        () ->
+            MtBump.<MtBump>find(
+                    "mode = ?1 and releaseRequestId = ?2 and automationKind = ?3",
+                    Sort.by("startedAt").descending(),
+                    BumpMode.AUTOMATION.name(),
+                    requestId,
+                    kind)
+                .list());
+  }
+
+  /** The newest row of one (request, kind), whatever became of it. */
+  @ActivateRequestContext
+  public Optional<MtBump> latestAutomation(String requestId, String kind) {
+    return automationHistory(requestId, kind).stream().findFirst();
+  }
+
+  /**
+   * The fold the newest automation row of one request is for — what the read door answers when it
+   * is not told which fold. Empty when the request has none.
+   */
+  @ActivateRequestContext
+  public Optional<MtBump> newestAutomation(String requestId) {
+    if (requestId == null) {
+      return Optional.empty();
+    }
+    return DbRetry.inNewTx(
+        "read the newest automation of one request",
+        () ->
+            Optional.ofNullable(
+                (MtBump)
+                    MtBump.find(
+                            "mode = ?1 and releaseRequestId = ?2 and foldSha is not null",
+                            Sort.by("startedAt").descending(),
+                            BumpMode.AUTOMATION.name(),
+                            requestId)
+                        .firstResult()));
+  }
+
+  /**
+   * How many automation runs are RUNNING estate-wide — the cap's question. qits-ci's slots are few,
+   * and automations queue as ordinary event runs beside the release requests' own QA.
+   */
+  @ActivateRequestContext
+  public long runningAutomationCount() {
+    return DbRetry.inNewTx(
+        "count the running automations",
+        () ->
+            MtBump.count(
+                "mode = ?1 and status = ?2",
+                BumpMode.AUTOMATION.name(),
+                BumpStatus.RUNNING.name()));
+  }
+
+  /**
+   * The RUNNING automation writing one (repository, kind, branch), if there is one — which is what
+   * "one active run per (request, kind)" means for a kind's own branch, and per source branch for a
+   * kind that writes the request's.
+   */
+  @ActivateRequestContext
+  public Optional<MtBump> runningAutomation(String repository, String kind, String branch) {
+    return DbRetry.inNewTx(
+        "read the running automation of one branch",
+        () ->
+            Optional.ofNullable(
+                (MtBump)
+                    MtBump.find(
+                            "mode = ?1 and repository = ?2 and automationKind = ?3 and branch = ?4"
+                                + " and status = ?5",
+                            BumpMode.AUTOMATION.name(),
+                            repository,
+                            kind,
+                            branch,
+                            BumpStatus.RUNNING.name())
+                        .firstResult()));
+  }
+
+  /** Every automation row still waiting for a run, oldest first — what an ending dispatches next. */
+  @ActivateRequestContext
+  public List<MtBump> waitingAutomations() {
+    return DbRetry.inNewTx(
+        "read the waiting automations",
+        () ->
+            MtBump.<MtBump>find(
+                    "mode = ?1 and status = ?2",
+                    Sort.by("startedAt"),
+                    BumpMode.AUTOMATION.name(),
+                    BumpStatus.REQUESTED.name())
+                .list());
+  }
+
+  /**
+   * Supersedes every WAITING row of one (request, kind) whose fold is not {@code exceptFold}: only
+   * the newest waiting fold is kept. A RUNNING row is not touched — see {@link #openAutomation}.
+   *
+   * @return how many rows were superseded
+   */
+  @ActivateRequestContext
+  public int supersedeWaiting(String requestId, String kind, String exceptFold) {
+    return DbRetry.inNewTx(
+        "supersede the waiting automations of one request",
+        () -> {
+          int count = supersedeWaitingRows(requestId, kind, exceptFold, Instant.now());
+          getEntityManager().flush();
+          return count;
+        });
+  }
+
+  private static int supersedeWaitingRows(
+      String requestId, String kind, String exceptFold, Instant now) {
+    List<MtBump> waiting =
+        MtBump.<MtBump>find(
+                "mode = ?1 and releaseRequestId = ?2 and automationKind = ?3 and status = ?4"
+                    + " and (foldSha is null or foldSha <> ?5)",
+                BumpMode.AUTOMATION.name(),
+                requestId,
+                kind,
+                BumpStatus.REQUESTED.name(),
+                exceptFold)
+            .list();
+    for (MtBump row : waiting) {
+      row.status = BumpStatus.SUPERSEDED.name();
+      row.finishedAt = now;
+      row.message =
+          "superseded before it ran: the release request moved on to fold " + abbreviate(exceptFold);
+    }
+    return waiting.size();
+  }
+
+  private static String abbreviate(String sha) {
+    return sha == null || sha.length() <= 12 ? sha : sha.substring(0, 12);
+  }
+
+  private static final List<String> ACTIVE =
+      List.of(BumpStatus.REQUESTED.name(), BumpStatus.RUNNING.name());
 
   // --- the dispatch window --------------------------------------------------------------------
 

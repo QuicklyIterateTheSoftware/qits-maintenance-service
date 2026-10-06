@@ -227,6 +227,21 @@ are written like changed ones, so a repository's first baselines come from here 
 commit subject's scope is `mt_bump.work_item` (`V16`), or, when the caller named none, the newest
 id on the fold's own commit subjects.
 
+**SINCE V18 BOTH ARE RELEASE-REQUEST AUTOMATIONS (qits-978), AND A KIND IS A COLUMN.** TARGETED and
+BASELINES were the same machine written twice; they differed only in whose branch the commit lands
+on. `automation/ReleaseRequestAutomation` is the interface (kind, label, applicability, plan,
+pipeline, committable paths, target), every implementation is a CDI bean, and
+`automation/AutomationService` is the one engine: qits-projects posts every fold to `POST
+/release-requests/{id}/automations`, each kind is settled (applicability → carry-over → plan → a row
+or FRESH), runs go out at most one per (request, kind, branch) and `MAX_RUNNING` = 2 estate-wide, and
+one ending reads the target — an own branch is head-compared and joined, a source branch is the
+run's verdict. Rows are `mode = AUTOMATION` with `automation_kind`, `fold_sha`, `previous_fold_sha`,
+`automation_only` and `automation_extras`; `BumpMode.TARGETED`/`BASELINES` are read-only words for
+rows V18 has not reached. **Carry-over is the loop's terminator**: a fold whose changed paths all lie
+under the applicable kinds' committable paths, after a FRESH or COMMITTED fold, is FRESH with no
+run — which only holds while no automation's output is another automation's input, so keep kinds'
+paths disjoint (`AutomationRegistryTest`). The old baselines door is a delegate to the re-run.
+
 **Two callers on the group path, and no scan is one of them.** The button is `POST
 /repositories/{name}/groups/{group}/bumps`; the clock is `schedule/BumpSchedule` at 02:00, INTERNAL
 group only. A SCHEDULED scan used to ask for the bumps it found, gated by `bump.auto` — that key and

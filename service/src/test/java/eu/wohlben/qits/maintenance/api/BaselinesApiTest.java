@@ -6,6 +6,8 @@ import static org.hamcrest.Matchers.equalTo;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import eu.wohlben.qits.maintenance.automation.AutomationService;
+import eu.wohlben.qits.maintenance.automation.ScreenshotBaselinesAutomation;
 import eu.wohlben.qits.maintenance.bump.BumpService;
 import eu.wohlben.qits.maintenance.model.ScanScope;
 import eu.wohlben.qits.maintenance.peer.FakePeers;
@@ -26,6 +28,10 @@ import org.junit.jupiter.api.Test;
  * The screenshot-baselines door: render a release request's screenshots in the CI image, and join
  * the images that changed to that request.
  *
+ * <p><b>Since qits-978 it is the re-run of the {@code screenshot-baselines} release-request
+ * automation</b>, and these cases pin that the old address still answers exactly that: an {@code
+ * AUTOMATION} row, the shared core's {@code ReleaseRequestAutomation} event, the kind's own branch.
+ *
  * <p>The three endings are what a caller reads back: SUCCEEDED (the branch moved and is joined),
  * NOTHING_TO_DO (every image already matched), FAILED (the run was red). No test sends an identity
  * header, for the reason {@code MaintenanceApiTest} gives.
@@ -37,7 +43,11 @@ class BaselinesApiTest {
 
   private static final String REQUEST = "0d0a15ac-5e67-4e03-ad00-ff25d9bbcfea";
 
-  private static final String BRANCH = BumpService.BASELINES_BRANCH_PREFIX + REQUEST;
+  private static final String BRANCH =
+      AutomationService.BRANCH_PREFIX + ScreenshotBaselinesAutomation.KIND + "/" + REQUEST;
+
+  /** The request's current fold, which the re-run runs on. */
+  private static final String FOLD = "f01df01df01df01df01df01df01df01df01df01d";
 
   private static final String BEFORE = "1111111111111111111111111111111111111111";
 
@@ -72,7 +82,9 @@ class BaselinesApiTest {
     peers.answer(
         PeerTarget.PROJECTS,
         REQUEST_PATH,
-        FakePeers.Scripted.ok("{\"request\":{\"id\":\"" + REQUEST + "\",\"state\":\"REJECTED\"}}"));
+        FakePeers.Scripted.ok(
+            "{\"request\":{\"id\":\"" + REQUEST + "\",\"state\":\"REJECTED\",\"mergedSha\":\""
+                + FOLD + "\"}}"));
     peers.answer(
         PeerTarget.PROJECTS,
         REQUEST_PATH + "/sources",
@@ -108,12 +120,19 @@ class BaselinesApiTest {
     List<String> triggers = peers.bodiesFor("/ci/api/events/trigger");
     assertEquals(1, triggers.size());
     String payload = triggers.get(0);
-    assertTrue(payload.contains("\"name\":\"ScreenshotBaselines\""), payload);
-    assertTrue(!payload.contains("\"job\""), payload);
+    assertTrue(payload.contains("\"name\":\"ReleaseRequestAutomation\""), payload);
+    assertTrue(payload.contains("\"kind\":\"screenshot-baselines\""), payload);
+    assertTrue(payload.contains("\"requestId\":\"" + REQUEST + "\""), payload);
+    assertTrue(payload.contains("\"foldSha\":\"" + FOLD + "\""), payload);
     assertTrue(payload.contains("\"baseRef\":\"release/" + REQUEST + "\""), payload);
     assertTrue(payload.contains("\"branch\":\"" + BRANCH + "\""), payload);
     assertTrue(payload.contains("\"workItem\":\"qits-112\""), payload);
-    assertTrue(payload.contains("\"changes\":[]"), payload);
+    assertTrue(
+        payload.contains(
+            "\"commitPaths\":[\":(glob)**/__screenshots__/**\","
+                + "\":(glob)**/testing/browser/renderer.txt\"]"),
+        payload);
+    assertTrue(!payload.contains("\"changes\""), payload);
 
     Fixture.scriptForeignBranchAt(peers, BRANCH, PUSHED);
     Fixture.scriptRun(peers, RUN, "SUCCESS");
@@ -125,7 +144,11 @@ class BaselinesApiTest {
         .get(BASE + "/bumps/" + id)
         .then()
         .statusCode(200)
-        .body("mode", equalTo("BASELINES"))
+        .body("mode", equalTo("AUTOMATION"))
+        .body("group", equalTo(ScreenshotBaselinesAutomation.KIND))
+        .body(
+            "configPath",
+            equalTo(".config/qits/platform-pipelines/automations/screenshot-baselines.yml"))
         .body("status", equalTo("SUCCEEDED"))
         .body("resultSha", equalTo(PUSHED))
         .body("releaseRequestId", equalTo(REQUEST))
@@ -170,7 +193,9 @@ class BaselinesApiTest {
     peers.answer(
         PeerTarget.PROJECTS,
         REQUEST_PATH,
-        FakePeers.Scripted.ok("{\"request\":{\"id\":\"" + REQUEST + "\",\"state\":\"RELEASED\"}}"));
+        FakePeers.Scripted.ok(
+            "{\"request\":{\"id\":\"" + REQUEST + "\",\"state\":\"RELEASED\",\"mergedSha\":\""
+                + FOLD + "\"}}"));
     given().contentType(ContentType.JSON).body("{}").when().post(DOOR).then().statusCode(409);
     assertTrue(peers.bodiesFor("/ci/api/events/trigger").isEmpty());
   }

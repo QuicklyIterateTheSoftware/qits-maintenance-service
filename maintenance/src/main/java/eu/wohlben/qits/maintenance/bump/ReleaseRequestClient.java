@@ -10,6 +10,8 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -262,8 +264,24 @@ public class ReleaseRequestClient {
    * @param detail that service's own sentence about why, when it has one ({@code detail}, or the
    *     conflict when the fold is what failed)
    * @param error why it could not be read, or null
+   * @param mergedSha the request's current FOLD — the sha its gates settle and the one a
+   *     release-request automation compares its own fold against: a row whose fold is not this one
+   *     has been SUPERSEDED. Null when unread or not folded yet
+   * @param branches the request's named BRANCH sources, in the order the answer lists them — what an
+   *     automation that writes onto the request's own branches (estate pins) reads when a re-run
+   *     carries no list of its own. Empty when unread
    */
-  public record ReleaseState(String state, String detail, String error) {
+  public record ReleaseState(
+      String state, String detail, String error, String mergedSha, List<String> branches) {
+
+    /** The three-field answer every reader before the automations needed. */
+    public ReleaseState(String state, String detail, String error) {
+      this(state, detail, error, null, List.of());
+    }
+
+    public ReleaseState {
+      branches = branches == null ? List.of() : List.copyOf(branches);
+    }
 
     /** The states in which a release is still on its way. */
     private static final Set<String> ON_ITS_WAY = Set.of("PENDING", "READY");
@@ -355,7 +373,31 @@ public class ReleaseRequestClient {
           null, null, "the release request " + requestId + " answered no state");
     }
     String detail = text(request, "detail");
-    return new ReleaseState(state, detail == null ? text(request, "conflict") : detail, null);
+    return new ReleaseState(
+        state,
+        detail == null ? text(request, "conflict") : detail,
+        null,
+        text(request, "mergedSha"),
+        branchSources(request));
+  }
+
+  /**
+   * The request's named BRANCH sources, read off the same answer. A tag source is no branch anybody
+   * commits to, and an entry with no kind is read as a branch — the older shape carried none.
+   */
+  private static List<String> branchSources(JsonNode request) {
+    List<String> branches = new ArrayList<>();
+    if (request == null || !request.hasNonNull("sources") || !request.get("sources").isArray()) {
+      return branches;
+    }
+    for (JsonNode source : request.get("sources")) {
+      String kind = text(source, "kind");
+      String name = text(source, "name");
+      if (name != null && (kind == null || "BRANCH".equalsIgnoreCase(kind))) {
+        branches.add(name);
+      }
+    }
+    return branches;
   }
 
   /**

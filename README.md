@@ -685,6 +685,19 @@ GET  /bumps/{id}                                  → {id, repository, group, br
                                                      trigger, status, ciEventId, ciRunId, ciRunIds,
                                                      configPath, ciRunStatus, startedAt, finishedAt,
                                                      message, changes:[…]}
+POST /release-requests/{id}/automations           → {requestId, foldSha,
+     {repository, foldSha, previousFoldSha?,            automations:[{kind, label, state, detail,
+      changedSincePrevious?:[path]|null,                             bumpId, runIds, branch,
+      sourceBranches:[…], workItem?}                                 resultSha, updatedAt}]}
+                                                    the every-fold trigger, idempotent per fold;
+                                                    state FRESH|REQUESTED|RUNNING|COMMITTED|
+                                                    FAILED|UNKNOWN|SUPERSEDED (qits-978)
+                                                                400 not a uuid/sha  404 unknown repo
+GET  /release-requests/{id}/automations[?foldSha=] → the same answer, newest fold when unnamed
+POST /release-requests/{id}/automations/{kind}/runs
+     {workItem?, repository?}                     → 202 {id}    404 unknown kind or repo
+                                                                409 not open, no fold, one active,
+                                                                    or bumping is off
 GET  /repositories/{name}/downstream              → {repository, catalogId,
                                                      downstream:[{repository, catalogId,
                                                                   archetype, depth, via:[…]}]}
@@ -1010,9 +1023,10 @@ that githost release deploys, the fifteen `ci-event-upstream-frontend.yml` hop f
 work and nothing is lost.
 
 **qits-ci answers the events with its packaged platform pipelines**:
-`.config/qits/platform-pipelines/maintenance-bump.yml` for `MaintenanceBump` and
-`screenshot-baselines.yml` for `ScreenshotBaselines` (until 2026-10-02 the bump pipeline was a
-wrapper file). A qits-ci without them records no run, and every bump ends FAILED with `no run
+`.config/qits/platform-pipelines/maintenance-bump.yml` for `MaintenanceBump`, and the shared
+release-request-automation core for `ReleaseRequestAutomation`, which composes one kind file per
+kind under `.config/qits/platform-pipelines/automations/<kind>.yml` (qits-978; this service no
+longer sends `ScreenshotBaselines`). Until 2026-10-02 the bump pipeline was a wrapper file. A qits-ci without them records no run, and every bump ends FAILED with `no run
 recorded for …`, which is the honest answer rather than a silent success.
 
 **The nightly bump needs the branches drained first.** Every `maintenance/dependencies` branch that

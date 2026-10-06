@@ -12,6 +12,7 @@ import eu.wohlben.qits.maintenance.dto.DependentsDto;
 import eu.wohlben.qits.maintenance.dto.GroupDto;
 import eu.wohlben.qits.maintenance.dto.PinDto;
 import eu.wohlben.qits.maintenance.dto.PinSourceDto;
+import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto;
 import eu.wohlben.qits.maintenance.dto.RepositoryDependentsDto;
 import eu.wohlben.qits.maintenance.dto.RepositoryDetailDto;
 import eu.wohlben.qits.maintenance.dto.RepositoryDto;
@@ -44,6 +45,13 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
       // method is invisible to it and the request record goes with it.
       RepositoryController.TargetedBumpRequest.class,
       RepositoryController.BaselinesRequest.class,
+      // The release-request automations' three doors (qits-978). The two request bodies are
+      // deserialized, the 202 rides in a Response.entity, and the answer is the wire contract
+      // qits-projects' gate reads — a 500 in the binary there would hold every release request.
+      ReleaseRequestAutomationController.TriggerRequest.class,
+      ReleaseRequestAutomationController.RunRequest.class,
+      ReleaseRequestAutomationsDto.class,
+      ReleaseRequestAutomationsDto.AutomationDto.class,
       ScanController.StartScanRequest.class,
       ScanController.StartScanRequest.Response.class,
       ArtifactController.IngestRequest.class,
