@@ -86,11 +86,22 @@ import org.jboss.logging.Logger;
  *
  * <h2>The ending</h2>
  *
- * <p>One method, reading the target. First the request's current fold is read again: a fold that
- * moved on means SUPERSEDED, whatever the run did. Then OWN_BRANCH compares its branch head (unmoved
- * is FRESH — nothing to do — moved is a join) and SOURCE_BRANCHES takes the run's verdict and the
- * commit it left. Red is FAILED either way, and FAILED HOLDS the request: a push re-folds it, the
- * re-run door retries it, a person may waive it.
+ * <p>One method, reading the target. OWN_BRANCH compares its branch head (unmoved is FRESH —
+ * nothing to do — moved is a join) and SOURCE_BRANCHES takes the run's verdict and the commit it
+ * left. Red is FAILED, and FAILED HOLDS the request: a push re-folds it, the re-run door retries it,
+ * a person may waive it.
+ *
+ * <p><b>A green outcome is recorded against its OWN fold even when the request has moved on</b>,
+ * because the commonest mover is the run itself: estate pins push onto a source branch, and once a
+ * kind's own branch is a source of the request every later run's push re-folds it before the poll
+ * sees the run end. Superseding those would leave the next fold nothing to carry from and cost a
+ * second run on every push. It is safe whatever moved the fold — the outcome is a statement about
+ * the fold the run fetched (the core refuses a fold that is no longer {@code foldSha} before it
+ * starts), the gate only ever reads the rows of the sha it is about to release, and carry-over onto
+ * the newer fold still demands that every changed path is automation output, so a person's push is
+ * never carried. <b>Only a RED run on a fold that moved on is SUPERSEDED</b>: the core's own "superseded
+ * before start" refusal is red, and a red verdict about a fold nobody will release must not hold
+ * the request.
  *
  * <p><b>The circuit breaker</b> is the third terminator, behind carry-over and the plans: a fourth
  * consecutive COMMITTED for one (request, kind) whose folds changed nothing but automation output is
@@ -685,8 +696,9 @@ public class AutomationService {
   // --- the ending ---------------------------------------------------------------------------------
 
   /**
-   * The verdict, once every run is terminal: SUPERSEDED when the request's fold moved on, FAILED
-   * when red, and otherwise what the TARGET says a green run means.
+   * The verdict, once every run is terminal: what the TARGET says a green run means — against the
+   * run's own fold, whether or not the request has moved on (see the class javadoc) — and for a red
+   * one SUPERSEDED when the fold moved on, FAILED when it did not.
    */
   public void finish(MtBump row, boolean passed, String ciRunStatus) {
     ReleaseRequestAutomation kind = kind(row.automationKind).orElse(null);
@@ -695,7 +707,7 @@ public class AutomationService {
     Instant now = Instant.now();
     String label = kind == null ? row.automationKind : kind.label();
 
-    String moved = movedFold(row, repository);
+    String moved = passed ? null : movedFold(row, repository);
     if (moved != null) {
       store.bumpFinished(
           row.id,

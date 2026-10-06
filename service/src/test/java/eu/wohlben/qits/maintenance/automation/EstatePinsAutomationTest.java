@@ -316,6 +316,9 @@ class EstatePinsAutomationTest {
 
     String written = "1000000000000000000000000000000000000009";
     branch("work", written, true, MEMBER_RELEASED_SHA);
+    // The push onto the source branch re-folds the request before the poll sees the run end; the
+    // outcome is still COMMITTED, against the fold it ran on.
+    WrapperFold.scriptRequest(peers, REQUEST, NEXT_FOLD);
     peers.answer(
         PeerTarget.CI,
         "/ci/api/runs/" + RUN,

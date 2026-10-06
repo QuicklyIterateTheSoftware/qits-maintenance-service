@@ -31,8 +31,8 @@ public record ReleaseRequestAutomationsDto(
    *     COMMITTED (a green run wrote a commit — joined, or pushed onto the request's branch — which
    *     re-folds the request, so this fold never ships), FAILED (a red run, a refused join, or a loop
    *     that did not converge), UNKNOWN (applicability or the plan could not be decided; nothing is
-   *     stored and the next ask decides again) or SUPERSEDED (the request moved to another fold
-   *     before this ended)
+   *     stored and the next ask decides again) or SUPERSEDED (a newer fold arrived while it waited,
+   *     or its run went red after the request moved on; a green run keeps its own outcome)
    * @param detail the sentence: the hold reason, the run's ending, why it is fresh
    * @param bumpId the {@code mt_bump} row that decides the state — {@code GET /bumps/{id}} has the
    *     rest; null on UNKNOWN

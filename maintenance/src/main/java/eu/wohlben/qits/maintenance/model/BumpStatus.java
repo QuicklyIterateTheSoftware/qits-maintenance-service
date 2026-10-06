@@ -25,10 +25,12 @@ public enum BumpStatus {
   NOTHING_TO_DO,
 
   /**
-   * <b>A release-request automation whose request moved to another fold before it ended.</b> Its
-   * outcome answers a question nobody is asking any more, so it is recorded and discarded; a push it
-   * made still re-folds the request, and the newer fold has a row of its own. Only {@code
-   * BumpMode.AUTOMATION} rows reach it.
+   * <b>A release-request automation that will not end on its own fold</b>: a newer fold arrived
+   * while it waited, or its run went red after the request had moved on — the shared core refuses a
+   * fold that is no longer the one it was sent for, and that refusal is red. Its outcome answers a
+   * question nobody is asking any more, so it is recorded and discarded. A GREEN run is never
+   * superseded: what it found is a fact about the fold it ran on. Only {@code BumpMode.AUTOMATION}
+   * rows reach it.
    */
   SUPERSEDED;
 

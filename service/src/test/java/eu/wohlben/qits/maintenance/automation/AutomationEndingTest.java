@@ -166,18 +166,81 @@ class AutomationEndingTest {
     assertTrue(peers.bodiesFor(AutomationFixture.joinPath(REQUEST)).isEmpty());
   }
 
-  /** The request re-folded while the run went: its outcome answers nothing, whatever it was. */
+  /** Red after the request re-folded: a verdict about a fold nobody will release, discarded. */
   @Test
-  void aFoldThatMovedOnSupersedesTheOutcome() {
+  void aRedRunOnAFoldThatMovedOnIsSuperseded() {
     UUID id = running();
-    Fixture.scriptForeignBranchAt(peers, AutomationFixture.branch(REQUEST), PUSHED);
     AutomationFixture.scriptRequest(peers, REQUEST, "PENDING", FOLD_B);
 
-    MtBump done = end(id, "SUCCESS");
+    MtBump done = end(id, "FAILED");
 
     assertEquals(BumpStatus.SUPERSEDED.name(), done.status, done.message);
     assertEquals(AutomationState.SUPERSEDED.name(), entry().state());
     assertTrue(peers.bodiesFor(AutomationFixture.joinPath(REQUEST)).isEmpty(), "nothing joined");
+  }
+
+  /**
+   * Green and unchanged after the request re-folded is still FRESH for the fold it ran on: the core
+   * refuses a fold that is no longer {@code foldSha} before it starts, so what it found is a fact
+   * about that fold.
+   */
+  @Test
+  void aGreenUnchangedRunOnAFoldThatMovedOnIsFreshForItsOwnFold() {
+    UUID id = running();
+    AutomationFixture.scriptRequest(peers, REQUEST, "PENDING", FOLD_B);
+
+    MtBump done = end(id, "SUCCESS");
+
+    assertEquals(BumpStatus.NOTHING_TO_DO.name(), done.status, done.message);
+    assertEquals(AutomationState.FRESH.name(), entry().state());
+  }
+
+  /**
+   * <b>THE BRANCH IS ALREADY JOINED, so the run's own push re-folds the request</b> before the poll
+   * sees it end. The outcome is COMMITTED against its own fold — joined again, which converges — and
+   * the fold that push made, posted while the run was still going and waiting behind it, is carried
+   * the moment it ends: FRESH, with no second dispatch.
+   */
+  @Test
+  void aFoldMovedByTheRunsOwnPushIsCommittedAndTheNextFoldCarries() {
+    UUID id = running();
+    AutomationFixture.scriptFold(peers, FOLD_B, true);
+    // The push lands and qits-projects re-folds; its trigger for the new fold arrives while the run
+    // is still RUNNING, so the new fold waits behind it rather than carrying.
+    Fixture.scriptForeignBranchAt(peers, AutomationFixture.branch(REQUEST), PUSHED);
+    AutomationFixture.scriptRequest(peers, REQUEST, "PENDING", FOLD_B);
+    AutomationDto waiting =
+        automations
+            .trigger(
+                REQUEST,
+                new AutomationService.Fold(
+                    Fixture.REPOSITORY,
+                    FOLD_B,
+                    FOLD_A,
+                    List.of("src/app/home/__screenshots__/home.png"),
+                    List.of("work", AutomationFixture.branch(REQUEST)),
+                    null))
+            .automations()
+            .getFirst();
+    queue.awaitIdle(Duration.ofSeconds(30));
+    assertEquals(AutomationState.REQUESTED.name(), waiting.state(), waiting.detail());
+    int triggers = peers.bodiesFor(eu.wohlben.qits.maintenance.bump.CiClient.TRIGGER_PATH).size();
+
+    MtBump done = end(id, "SUCCESS");
+
+    assertEquals(BumpStatus.SUCCEEDED.name(), done.status, done.message);
+    assertEquals(PUSHED, done.resultSha);
+    assertEquals(AutomationState.COMMITTED.name(), entry().state());
+    MtBump next = store.bump(UUID.fromString(waiting.bumpId())).orElseThrow();
+    assertEquals(BumpStatus.NOTHING_TO_DO.name(), next.status, next.message);
+    assertTrue(next.message.contains("carried"), next.message);
+    assertEquals(
+        triggers,
+        peers.bodiesFor(eu.wohlben.qits.maintenance.bump.CiClient.TRIGGER_PATH).size(),
+        "no second run for the fold the run's own push made");
+    assertEquals(
+        AutomationState.FRESH.name(),
+        automations.automations(REQUEST, FOLD_B).automations().getFirst().state());
   }
 
   /**
