@@ -34,11 +34,33 @@ final class AutomationFixture {
 
   private static final String WITHOUT_SCREENSHOTS = "{\"name\":\"app\",\"scripts\":{\"test\":\"vitest\"}}";
 
+  /** A single-module pom declaring the ORM dependency — enough for {@code entity-diagram} to apply. */
+  private static final String POM_WITH_ORM =
+      "<project>\n"
+          + "  <dependencies>\n"
+          + "    <dependency>\n"
+          + "      <groupId>io.quarkus</groupId>\n"
+          + "      <artifactId>quarkus-hibernate-orm</artifactId>\n"
+          + "    </dependency>\n"
+          + "  </dependencies>\n"
+          + "</project>\n";
+
   private AutomationFixture() {}
 
   /** The screenshot-baselines branch of a request. */
   static String branch(String requestId) {
-    return AutomationService.BRANCH_PREFIX + ScreenshotBaselinesAutomation.KIND + "/" + requestId;
+    return branch(ScreenshotBaselinesAutomation.KIND, requestId);
+  }
+
+  /** One kind's own branch of a request. */
+  static String branch(String kind, String requestId) {
+    return AutomationService.BRANCH_PREFIX + kind + "/" + requestId;
+  }
+
+  /** The fold's {@code pom.xml}, declaring the ORM dependency — so {@code entity-diagram} applies. */
+  static void scriptEntityDiagramApplies(FakePeers peers, String fold) {
+    Map<String, String> sha = Map.of("Git-Commit-Sha", fold);
+    peers.answer(PeerTarget.GITHOST, BLOB + fold + "/pom.xml", FakePeers.Scripted.ok(POM_WITH_ORM, sha));
   }
 
   /**
