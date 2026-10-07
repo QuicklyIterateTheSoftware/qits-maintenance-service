@@ -42,7 +42,7 @@ public class DependencyController {
   @Operation(summary = "Dependencies matching a glob, with every pin of each")
   @APIResponse(responseCode = "200", description = "The dependencies")
   @APIResponse(responseCode = "400", description = "kind is neither INTERNAL nor EXTERNAL")
-  @RolesAllowed({"qits:admin", "qits:system", "qits:agent"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
   public List<DependencyDto> dependencies(
       @QueryParam("name") @DefaultValue("*") String name, @QueryParam("kind") String kind) {
     return inventory.dependencies(name, pinKind(kind));
@@ -66,7 +66,7 @@ public class DependencyController {
   @Operation(summary = "Every released artifact of ours that embeds this dependency")
   @APIResponse(responseCode = "200", description = "The dependents")
   @APIResponse(responseCode = "400", description = "Unknown ecosystem, or no name")
-  @RolesAllowed({"qits:admin", "qits:system", "qits:agent"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
   public DependentsDto dependents(
       @QueryParam("ecosystem") String ecosystem,
       @QueryParam("name") String name,

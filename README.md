@@ -638,9 +638,10 @@ than the run's.
 ## API
 
 Under `/maintenance/api`, path-routed on every vhost. Every route takes `qits:admin` (a person, via
-the edge's `X-Qits-User` / `X-Qits-Roles`) or `qits:system` (a machine, via a bearer). Every `GET`
-also takes `qits:agent` (a commissioned agent); no write does. There is no anonymous route. Every
-error body is `{"message": "..."}`.
+the edge's `X-Qits-User` / `X-Qits-Roles`) or `qits:system` (a machine, via a bearer); `qits:admin-agent`
+(an ADMIN workspace's coding agent) is admitted too, wherever `qits:admin` is (qits-628 follow-up).
+Every `GET` also takes `qits:agent` (a commissioned agent); no write does. There is no anonymous
+route. Every error body is `{"message": "..."}`.
 
 ```
 GET  /repositories                                → [{name, project, lastScanAt, headSha, status,
@@ -732,7 +733,7 @@ POST /sbom-check/runs                             → 202 the report above, once
   `/artifacts/api/repositories/daemons/daemons/<name>/versions`) so the probe never keeps alive
   what it reports; a 404 is "collected" and any other failure fails the run (502 on the door, nothing
   stored). `tickets` is every ticket row still open after the run. `GET` takes `qits:agent` too;
-  `POST` is `qits:admin`/`qits:system`. Shipped report-only — `filed: false`.
+  `POST` is `qits:admin`/`qits:admin-agent`/`qits:system`. Shipped report-only — `filed: false`.
 
 - `scope` is `INTERNAL`, `EXTERNAL` or `ALL`. **Every scan re-reads every manifest whatever the
   scope says** — the scope governs only which half of the registry lookups refresh.

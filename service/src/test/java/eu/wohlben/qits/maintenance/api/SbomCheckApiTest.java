@@ -136,4 +136,33 @@ class SbomCheckApiTest {
     as("qits:agent").post(BASE + "/sbom-check/runs").then().statusCode(403);
     as("qits:reader").get(BASE + "/sbom-check").then().statusCode(403);
   }
+
+  /**
+   * qits-628 follow-up: an ADMIN workspace's coding agent's credential, carrying {@code
+   * qits:admin-agent} and NOT {@code qits:admin}, presses this door exactly as {@code qits:admin}
+   * and {@code qits:system} do — and plain {@code qits:agent}, as {@link
+   * #anAgentReadsTheReportButCannotStartARun} just proved, still cannot.
+   */
+  @Test
+  void anAdminAgentStartsARunAndPlainAgentStillCannot() {
+    UUID id =
+        store.upsertArtifact(
+            Ecosystem.MAVEN,
+            NAME,
+            "2026.1001.1",
+            Fixture.REPOSITORY,
+            Instant.now().minus(Duration.ofDays(2)),
+            new ReleaseOrigin("qits", "artifacts", null));
+    store.markArtifactMissing(id);
+    peers.answer(
+        PeerTarget.MAVEN_REGISTRY,
+        "/eu/wohlben/qits/qits-no-sbom/maven-metadata.xml",
+        FakePeers.Scripted.ok(
+            "<metadata><groupId>eu.wohlben.qits</groupId><artifactId>qits-no-sbom</artifactId>"
+                + "<versioning><versions><version>2026.1001.1</version></versions></versioning>"
+                + "</metadata>"));
+
+    as("qits:admin-agent").post(BASE + "/sbom-check/runs").then().statusCode(202);
+    as("qits:agent").post(BASE + "/sbom-check/runs").then().statusCode(403);
+  }
 }

@@ -69,7 +69,7 @@ public class BumpController {
       operationId = "getBumpWindow",
       summary = "The bump dispatch window and everything owed a bump")
   @APIResponse(responseCode = "200", description = "The window, or the reason there is none")
-  @RolesAllowed({"qits:admin", "qits:system", "qits:agent"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
   public BumpWindowDto window() {
     return inventory.bumpWindow(Instant.now());
   }
@@ -89,7 +89,7 @@ public class BumpController {
   @jakarta.ws.rs.Path("/window")
   @Operation(summary = "Open a bump dispatch window now")
   @APIResponse(responseCode = "200", description = "The window that is now open")
-  @RolesAllowed({"qits:admin", "qits:system", "qits:agent"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
   public BumpWindowDto openWindow() {
     Instant now = Instant.now();
     dispatcher.open(now);
@@ -104,7 +104,7 @@ public class BumpController {
   @jakarta.ws.rs.Path("/window")
   @Operation(summary = "Close the bump dispatch window")
   @APIResponse(responseCode = "204", description = "There is no window now")
-  @RolesAllowed({"qits:admin", "qits:system", "qits:agent"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
   public void closeWindow() {
     dispatcher.close("it was closed by hand");
   }
@@ -114,7 +114,7 @@ public class BumpController {
       operationId = "listBumps",
       summary = "The newest bumps, of one repository or of all of them")
   @APIResponse(responseCode = "200", description = "The bumps")
-  @RolesAllowed({"qits:admin", "qits:system", "qits:agent"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
   public List<BumpDto> bumps(
       @QueryParam("repository") String repository,
       @QueryParam("limit") @DefaultValue("" + DEFAULT_LIMIT) int limit) {
@@ -129,7 +129,7 @@ public class BumpController {
   @jakarta.ws.rs.Path("/pending")
   @Operation(operationId = "listPendingBumps", summary = "The newest bumps still on their way")
   @APIResponse(responseCode = "200", description = "The pending bumps")
-  @RolesAllowed({"qits:admin", "qits:system", "qits:agent"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
   public PendingBumpsDto pendingBumps(
       @QueryParam("limit") @DefaultValue("" + DEFAULT_LIMIT) int limit) {
     return inventory.pendingBumps(Math.clamp(limit, 1, MAX_LIMIT));
@@ -146,7 +146,7 @@ public class BumpController {
   @Operation(operationId = "getBump", summary = "One bump with the changes it sent")
   @APIResponse(responseCode = "200", description = "The bump")
   @APIResponse(responseCode = "404", description = "No such bump")
-  @RolesAllowed({"qits:admin", "qits:system", "qits:agent"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
   public BumpDto bump(@PathParam("id") String id) {
     UUID bumpId;
     try {

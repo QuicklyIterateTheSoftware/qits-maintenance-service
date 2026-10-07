@@ -37,7 +37,7 @@ public class SbomCheckController {
   @Operation(summary = "The last SBOM check's report")
   @APIResponse(responseCode = "200", description = "The report")
   @APIResponse(responseCode = "404", description = "No check has run yet")
-  @RolesAllowed({"qits:admin", "qits:system", "qits:agent"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
   public SbomCheckReportDto report() {
     return check.lastReport();
   }
@@ -47,7 +47,7 @@ public class SbomCheckController {
   @Operation(summary = "Run the SBOM check now")
   @APIResponse(responseCode = "202", description = "Ran; the body is the report it stored")
   @APIResponse(responseCode = "502", description = "qits-artifacts could not be asked; nothing stored")
-  @RolesAllowed({"qits:admin", "qits:system"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system"})
   public Response run() {
     return Response.status(Response.Status.ACCEPTED)
         .entity(check.run(Instant.now()))

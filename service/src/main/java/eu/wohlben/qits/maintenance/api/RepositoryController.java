@@ -37,7 +37,9 @@ import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
  * an operator in a browser and could as well be asked for by a machine or by the agent doing the
  * work; a machine-only guard would lock the operator out of the button this service exists to
  * offer, and an operator-only one would make an agent beg for a press that chooses nothing. There
- * is no anonymous route here.
+ * is no anonymous route here. {@code qits:admin-agent} is admitted too (qits-628 follow-up): an
+ * ADMIN workspace's coding agent carries it alongside {@code qits:agent}, and for now it may use
+ * everything {@code qits:admin} may use.
  */
 @Path("/repositories")
 @Produces(MediaType.APPLICATION_JSON)
@@ -60,7 +62,7 @@ public class RepositoryController {
   @GET
   @Operation(summary = "Every repository in the inventory, with its groups and what is pending")
   @APIResponse(responseCode = "200", description = "The repositories")
-  @RolesAllowed({"qits:admin", "qits:system", "qits:agent"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
   public List<RepositoryDto> repositories() {
     return inventory.repositories();
   }
@@ -76,7 +78,7 @@ public class RepositoryController {
   @Operation(summary = "One repository with every pin it holds")
   @APIResponse(responseCode = "200", description = "The repository")
   @APIResponse(responseCode = "404", description = "No such repository in the inventory")
-  @RolesAllowed({"qits:admin", "qits:system", "qits:agent"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
   public RepositoryDetailDto repository(@PathParam("name") String name) {
     return inventory.repository(name);
   }
@@ -99,7 +101,7 @@ public class RepositoryController {
   @jakarta.ws.rs.Path("/{name}/dependents")
   @Operation(summary = "Who embeds the artifacts this repository publishes")
   @APIResponse(responseCode = "200", description = "The dependents, per published artifact")
-  @RolesAllowed({"qits:admin", "qits:system", "qits:agent"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
   public RepositoryDependentsDto dependents(@PathParam("name") String name) {
     return graph.repositoryDependents(name);
   }
@@ -131,7 +133,7 @@ public class RepositoryController {
   @jakarta.ws.rs.Path("/{name}/downstream")
   @Operation(summary = "Everything downstream of this repository, ordered upstream first")
   @APIResponse(responseCode = "200", description = "The closure, depth ascending then name")
-  @RolesAllowed({"qits:admin", "qits:system", "qits:agent"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
   public DownstreamDto downstream(@PathParam("name") String name) {
     return adoption.downstream(name);
   }
@@ -161,7 +163,7 @@ public class RepositoryController {
   @APIResponse(responseCode = "202", description = "Requested; poll GET /bumps/{id}")
   @APIResponse(responseCode = "404", description = "No such repository, or no such group")
   @APIResponse(responseCode = "409", description = "One is already active, or bumping is disabled")
-  @RolesAllowed({"qits:admin", "qits:system", "qits:agent"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
   public Response bump(@PathParam("name") String name, @PathParam("group") String group) {
     UUID id = bumps.request(name, group, BumpTrigger.MANUAL);
     return Response.status(Response.Status.ACCEPTED)

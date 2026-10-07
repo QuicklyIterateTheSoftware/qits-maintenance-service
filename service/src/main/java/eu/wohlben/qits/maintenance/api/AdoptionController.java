@@ -28,7 +28,9 @@ import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
  * person through the gateway's forward-auth headers, {@code qits:system} for a machine — and the
  * annotation is on every METHOD rather than on the class, because a method-level {@code
  * @RolesAllowed} REPLACES a class-level one and a mixture is how one route ends up open. Like every
- * read in this API, it also takes {@code qits:agent}.
+ * read in this API, it also takes {@code qits:agent}. {@code qits:admin-agent} is admitted too
+ * (qits-628 follow-up): an ADMIN workspace's coding agent carries it alongside {@code qits:agent},
+ * and for now it may use everything {@code qits:admin} may use.
  */
 @Path("/adoption")
 @Produces(MediaType.APPLICATION_JSON)
@@ -58,7 +60,7 @@ public class AdoptionController {
   @Operation(summary = "How far one released repository and version got")
   @APIResponse(responseCode = "200", description = "The journey")
   @APIResponse(responseCode = "400", description = "Both repository and version are required")
-  @RolesAllowed({"qits:admin", "qits:system", "qits:agent"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
   public AdoptionJourneyDto byRelease(
       @QueryParam("repository") String repository, @QueryParam("version") String version) {
     String named = trimmed(repository);

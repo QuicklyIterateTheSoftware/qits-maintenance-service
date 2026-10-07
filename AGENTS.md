@@ -630,7 +630,8 @@ quarkus-oidc against qits-idp.
 **Both land as roles, which is why every route is `@RolesAllowed({"qits:admin", "qits:system"})`.**
 An operator presses Bump in a browser; a machine may post the same request. There is no anonymous
 route here and there must never be one — the write surface pushes branches into every repository on
-the platform.
+the platform. `qits:admin-agent` is admitted too (qits-628 follow-up): an ADMIN workspace's coding
+agent carries it alongside `qits:agent`, and for now it may use everything `qits:admin` may use.
 
 **Outbound, this service is a MACHINE and nothing else**: every call carries `X-Qits-Roles:
 qits:system`, and the idp client carries `qits:system` — the orchestrator's machine role.

@@ -670,6 +670,7 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+        - qits:admin-agent
         - qits:system
         - qits:agent
   /maintenance/api/artifacts:
@@ -693,6 +694,7 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+        - qits:admin-agent
         - qits:system
         - qits:agent
   /maintenance/api/artifacts/ingest:
@@ -718,6 +720,7 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+        - qits:admin-agent
         - qits:system
   /maintenance/api/bumps:
     get:
@@ -752,6 +755,7 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+        - qits:admin-agent
         - qits:system
         - qits:agent
   /maintenance/api/bumps/pending:
@@ -781,6 +785,7 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+        - qits:admin-agent
         - qits:system
         - qits:agent
   /maintenance/api/bumps/window:
@@ -803,6 +808,7 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+        - qits:admin-agent
         - qits:system
         - qits:agent
     post:
@@ -823,6 +829,7 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+        - qits:admin-agent
         - qits:system
         - qits:agent
     delete:
@@ -839,6 +846,7 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+        - qits:admin-agent
         - qits:system
         - qits:agent
   /maintenance/api/bumps/{id}:
@@ -869,6 +877,7 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+        - qits:admin-agent
         - qits:system
         - qits:agent
   /maintenance/api/dependencies:
@@ -904,6 +913,7 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+        - qits:admin-agent
         - qits:system
         - qits:agent
   /maintenance/api/dependencies/dependents:
@@ -941,6 +951,7 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+        - qits:admin-agent
         - qits:system
         - qits:agent
   /maintenance/api/pins:
@@ -964,6 +975,7 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+        - qits:admin-agent
         - qits:system
         - qits:agent
   /maintenance/api/release-requests/{requestId}/automations:
@@ -1001,6 +1013,7 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+        - qits:admin-agent
         - qits:system
         - qits:agent
     get:
@@ -1033,6 +1046,7 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+        - qits:admin-agent
         - qits:system
         - qits:agent
   /maintenance/api/release-requests/{requestId}/automations/{kind}/runs:
@@ -1074,6 +1088,7 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+        - qits:admin-agent
         - qits:system
         - qits:agent
   /maintenance/api/repositories:
@@ -1097,6 +1112,7 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+        - qits:admin-agent
         - qits:system
         - qits:agent
   /maintenance/api/repositories/{name}:
@@ -1126,6 +1142,7 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+        - qits:admin-agent
         - qits:system
         - qits:agent
   /maintenance/api/repositories/{name}/dependents:
@@ -1153,6 +1170,7 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+        - qits:admin-agent
         - qits:system
         - qits:agent
   /maintenance/api/repositories/{name}/downstream:
@@ -1180,6 +1198,7 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+        - qits:admin-agent
         - qits:system
         - qits:agent
   /maintenance/api/repositories/{name}/groups/{group}/bumps:
@@ -1212,6 +1231,7 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+        - qits:admin-agent
         - qits:system
         - qits:agent
   /maintenance/api/sbom-check:
@@ -1235,6 +1255,7 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+        - qits:admin-agent
         - qits:system
         - qits:agent
   /maintenance/api/sbom-check/runs:
@@ -1254,6 +1275,7 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+        - qits:admin-agent
         - qits:system
   /maintenance/api/scans:
     post:
@@ -1278,6 +1300,7 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+        - qits:admin-agent
         - qits:system
   /maintenance/api/scans/{id}:
     get:
@@ -1306,6 +1329,7 @@ paths:
       security:
       - SecurityScheme:
         - qits:admin
+        - qits:admin-agent
         - qits:system
         - qits:agent
 info:
