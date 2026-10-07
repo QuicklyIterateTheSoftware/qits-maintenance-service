@@ -80,11 +80,13 @@ class SbomCheckServiceTest {
     }
   }
 
-  /** qits-projects' entity doors, recorded. A filed ticket starts REPORTED and MAINTENANCE. */
+  /** qits-projects' work doors, recorded. A filed ticket starts REPORTED and MAINTENANCE, and is
+   * addressed from then on by the qualified id it answered — the reference {@link TicketClient}'s
+   * methods take now (qits-974). */
   static final class FakeTickets extends TicketClient {
     final List<String> calls = new ArrayList<>();
-    final Map<UUID, TicketState> states = new HashMap<>();
-    final Map<UUID, List<String>> comments = new HashMap<>();
+    final Map<String, TicketState> states = new HashMap<>();
+    final Map<String, List<String>> comments = new HashMap<>();
     final List<String> descriptions = new ArrayList<>();
     int filed;
 
@@ -92,29 +94,30 @@ class SbomCheckServiceTest {
     public Filed file(String projectId, String title, String impetus, String description) {
       UUID id = UUID.randomUUID();
       filed++;
+      String slug = "qits-" + (900 + filed);
       calls.add("file " + projectId + " " + title);
       descriptions.add(description);
-      states.put(id, new TicketState("REPORTED", "MAINTENANCE"));
-      return new Filed(id, "qits-" + (900 + filed));
+      states.put(slug, new TicketState("REPORTED", "MAINTENANCE"));
+      return new Filed(id, slug);
     }
 
     @Override
-    public Optional<TicketState> read(UUID ticketId) {
-      calls.add("read " + ticketId);
-      return Optional.ofNullable(states.get(ticketId));
+    public Optional<TicketState> read(String ticketRef) {
+      calls.add("read " + ticketRef);
+      return Optional.ofNullable(states.get(ticketRef));
     }
 
     @Override
-    public void comment(UUID ticketId, String text) {
-      calls.add("comment " + ticketId);
-      comments.computeIfAbsent(ticketId, k -> new ArrayList<>()).add(text);
+    public void comment(String ticketRef, String text) {
+      calls.add("comment " + ticketRef);
+      comments.computeIfAbsent(ticketRef, k -> new ArrayList<>()).add(text);
     }
 
     @Override
-    public void drop(UUID ticketId) {
-      calls.add("drop " + ticketId);
-      TicketState state = states.get(ticketId);
-      states.put(ticketId, new TicketState("DROPPED", state == null ? null : state.ticketType()));
+    public void drop(String ticketRef) {
+      calls.add("drop " + ticketRef);
+      TicketState state = states.get(ticketRef);
+      states.put(ticketRef, new TicketState("DROPPED", state == null ? null : state.ticketType()));
     }
 
     long count(String verb) {
@@ -493,7 +496,7 @@ class SbomCheckServiceTest {
     check.run(NOW);
     detached();
     MtSbomTicket before = store.sbomTicket(PROJECT, "maven", "g:a").orElseThrow();
-    tickets.states.put(before.ticketId, new TicketClient.TicketState("DONE", "MAINTENANCE"));
+    tickets.states.put(before.ticketSlug, new TicketClient.TicketState("DONE", "MAINTENANCE"));
 
     UUID later = released("g:a", "2", Duration.ofDays(1), origin("artifacts"));
     store.markArtifactMissing(later);
@@ -530,8 +533,8 @@ class SbomCheckServiceTest {
     SbomCheckReportDto report = check.run(NOW.plusSeconds(86_400));
 
     assertEquals(1, tickets.count("drop"), tickets.calls.toString());
-    assertEquals("DROPPED", tickets.states.get(ticket.ticketId).status());
-    List<String> thread = tickets.comments.get(ticket.ticketId);
+    assertEquals("DROPPED", tickets.states.get(ticket.ticketSlug).status());
+    List<String> thread = tickets.comments.get(ticket.ticketSlug);
     String closing = thread.get(thread.size() - 1);
     assertTrue(closing.startsWith("Resolved: every version listed here"), closing);
     assertTrue(closing.contains("1: INGESTED"), closing);
@@ -549,7 +552,7 @@ class SbomCheckServiceTest {
     check.run(NOW);
     detached();
     MtSbomTicket ticket = store.sbomTicket(PROJECT, "maven", "g:a").orElseThrow();
-    tickets.states.put(ticket.ticketId, new TicketClient.TicketState("REFINED", "BUG"));
+    tickets.states.put(ticket.ticketSlug, new TicketClient.TicketState("REFINED", "BUG"));
 
     ingested(one);
     tickets.calls.clear();
@@ -558,7 +561,7 @@ class SbomCheckServiceTest {
     assertEquals(0, tickets.count("drop"));
     assertEquals(1, tickets.count("comment"));
     assertTrue(
-        tickets.comments.get(ticket.ticketId).get(0).contains("no longer MAINTENANCE"),
+        tickets.comments.get(ticket.ticketSlug).get(0).contains("no longer MAINTENANCE"),
         tickets.comments.toString());
     detached();
     assertNotNull(store.sbomTicket(PROJECT, "maven", "g:a").orElseThrow().closedAt);
@@ -711,8 +714,8 @@ class SbomCheckServiceTest {
     assertTrue(report.entries().isEmpty(), report.entries().toString());
     assertEquals(0, tickets.count("file"));
     assertEquals(1, tickets.count("drop"), tickets.calls.toString());
-    assertEquals("DROPPED", tickets.states.get(ticket.ticketId).status());
-    List<String> thread = tickets.comments.get(ticket.ticketId);
+    assertEquals("DROPPED", tickets.states.get(ticket.ticketSlug).status());
+    List<String> thread = tickets.comments.get(ticket.ticketSlug);
     assertTrue(thread.get(thread.size() - 1).contains("1: INGESTED"), thread.toString());
     assertTrue(report.tickets().isEmpty());
     detached();

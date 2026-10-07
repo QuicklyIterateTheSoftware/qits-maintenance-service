@@ -4,9 +4,17 @@ artifacts:
 # The provider golden masters (epic qits-112): the platform packages `golden-masters/` as
 # `eu.wohlben.qits:qits-maintenance-golden-masters` and `@qits/maintenance-golden-masters`, each
 # published only when its content changed. `GoldenMasterRecordingTest` records them.
+# THE PACTS (epics qits-546, qits-965): qits-maintenance's own consumer pact against
+# qits-projects, declared the way qits-landing-app declares its — keyed by the provider's
+# repository name. It sits flat in `pacts/` as `qits-maintenance-service_qits-projects-service.json`;
+# qits-ci packs only `pacts/*_<provider>.json` into that provider's maven jar, named
+# eu.wohlben.qits:qits-maintenance-service-pacts-<provider>, and publishes it only when those files
+# changed.
 contracts:
   application: qits-maintenance
   golden-masters: { from: golden-masters/, packages: [maven, npm] }
+  pacts:
+    qits-projects-service: { packages: [maven] }
 # THE SITE IS SPELLED, AND IT NAMES THE COMPONENT. `true` derives it from the REPOSITORY name,
 # which would put the retired tier modifier in a storage id and then MOVE that id the day the
 # repository is renamed — a bundle's history stranded under a name nothing publishes to any

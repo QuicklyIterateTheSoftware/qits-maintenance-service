@@ -94,7 +94,7 @@ class SbomCheckApiTest {
         .body("entries[0].reason", equalTo("MISSING"));
 
     assertTrue(
-        peers.calls.stream().noneMatch(call -> call.url().contains("/projects/api/entities")),
+        peers.calls.stream().noneMatch(call -> call.url().contains("/projects/api/work")),
         "report-only calls nothing in qits-projects: " + peers.calls);
 
     as("qits:agent")

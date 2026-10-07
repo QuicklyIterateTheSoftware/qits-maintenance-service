@@ -442,10 +442,10 @@ public class SbomCheckService {
 
     if (current.isPresent() && current.get().closedAt == null) {
       MtSbomTicket row = current.get();
-      Optional<TicketClient.TicketState> state = tickets.read(row.ticketId);
+      Optional<TicketClient.TicketState> state = tickets.read(reference(row));
       if (state.isPresent() && !state.get().closed()) {
         for (Counted c : fresh) {
-          tickets.comment(row.ticketId, comment(c));
+          tickets.comment(reference(row), comment(c));
           store.recordSbomTicketVersion(row.id, c.row().version, c.reason().name(), now);
         }
         LOG.infof(
@@ -473,7 +473,7 @@ public class SbomCheckService {
             first.projectId, first.ecosystem, first.name, filed.id(), filed.slug(), now);
     store.recordSbomTicketVersion(rowId, lead.row().version, lead.reason().name(), now);
     for (Counted c : group.subList(1, group.size())) {
-      tickets.comment(filed.id(), comment(c));
+      tickets.comment(reference(filed), comment(c));
       store.recordSbomTicketVersion(rowId, c.row().version, c.reason().name(), now);
     }
     LOG.infof(
@@ -499,7 +499,7 @@ public class SbomCheckService {
       }
     }
 
-    Optional<TicketClient.TicketState> state = tickets.read(ticket.ticketId);
+    Optional<TicketClient.TicketState> state = tickets.read(reference(ticket));
     if (state.isEmpty() || state.get().closed()) {
       store.closeSbomTicket(ticket.id, now);
       return;
@@ -507,7 +507,7 @@ public class SbomCheckService {
     String closing = closing(resolutions);
     if (!state.get().maintenance()) {
       tickets.comment(
-          ticket.ticketId,
+          reference(ticket),
           closing.replace(
                   "Closed by qits-maintenance's SBOM check.",
                   "Noted by qits-maintenance's SBOM check.")
@@ -516,10 +516,10 @@ public class SbomCheckService {
       store.closeSbomTicket(ticket.id, now);
       return;
     }
-    tickets.drop(ticket.ticketId);
+    tickets.drop(reference(ticket));
     store.closeSbomTicket(ticket.id, now);
     try {
-      tickets.comment(ticket.ticketId, closing);
+      tickets.comment(reference(ticket), closing);
     } catch (RuntimeException e) {
       LOG.warnf(e, "Dropped ticket %s but could not say why on its thread", ticket.ticketId);
     }
@@ -678,5 +678,21 @@ public class SbomCheckService {
 
   private static String group(String project, String ecosystem, String name) {
     return project + " " + ecosystem + " " + name;
+  }
+
+  /**
+   * The reference {@link TicketClient#read}, {@link TicketClient#comment} and {@link
+   * TicketClient#drop} take: a row's qualified id when qits-projects answered one, else its entity
+   * UUID — no schema migration, see {@link TicketClient}'s class javadoc.
+   */
+  private static String reference(MtSbomTicket ticket) {
+    return ticket.ticketSlug != null && !ticket.ticketSlug.isBlank()
+        ? ticket.ticketSlug
+        : ticket.ticketId.toString();
+  }
+
+  /** As {@link #reference(MtSbomTicket)}, for a ticket just filed in this same run. */
+  private static String reference(TicketClient.Filed filed) {
+    return filed.slug() != null && !filed.slug().isBlank() ? filed.slug() : filed.id().toString();
   }
 }
