@@ -25,6 +25,16 @@ package eu.wohlben.qits.maintenance.model;
  * a mode. Their words stay readable through {@link #of} for rows a migration has not reached, and
  * nothing new writes them.
  *
+ * <p><b>Kept rather than dropped by a V19 (qits-1006), because something still reads the word, not a
+ * row.</b> The two doors that wrote them are retired, but {@code Inventory.bump} composes {@code
+ * BumpDto.mode} as {@code BumpMode.of(row.mode).name()}, never the raw column — so the wire answer
+ * for a legacy row depends on the enum holding the word, not merely on {@link #of} not throwing.
+ * {@code golden-masters/pending-bumps/listPendingBumps.json} pins exactly that: a {@code mode:
+ * "TARGETED"} row on the wire, recorded off a live request. Dropping the constant would not make that
+ * row disappear — it would make it answer {@code "GROUP"} instead, which is the fallback for a word
+ * this build does not know, and is a silent reclassification of a real historical row rather than the
+ * no-op removing dead code should be.
+ *
  * <p><b>No check constraint backs it</b>, for the reason {@code ScanTrigger} and the five status
  * enums have none: the invariant lives at the single writer — {@code MaintenanceStore} takes this
  * enum and nothing else writes the column — and a constraint would make a new constant a migration.

@@ -284,7 +284,7 @@ class EstatePinsAutomationTest {
     assertEquals(
         httpEstatePinsChanges(runs.getFirst().changes()),
         JSON.writeValueAsString(payload.get("changes")));
-    assertEquals(BumpService.TARGETED_GROUP, payload.get("group").asText(), "bump(targeted): …");
+    assertEquals(EstatePinsAutomation.TARGETED_GROUP, payload.get("group").asText(), "bump(targeted): …");
     assertEquals("work", payload.get("branch").asText());
     assertEquals("MaintenanceBump", JSON.readTree(triggers.getFirst()).get("name").asText());
   }

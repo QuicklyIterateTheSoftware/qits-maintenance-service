@@ -169,9 +169,11 @@ half-rewritten. It also means the git host and the registries see one caller.
 **A second bump of one (repository, group) is refused earlier still**, by `MaintenanceStore.openBump`,
 whose active-bump check is **inside** the opening transaction — a person and a scheduled scan
 arriving together is the ordinary case, not a race worth losing. **The property being protected is a
-REF, and the group is only a stand-in for one**: `openTargetedBump` therefore locks on
-`(repository, branch)`, and both checks carry the mode so neither mode's lock can be taken by the
-other's row.
+REF, and the group is only a stand-in for one**: an AUTOMATION row locked exclusively —
+`AutomationService`'s re-run door, and the old `/branches/bumps` door while it still called
+`MaintenanceStore.openAutomation` directly — therefore locks on `(repository, kind, branch)` rather
+than on `(repository, group)`, and both checks carry the mode so neither one's lock can be taken by
+the other's row.
 
 **A task never throws out of `WorkQueue`.** A thrown exception would lose the sentence; every task
 logs its own failure and ends.
@@ -195,40 +197,30 @@ work that reaches the front after the barrier does not exist yet.
 
 ## Bumping
 
-**THERE ARE TWO MODES AND EVERY RULE BELOW IS ABOUT THE FIRST ONE.** (The next two paragraphs
-describe TARGETED and BASELINES as they were written; since V18 both are release-request automation
-kinds — `estate-pins` and `screenshot-baselines` — with the same behaviour, run by
-`AutomationService`. See the paragraph after them.) A GROUP bump writes
+**THERE ARE TWO MODES AND EVERY RULE BELOW IS ABOUT THE FIRST ONE.** A GROUP bump writes
 `maintenance/<group>` — a branch this service names, creates, tracks in `mt_branch`, releases and
-lets the release delete. A TARGETED bump (`POST /repositories/{name}/branches/bumps`,
-`BumpService.requestTargeted`) writes a branch the CALLER names and owns: a workspace branch whose
-release request wants its gitlink pins *in the fold* CI gates, rather than banked by the release
-afterwards. `mt_bump.mode` is which, and `V12__bump_mode.sql` argues every consequence. The four that
-matter: **no `mt_branch` row** (that row's unique `(repository, group_name)` index is an ownership
-claim over a ref we do not own), **no release ask** (the caller already holds the request the pins
-are for), **no head comparison and therefore no STALE arm** (the workspace commits to its own branch
-while the run goes; calling that STALE would declare a live branch abandoned, silently and for
-ever), and **the lock is keyed on the BRANCH** (two targeted bumps onto two branches of one
-repository are both legitimate; two onto one branch are not). What it shares is everything else: the
-payload, `BumpPayload`, the dedupe key, the 503 rule, the poller and the in-flight cap. Its group
-column carries the stated sentinel `targeted` — a label for the payload and the commit subject,
-never a key; the mode is the discriminator, which is why `newestBump`, `activeBump` and
-`bumpsOwedARelease` all carry a mode term.
+lets the release delete. The second, AUTOMATION, is below.
 
-**A third mode, BASELINES, renders screenshot references** (`POST
-/repositories/{name}/release-requests/{requestId}/screenshot-baselines`,
-`BumpService.requestBaselines`, CLI `qits maintenance screenshot-baselines`). The request must be
-open. It sends qits-ci a `ScreenshotBaselines` event, which qits-ci's packaged
-`screenshot-baselines.yml` pipeline answers (on `node-browser-base`, the image the `app` QA step
-compares in): from the request's fold, `release/<request>`, it runs `UPDATE_SNAPSHOT=all npm run
-test:browser` and commits only `__screenshots__/` files and `renderer.txt` onto
-`maintenance/baselines/<request>`. The branch is ours, so the start
-head is stored in `result_sha` and compared at the end: unmoved is NOTHING_TO_DO ("unchanged"),
-moved is joined to the request (`ReleaseRequestClient.join`) and SUCCEEDED, red is FAILED. No
-`mt_branch` row and no release ask: the request decides when the branch ships. Missing references
-are written like changed ones, so a repository's first baselines come from here as well. The
-commit subject's scope is `mt_bump.work_item` (`V16`), or, when the caller named none, the newest
-id on the fold's own commit subjects.
+**TARGETED and BASELINES were two more modes, each written by hand with its own dispatch and its own
+ending, and V18 folded both into AUTOMATION** (see the next paragraph): a TARGETED bump wrote a branch
+the CALLER named and owned, a workspace branch whose release request wanted its gitlink pins *in the
+fold* CI gates rather than banked by the release afterwards; BASELINES rendered screenshot references
+onto a branch of this service's own and joined it to the request. `BumpMode.TARGETED` and
+`BumpMode.BASELINES` still exist, **read-only, because something still reads the word, not a row**:
+`Inventory.bump` composes the wire's `mode` field as `BumpMode.of(row.mode).name()`, and
+`golden-masters/pending-bumps/listPendingBumps.json` pins a `mode: "TARGETED"` row on the wire —
+dropping the constant would silently reclassify that row as GROUP rather than removing anything dead.
+`V12__bump_mode.sql` introduced the column and argues what TARGETED got right that GROUP would not;
+`V16__bump_work_item.sql` added the `work_item` column BASELINES needed for its commit subject's
+scope, with no migration of its own for the word itself — `mode` was already free text.
+
+**Both doors that wrote those two modes are retired (qits-1006).** `POST
+/repositories/{name}/branches/bumps` (`BumpService.requestTargeted`) and `POST
+/repositories/{name}/release-requests/{requestId}/screenshot-baselines`
+(`BumpService.requestBaselines`, CLI `qits maintenance screenshot-baselines`) both answer 404 now;
+nothing calls either delegate, which is gone with them. The one address left for either regeneration
+is the automation engine below — the fold trigger for the automatic case, `POST
+/release-requests/{id}/automations/{kind}/runs` for a manual re-run.
 
 **SINCE V18 BOTH ARE RELEASE-REQUEST AUTOMATIONS (qits-978), AND A KIND IS A COLUMN.** TARGETED and
 BASELINES were the same machine written twice; they differed only in whose branch the commit lands
@@ -243,13 +235,19 @@ run's verdict. Rows are `mode = AUTOMATION` with `automation_kind`, `fold_sha`, 
 rows V18 has not reached. **Carry-over is the loop's terminator**: a fold whose changed paths all lie
 under the applicable kinds' committable paths, after a FRESH or COMMITTED fold, is FRESH with no
 run — which only holds while no automation's output is another automation's input, so keep kinds'
-paths disjoint (`AutomationRegistryTest`). The old baselines door is a delegate to the re-run, and
-`/branches/bumps` opens an `estate-pins` row with no request. **`estate-pins` is qits-projects'
-`EstatePinRefresh`, ported** (qits-999): a wrapper (archetype `PROJECT`), per source branch but never
-main, each `.gitmodules` entry naming a sibling of the same project with an `mt_release` is compared
-against the branch's gitlink, and the change list is byte for byte what `HttpEstatePins` sent —
-which is why `automation/WrapperGitmodules` ports the wrapper's own reader rather than using
-`GitmodulesParser`. No difference is FRESH with no run, and that is the estate loop's terminator.
+paths disjoint (`AutomationRegistryTest`). The re-run door opens a row the same way the retired
+doors used to: an OWN_BRANCH kind through `AutomationService.run`, and `estate-pins` — the one
+SOURCE_BRANCHES kind — with no request when it is opened directly against a branch rather than
+through a fold. **`estate-pins` is qits-projects' `EstatePinRefresh`, ported** (qits-999): a wrapper
+(archetype `PROJECT`), per source branch but never main, each `.gitmodules` entry naming a sibling of
+the same project with an `mt_release` is compared against the branch's gitlink, and the change list
+is byte for byte what `HttpEstatePins` used to send — which is why `automation/WrapperGitmodules`
+ports the wrapper's own reader rather than using `GitmodulesParser`. No difference is FRESH with no
+run, and that is the estate loop's terminator. The sentinel the commit subject reads,
+`EstatePinsAutomation.TARGETED_GROUP` (`"targeted"`, moved here from `BumpService` once the
+`/branches/bumps` door it served was retired), is a LABEL rather than a key — `mt_bump.mode` is the
+discriminator, so a repository that really does declare a group spelled `targeted` collides with
+nothing.
 
 **Two callers on the group path, and no scan is one of them.** The button is `POST
 /repositories/{name}/groups/{group}/bumps`; the clock is `schedule/BumpSchedule` at 02:00, INTERNAL

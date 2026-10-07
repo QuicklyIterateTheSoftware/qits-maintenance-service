@@ -1085,4 +1085,32 @@ class MaintenanceApiTest {
     given().when().get(BASE + "/bumps/not-a-uuid").then().statusCode(404).body("message", notNullValue());
     given().when().get(BASE + "/scans/not-a-uuid").then().statusCode(404).body("message", notNullValue());
   }
+
+  /**
+   * <b>THE TWO RETIRED DOORS (qits-1006).</b> {@code /branches/bumps} and {@code
+   * /release-requests/{id}/screenshot-baselines} delegated to the {@code estate-pins} and {@code
+   * screenshot-baselines} release-request automations; both are a plain 404 now — no route answers
+   * either path at all, with or without a repository the inventory holds. The re-run door, {@code
+   * POST /release-requests/{id}/automations/{kind}/runs}, is the one address left for either.
+   */
+  @Test
+  void theRetiredBranchesBumpsAndScreenshotBaselinesDoorsAnswer404() {
+    scan();
+    given()
+        .contentType(ContentType.JSON)
+        .body("{\"branch\":\"workspace/ws-7\",\"changes\":[]}")
+        .when()
+        .post(BASE + "/repositories/" + Fixture.REPOSITORY + "/branches/bumps")
+        .then()
+        .statusCode(404);
+    given()
+        .contentType(ContentType.JSON)
+        .body("{}")
+        .when()
+        .post(
+            BASE + "/repositories/" + Fixture.REPOSITORY
+                + "/release-requests/0d0a15ac-5e67-4e03-ad00-ff25d9bbcfea/screenshot-baselines")
+        .then()
+        .statusCode(404);
+  }
 }

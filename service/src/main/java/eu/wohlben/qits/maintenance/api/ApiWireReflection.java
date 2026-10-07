@@ -40,11 +40,6 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
 @RegisterForReflection(
     targets = {
       RepositoryController.AcceptedResponse.class,
-      // The targeted bump door's body. It is DESERIALIZED rather than returned, which the analysis
-      // is no better at seeing through: the route's 202 rides in a Response.entity, so the whole
-      // method is invisible to it and the request record goes with it.
-      RepositoryController.TargetedBumpRequest.class,
-      RepositoryController.BaselinesRequest.class,
       // The release-request automations' three doors (qits-978). The two request bodies are
       // deserialized, the 202 rides in a Response.entity, and the answer is the wire contract
       // qits-projects' gate reads — a 500 in the binary there would hold every release request.

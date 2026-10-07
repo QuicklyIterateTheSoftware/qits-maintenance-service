@@ -119,11 +119,6 @@ components:
           type: string
         updatedAt:
           $ref: "#/components/schemas/Instant"
-    BaselinesRequest:
-      type: object
-      properties:
-        workItem:
-          type: string
     BumpDto:
       type: object
       properties:
@@ -589,15 +584,6 @@ components:
           type: string
         repository:
           type: string
-    TargetedBumpRequest:
-      type: object
-      properties:
-        branch:
-          type: string
-        changes:
-          type: array
-          items:
-            $ref: "#/components/schemas/Change"
     TicketDto:
       type: object
       properties:
@@ -1142,41 +1128,6 @@ paths:
         - qits:admin
         - qits:system
         - qits:agent
-  /maintenance/api/repositories/{name}/branches/bumps:
-    post:
-      summary: Write the named changes onto a branch the caller owns
-      parameters:
-      - name: name
-        in: path
-        required: true
-        schema:
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/TargetedBumpRequest"
-        required: true
-      responses:
-        "202":
-          description: "Requested; poll GET /bumps/{id} for resultSha"
-        "400":
-          description: The branch or a change is not a valid payload
-        "404":
-          description: No such repository in the inventory
-        "409":
-          description: "One is already active on that branch, or bumping is disabled"
-        "401":
-          description: Not Authorized
-        "403":
-          description: Not Allowed
-      tags:
-      - Repository Controller
-      security:
-      - SecurityScheme:
-        - qits:admin
-        - qits:system
-        - qits:agent
   /maintenance/api/repositories/{name}/dependents:
     get:
       summary: Who embeds the artifacts this repository publishes
@@ -1252,47 +1203,6 @@ paths:
           description: "No such repository, or no such group"
         "409":
           description: "One is already active, or bumping is disabled"
-        "401":
-          description: Not Authorized
-        "403":
-          description: Not Allowed
-      tags:
-      - Repository Controller
-      security:
-      - SecurityScheme:
-        - qits:admin
-        - qits:system
-        - qits:agent
-  /maintenance/api/repositories/{name}/release-requests/{requestId}/screenshot-baselines:
-    post:
-      summary: Update a release request's screenshot baselines in the CI image
-      parameters:
-      - name: name
-        in: path
-        required: true
-        schema:
-          type: string
-      - name: requestId
-        in: path
-        required: true
-        schema:
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/BaselinesRequest"
-        required: true
-      responses:
-        "202":
-          description: "Requested; poll GET /bumps/{id}"
-        "400":
-          description: "Not a request id, or not a work item"
-        "404":
-          description: No such repository in the inventory
-        "409":
-          description: "The request takes no branch, one is already running for it,\
-            \ or bumping is disabled"
         "401":
           description: Not Authorized
         "403":

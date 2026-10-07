@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import eu.wohlben.qits.maintenance.automation.EstatePinsAutomation;
 import eu.wohlben.qits.maintenance.model.BumpMode;
 import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.pending.Change;
@@ -40,8 +41,8 @@ class TargetedPayloadTest {
   @Test
   void theTargetedSentinelIsSomethingTheStepWouldAccept() {
     assertTrue(
-        BumpPayload.GROUP.matcher(BumpService.TARGETED_GROUP).matches(),
-        BumpService.TARGETED_GROUP + " reaches the step as the payload's group");
+        BumpPayload.GROUP.matcher(EstatePinsAutomation.TARGETED_GROUP).matches(),
+        EstatePinsAutomation.TARGETED_GROUP + " reaches the step as the payload's group");
   }
 
   /** A caller's branch is a plain ref like any other, slash and all. */
@@ -49,11 +50,11 @@ class TargetedPayloadTest {
   void aWorkspaceBranchIsAValidTarget() {
     assertEquals(
         List.of(),
-        BumpPayload.problems(BumpService.TARGETED_GROUP, "workspace/ws-7", "main", GITLINK));
+        BumpPayload.problems(EstatePinsAutomation.TARGETED_GROUP, "workspace/ws-7", "main", GITLINK));
     assertEquals(
         List.of(),
         BumpPayload.problems(
-            BumpService.TARGETED_GROUP, "release/2026.910.180413", "main", GITLINK));
+            EstatePinsAutomation.TARGETED_GROUP, "release/2026.910.180413", "main", GITLINK));
   }
 
   /**
@@ -63,13 +64,13 @@ class TargetedPayloadTest {
   @Test
   void anImplausibleBranchOrPathIsRefusedOnThisSide() {
     assertFalse(
-        BumpPayload.problems(BumpService.TARGETED_GROUP, "--force", "main", GITLINK).isEmpty(),
+        BumpPayload.problems(EstatePinsAutomation.TARGETED_GROUP, "--force", "main", GITLINK).isEmpty(),
         "a leading dash is an argument, not a branch");
     assertFalse(
-        BumpPayload.problems(BumpService.TARGETED_GROUP, "ws 7", "main", GITLINK).isEmpty());
+        BumpPayload.problems(EstatePinsAutomation.TARGETED_GROUP, "ws 7", "main", GITLINK).isEmpty());
     assertFalse(
         BumpPayload.problems(
-                BumpService.TARGETED_GROUP,
+                EstatePinsAutomation.TARGETED_GROUP,
                 "workspace/ws-7",
                 "main",
                 List.of(

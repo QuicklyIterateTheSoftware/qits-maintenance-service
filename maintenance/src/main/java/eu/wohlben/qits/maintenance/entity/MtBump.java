@@ -29,8 +29,8 @@ public class MtBump extends PanacheEntityBase {
 
   /**
    * Which group's pending changes this carries — <b>or, for a {@link #mode TARGETED} bump, the
-   * stated sentinel {@code BumpService.TARGETED_GROUP}</b>, because a targeted bump has no group at
-   * all and the column is not null.
+   * stated sentinel {@code EstatePinsAutomation.TARGETED_GROUP}</b>, because a targeted bump has no
+   * group at all and the column is not null.
    *
    * <p><b>For a targeted row this is a LABEL and never a key.</b> {@link #mode} is the
    * discriminator: every query that means "the group path" says so by mode, so a repository that

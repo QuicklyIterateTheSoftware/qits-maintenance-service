@@ -1,7 +1,6 @@
 package eu.wohlben.qits.maintenance.bump;
 
 import eu.wohlben.qits.maintenance.automation.AutomationService;
-import eu.wohlben.qits.maintenance.automation.ScreenshotBaselinesAutomation;
 import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
 import eu.wohlben.qits.maintenance.entity.MtBranch;
 import eu.wohlben.qits.maintenance.entity.MtBump;
@@ -88,10 +87,12 @@ import org.jboss.logging.Logger;
  * and the poll's ending hand such a row over, and the sweep reaches it like any other active bump.
  * What were the TARGETED and BASELINES modes are the {@code estate-pins} and {@code
  * screenshot-baselines} kinds — a write onto a branch the CALLER owns, judged by its CI run, and a
- * write onto a branch of the automation's own, head-compared and joined — and {@link
- * #requestTargeted} and {@link #requestBaselines} are delegates kept for the two doors that still
- * call them. Neither kind writes an {@code mt_branch} row or asks for a release: the request the
- * commit belongs to is already open.
+ * write onto a branch of the automation's own, head-compared and joined. The two doors that used to
+ * delegate here, {@code POST /{name}/branches/bumps} and {@code POST
+ * /{name}/release-requests/{requestId}/screenshot-baselines}, are retired (qits-1006); {@link
+ * AutomationService#run} and the {@code POST /release-requests/{id}/automations/{kind}/runs} door
+ * are the one address for a manual re-run now. Neither kind writes an {@code mt_branch} row or asks
+ * for a release: the request the commit belongs to is already open.
  */
 @ApplicationScoped
 public class BumpService {
@@ -104,23 +105,6 @@ public class BumpService {
    * puts the branch row back to NONE.
    */
   public static final String BRANCH_PREFIX = "maintenance/";
-
-  /**
-   * The payload's {@code group} on every run that writes a release request's OWN branches — the
-   * {@code estate-pins} automation, and what the TARGETED mode put in {@code group_name} before V18.
-   * Such a run carries the changes its plan (or the caller) named and belongs to no group at all.
-   *
-   * <p><b>A stated sentinel rather than a blank or the branch name.</b> The step refuses a group
-   * unless it is {@code [0-9A-Za-z._-]+} — so a branch name with a slash in it could not be used even
-   * if it made sense — and writes it into the commit subject on somebody else's branch: {@code
-   * bump(targeted): 3 dependencies} tells whoever reads that history what put the commit there,
-   * which is exactly what a workspace owner finding an unexpected commit needs to know.
-   *
-   * <p><b>It is a LABEL, never a key.</b> {@code mt_bump.mode} is the discriminator: every query that
-   * means "the group path" says so by mode, so a repository that really did declare a group spelled
-   * {@code targeted} would collide with nothing here.
-   */
-  public static final String TARGETED_GROUP = "targeted";
 
   @Inject MaintenanceStore store;
 
@@ -177,49 +161,6 @@ public class BumpService {
         "Opened the %s bump %s of %s/%s with %d changes",
         trigger, id, repository, group, changes.size());
     return id;
-  }
-
-  /**
-   * Opens a bump onto a branch the CALLER names, carrying the changes the CALLER names, and queues
-   * its dispatch — <b>a delegate to the {@code estate-pins} release-request automation</b>
-   * (qits-999), kept until the {@code /branches/bumps} door that calls it is retired.
-   *
-   * <p>The row is an AUTOMATION row of kind {@code estate-pins} with no request and no fold — the
-   * caller names a branch and a change list rather than a fold — and it runs exactly as a TARGETED
-   * bump ran: the bump pipeline under the {@code targeted} group, judged by its CI run, reporting the
-   * commit it left in {@code result_sha}, locked on the branch, an empty list ending NOTHING_TO_DO.
-   *
-   * @param repository the repository, as the catalog spells it
-   * @param branch the caller's branch, without {@code refs/heads/} — validated as a plain ref
-   * @param changes the pins to write, validated exactly as a group bump's are
-   * @throws NoSuchRepositoryException the inventory has no such repository — a 404
-   * @throws eu.wohlben.qits.maintenance.error.BumpAlreadyActiveException one is going onto THAT
-   *     BRANCH — a 409. Another branch of the same repository is not a conflict
-   * @throws BumpDisabledException {@code qits.maintenance.bump.enabled} is false — a 409
-   * @throws eu.wohlben.qits.maintenance.error.BadRequestException the branch or a change is not
-   *     something the step would accept — a 400, refused here rather than as a red run over there
-   * @see AutomationService#requestTargeted
-   */
-  public UUID requestTargeted(
-      String repository, String branch, List<Change> changes, BumpTrigger trigger) {
-    return automations.requestTargeted(repository, branch, changes, trigger);
-  }
-
-  /**
-   * Asks for one release request's screenshot baselines to be rendered in the CI image and joined
-   * to it, and does NOT wait — <b>a delegate to the release-request automations' re-run</b> of the
-   * {@code screenshot-baselines} kind (qits-978), kept until the door that calls it is retired.
-   *
-   * @param repository the repository, as the catalog spells it
-   * @param requestId the open release request the images are for
-   * @param workItem the commit subject's scope ({@code qits-112}), or null: the step then takes it
-   *     from the newest commit on the fold that names one
-   * @see AutomationService#run
-   */
-  public UUID requestBaselines(
-      String repository, String requestId, String workItem, BumpTrigger trigger) {
-    return automations.run(
-        repository, requestId, ScreenshotBaselinesAutomation.KIND, workItem, trigger);
   }
 
   /**
