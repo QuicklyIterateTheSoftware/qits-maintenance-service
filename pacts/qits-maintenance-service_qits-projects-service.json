@@ -860,13 +860,6 @@
           "contentType": "application/json",
           "encoded": false
         },
-        "generators": {
-          "path": {
-            "dataType": "RAW",
-            "expression": "/projects/api/work",
-            "type": "ProviderState"
-          }
-        },
         "headers": {
           "content-type": [
             "application/json"
@@ -898,7 +891,7 @@
             "createdAt": "2026-01-01T00:00:00Z",
             "createdBy": "dev",
             "dependsOn": null,
-            "description": null,
+            "description": "qits-maintenance's daily SBOM check found a software artifact in qits-artifacts without a usable SBOM.",
             "id": "00000000-0000-4000-8000-000000000002",
             "impetus": "The CSV export answers 500 when the range holds no invoice.",
             "implementedAt": null,
@@ -954,6 +947,14 @@
               ]
             },
             "$.createdBy": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.description": {
               "combine": "AND",
               "matchers": [
                 {
