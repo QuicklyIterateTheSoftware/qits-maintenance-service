@@ -13,6 +13,7 @@ import au.com.dius.pact.core.model.matchingrules.TypeMatcher;
 import au.com.dius.pact.core.support.Json;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
@@ -123,6 +124,18 @@ public final class GoldenMasters {
     /** The path as a provider-state expression: {@code {param}} becomes {@code ${param}}. */
     public String expressionPath() {
       return substitute(path, name -> "${" + name + "}");
+    }
+
+    /**
+     * Whether the path template names at least one {@code {param}}. A path with none is a
+     * constant, and must never get a provider-state generator: pact-jvm's expression evaluator
+     * treats a string with no {@code ${...}} in it as a literal context KEY rather than literal
+     * text, so {@code fromProviderState("/projects/api/work", "/projects/api/work")} looks up
+     * "/projects/api/work" in the provider-state params, finds nothing, and resolves to {@code
+     * null} — sending the real request to {@code /null}.
+     */
+    public boolean hasPathParams() {
+      return PARAM.matcher(path).find();
     }
 
     private String substitute(String template, java.util.function.Function<String, String> value) {
@@ -249,6 +262,17 @@ public final class GoldenMasters {
     return interaction(builder, state, operationId, trigger, null);
   }
 
+  /** {@link #interaction(PactBuilder, String, String, Trigger, DslPart, Map)} with no response
+   * override — every row but {@code createWork}'s. */
+  public static PactBuilder interaction(
+      PactBuilder builder,
+      String state,
+      String operationId,
+      Trigger trigger,
+      DslPart requestBody) {
+    return interaction(builder, state, operationId, trigger, requestBody, Map.of());
+  }
+
   /**
    * Add the V4 HTTP interaction for one recorded (state, operation), reached from {@code trigger}.
    *
@@ -263,7 +287,15 @@ public final class GoldenMasters {
    * that state — useful context, not a contract — so a POST row builds its matcher from what {@link
    * eu.wohlben.qits.maintenance.sbomcheck.TicketClient} actually sends, which {@code
    * ProjectsContract} composes per row. Only the recorded RESPONSE is read off the golden master,
-   * because that is the half this consumer has no control over.
+   * because that is the half this consumer has no control over — {@code responseOverrides} is the
+   * one exception, for a top-level response field that is NOT the provider's own to assert because
+   * it just echoes back a value this very request carried (today, only {@code createWork}'s {@code
+   * description}: qits-projects' recorder never sent one, so the golden master holds {@code null}
+   * there, while {@link eu.wohlben.qits.maintenance.sbomcheck.TicketClient#file} always sends one and
+   * qits-projects echoes it verbatim — asserting the recording's {@code null} would fail against the
+   * real provider every time). The override replaces that field's recorded value before the matcher
+   * is built, so the ordinary type-match logic applies to the consumer's own value instead of the
+   * golden master's.
    *
    * @throws NullPointerException when {@code trigger} is null: an interaction nobody can attribute
    *     to an entry point is exactly what the references exist to prevent
@@ -273,10 +305,11 @@ public final class GoldenMasters {
       String state,
       String operationId,
       Trigger trigger,
-      DslPart requestBody) {
+      DslPart requestBody,
+      Map<String, JsonNode> responseOverrides) {
     Objects.requireNonNull(trigger, "trigger: every interaction names the entry point that makes it");
     Operation op = operation(state, operationId);
-    DslPart body = responseBody(op);
+    DslPart body = responseBody(op, responseOverrides);
     Map<String, Object> references = new LinkedHashMap<>();
     Map<String, String> call = new LinkedHashMap<>();
     call.put("app", PROVIDER);
@@ -289,9 +322,13 @@ public final class GoldenMasters {
           http.state(state, new LinkedHashMap<String, Object>(op.params()));
           http.withRequest(
               request -> {
-                request
-                    .method(op.method())
-                    .path(Matchers.fromProviderState(op.expressionPath(), op.examplePath()));
+                request.method(op.method());
+                if (op.hasPathParams()) {
+                  request.path(Matchers.fromProviderState(op.expressionPath(), op.examplePath()));
+                } else {
+                  // A constant path: no generator, see Operation#hasPathParams.
+                  request.path(op.examplePath());
+                }
                 return requestBody == null ? request : request.body(requestBody);
               });
           http.willRespondWith(
@@ -309,11 +346,31 @@ public final class GoldenMasters {
 
   /** The recorded body with the index's matchers, built for {@link #interaction}. */
   static DslPart responseBody(Operation op) {
+    return responseBody(op, Map.of());
+  }
+
+  /** {@link #responseBody(Operation)}, with {@code overrides} replacing named top-level fields'
+   * recorded value first — see {@link #interaction(PactBuilder, String, String, Trigger, DslPart,
+   * Map)}. */
+  static DslPart responseBody(Operation op, Map<String, JsonNode> overrides) {
     JsonNode recorded = json(op.state(), op.operationId());
     if (!recorded.isObject()) {
       throw new IllegalStateException(
           "golden master " + op.state() + "/" + op.operationId()
               + ": only an object body is supported, got " + recorded.getNodeType());
+    }
+    if (!overrides.isEmpty()) {
+      ObjectNode editable = ((ObjectNode) recorded).deepCopy();
+      for (Map.Entry<String, JsonNode> override : overrides.entrySet()) {
+        String field = override.getKey();
+        if (!editable.has(field)) {
+          throw new IllegalArgumentException(
+              "golden master " + op.state() + "/" + op.operationId() + " names no top-level field '"
+                  + field + "' to override");
+        }
+        editable.set(field, override.getValue());
+      }
+      recorded = editable;
     }
     PactDslJsonBody root = new PactDslJsonBody();
     fillObject(root, Shape.of(recorded), "$", op);

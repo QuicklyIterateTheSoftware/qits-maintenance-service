@@ -9,6 +9,7 @@ import au.com.dius.pact.consumer.dsl.PactDslJsonBody;
 import au.com.dius.pact.core.model.PactSpecVersion;
 import au.com.dius.pact.core.model.V4Pact;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.TextNode;
 import eu.wohlben.qits.maintenance.testing.contracts.GoldenMasters;
 import eu.wohlben.qits.maintenance.testing.contracts.GoldenMasters.Trigger;
 import java.util.List;
@@ -82,9 +83,25 @@ final class ProjectsContract {
     void run(TicketClient client, Map<String, String> params);
   }
 
-  /** One (trigger, call), plus the request body this row's call sends (null for a GET). */
+  /**
+   * One (trigger, call), plus the request body this row's call sends (null for a GET), plus — for
+   * the rare response field that is not the golden master's to assert because it just echoes back
+   * what THIS request carried ({@code responseOverrides}, empty for every row but {@code
+   * createWork}'s; see {@link GoldenMasters#interaction(PactBuilder, String, String, Trigger,
+   * DslPart, Map)}).
+   */
   record Case(
-      Trigger trigger, String state, String operationId, Supplier<DslPart> requestBody, Call call) {
+      Trigger trigger,
+      String state,
+      String operationId,
+      Supplier<DslPart> requestBody,
+      Call call,
+      Map<String, JsonNode> responseOverrides) {
+
+    Case(Trigger trigger, String state, String operationId, Supplier<DslPart> requestBody, Call call) {
+      this(trigger, state, operationId, requestBody, call, Map.of());
+    }
+
     String description() {
       return GoldenMasters.description(operationId, trigger);
     }
@@ -147,7 +164,13 @@ final class ProjectsContract {
               A_PROJECT_WITH_NO_WORK,
               CREATE_WORK,
               CREATE_WORK_REQUEST,
-              FILE),
+              FILE,
+              // qits-projects' recorder never sent a description filing this state, so the golden
+              // master's own answer holds null there; TicketClient.file always sends one and
+              // qits-projects echoes it back verbatim (TicketApiTest's own
+              // "ticket.description" assertion), so this response field is this consumer's own
+              // expectation, the same way the request body above is.
+              Map.of("description", new TextNode(DESCRIPTION))),
           new Case(
               Trigger.schedule("SbomCheckService.file"),
               A_MAINTENANCE_TICKET_IN_DETAIL,
@@ -192,7 +215,8 @@ final class ProjectsContract {
         new PactBuilder(GoldenMasters.CONSUMER, GoldenMasters.PROVIDER, PactSpecVersion.V4);
     for (Case c : cases) {
       DslPart requestBody = c.requestBody() == null ? null : c.requestBody().get();
-      GoldenMasters.interaction(builder, c.state(), c.operationId(), c.trigger(), requestBody);
+      GoldenMasters.interaction(
+          builder, c.state(), c.operationId(), c.trigger(), requestBody, c.responseOverrides());
     }
     return builder.toPact();
   }

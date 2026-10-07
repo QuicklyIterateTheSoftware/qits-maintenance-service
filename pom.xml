@@ -60,8 +60,9 @@
              like every internal pin — a qits-maintenance bump on this property, gated here, where a
              changed answer that breaks the pact goes red before it ships. Do not hand-edit it to
              chase a release.
-             First carries /work (qits-965/qits-974) at 2026.1007.25926. -->
-        <qits.projects-golden-masters.version>2026.1007.25926</qits.projects-golden-masters.version>
+             First carries /work (qits-965/qits-974) at 2026.1007.25926; 2026.1007.35430 only adds
+             getWork recordings. -->
+        <qits.projects-golden-masters.version>2026.1007.35430</qits.projects-golden-masters.version>
         <!-- THE PLATFORM'S OWN MAVEN REPOSITORY, and this repo's artifacts from it: qits-db-core
              (PatientPgDriver, which the datasource opens every connection through, and
              DbRetry.inNewTx, which every write path runs in), qits-auth-core (the forward-auth
