@@ -60,11 +60,8 @@
              like every internal pin — a qits-maintenance bump on this property, gated here, where a
              changed answer that breaks the pact goes red before it ships. Do not hand-edit it to
              chase a release.
-             PENDING: qits-projects-service's /work API has not released yet, so this is pinned to a
-             local-only jar built from its current golden-masters/ tree and installed by hand into
-             /caches/m2 (not committed) — see the javadoc on ProjectsContract. The real pin lands as
-             a maintenance bump once qits-projects-service publishes the jar carrying /work. -->
-        <qits.projects-golden-masters.version>0.0.0-local-work-api</qits.projects-golden-masters.version>
+             First carries /work (qits-965/qits-974) at 2026.1007.25926. -->
+        <qits.projects-golden-masters.version>2026.1007.25926</qits.projects-golden-masters.version>
         <!-- THE PLATFORM'S OWN MAVEN REPOSITORY, and this repo's artifacts from it: qits-db-core
              (PatientPgDriver, which the datasource opens every connection through, and
              DbRetry.inNewTx, which every write path runs in), qits-auth-core (the forward-auth
