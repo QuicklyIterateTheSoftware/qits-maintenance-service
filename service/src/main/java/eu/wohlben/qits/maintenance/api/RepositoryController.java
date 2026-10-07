@@ -1,7 +1,5 @@
 package eu.wohlben.qits.maintenance.api;
 
-import eu.wohlben.qits.maintenance.automation.AutomationService;
-import eu.wohlben.qits.maintenance.automation.ScreenshotBaselinesAutomation;
 import eu.wohlben.qits.maintenance.bump.BumpService;
 import eu.wohlben.qits.maintenance.control.Adoption;
 import eu.wohlben.qits.maintenance.control.ArtifactGraph;
@@ -10,9 +8,7 @@ import eu.wohlben.qits.maintenance.dto.DownstreamDto;
 import eu.wohlben.qits.maintenance.dto.RepositoryDependentsDto;
 import eu.wohlben.qits.maintenance.dto.RepositoryDetailDto;
 import eu.wohlben.qits.maintenance.dto.RepositoryDto;
-import eu.wohlben.qits.maintenance.error.BadRequestException;
 import eu.wohlben.qits.maintenance.model.BumpTrigger;
-import eu.wohlben.qits.maintenance.pending.Change;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
@@ -52,9 +48,6 @@ public class RepositoryController {
 
   @Inject BumpService bumps;
 
-  /** The release-request automations, whose screenshot re-run the baselines door now is. */
-  @Inject AutomationService automations;
-
   /** What this repository's RELEASES contain, and who contains them. See {@link ArtifactGraph}. */
   @Inject ArtifactGraph graph;
 
@@ -63,31 +56,6 @@ public class RepositoryController {
 
   /** What a 202 answers with — the id to poll. */
   public record AcceptedResponse(UUID id) {}
-
-  /**
-   * The body of a TARGETED bump: whose branch, and what to write on it.
-   *
-   * <p><b>Both are stated and neither is derived, which is the whole shape of the mode.</b> The
-   * group door beside it is given a group and works the rest out — the branch from the naming rule,
-   * the changes from the inventory. There is nothing to work out here: the caller holds a release
-   * request on a particular branch and wants a particular set of pins inside that request's fold,
-   * and this service recomputing either of them would put a different commit on somebody else's
-   * branch than the one that was asked for.
-   *
-   * <p><b>{@code changes} is the same {@link Change} record the payload carries</b>, not a reduced
-   * one. The step edits by {@code manifestPath} and {@code location} and names the dependency in the
-   * commit it writes; a body that carried only "this gitlink to that version" would have this
-   * service invent the other three fields out of an inventory that may be a scan behind.
-   *
-   * @param branch the caller's branch, without {@code refs/heads/}
-   * @param changes the pins to write; an empty list is accepted and ends NOTHING_TO_DO
-   */
-  public record TargetedBumpRequest(String branch, List<Change> changes) {}
-
-  /**
-   * The body of a screenshot-baselines update: the work item its commit subject names, optional.
-   */
-  public record BaselinesRequest(String workItem) {}
 
   @GET
   @Operation(summary = "Every repository in the inventory, with its groups and what is pending")
@@ -196,104 +164,6 @@ public class RepositoryController {
   @RolesAllowed({"qits:admin", "qits:system", "qits:agent"})
   public Response bump(@PathParam("name") String name, @PathParam("group") String group) {
     UUID id = bumps.request(name, group, BumpTrigger.MANUAL);
-    return Response.status(Response.Status.ACCEPTED)
-        .entity(new AcceptedResponse(id))
-        .type(MediaType.APPLICATION_JSON)
-        .build();
-  }
-
-  /**
-   * Asks for the named changes to be written onto a branch <b>the caller owns</b>, and does NOT
-   * wait.
-   *
-   * <p><b>Its own noun rather than a variant of the group door.</b> {@code
-   * /groups/{group}/bumps} is addressed by a thing this service knows about — a group it read out of
-   * a repository's own configuration — and everything else about the bump follows from it. This one
-   * is addressed by a branch this service has never heard of and will never hear of again: a
-   * workspace branch qits-projects owns, carrying a release request whose fold wants its gitlink
-   * pins inside it rather than banked by the release afterwards. Hanging that off the group path
-   * would make the group segment a lie in half the requests.
-   *
-   * <p><b>202 with the id, for the reason the group door gives</b>: a bump is a clone, an edit and a
-   * push in somebody else's pipeline. {@code GET /bumps/{id}} takes the id, and for this caller the
-   * field that matters there is {@code resultSha} — <b>which commit now holds the pins</b>, so that
-   * the request it is arming can be checked against a commit rather than against a hope.
-   *
-   * <p><b>409 while a bump onto THAT BRANCH is active, and never merely onto that repository.</b> One
-   * repository may have several release requests open at once, each on its own branch, each entitled
-   * to its own pins; the thing that cannot happen twice at once is two runs pushing one ref. Also
-   * 409 when bumping is switched off, which stops this door exactly as it stops the schedule.
-   *
-   * <p><b>400 when the branch or a change is not something the bump step would accept</b> — the same
-   * rules {@code BumpPayload} holds a group bump to, refused here rather than as a red run somebody
-   * has to go and read a step log for. This door refuses synchronously where the group path records
-   * the reason on the row, because there is a caller on the other end of this one.
-   *
-   * <p><b>{@code qits:agent} opens it, beside the operator and the machine</b>, because the caller
-   * on the other end is usually an agent arming its own release request and the changes it names
-   * choose nothing new — each one pins a version that is already released, onto a branch the caller
-   * already owns and that CI still gates and a person still approves. The 409 above is unchanged,
-   * and it is what stops two callers writing one ref.
-   */
-  @POST
-  @jakarta.ws.rs.Path("/{name}/branches/bumps")
-  @Operation(summary = "Write the named changes onto a branch the caller owns")
-  @APIResponse(responseCode = "202", description = "Requested; poll GET /bumps/{id} for resultSha")
-  @APIResponse(responseCode = "400", description = "The branch or a change is not a valid payload")
-  @APIResponse(responseCode = "404", description = "No such repository in the inventory")
-  @APIResponse(
-      responseCode = "409",
-      description = "One is already active on that branch, or bumping is disabled")
-  @RolesAllowed({"qits:admin", "qits:system", "qits:agent"})
-  public Response bumpBranch(@PathParam("name") String name, TargetedBumpRequest request) {
-    if (request == null || request.branch() == null || request.branch().isBlank()) {
-      throw new BadRequestException("a targeted bump names the branch it writes onto");
-    }
-    UUID id =
-        bumps.requestTargeted(
-            name, request.branch().trim(), request.changes(), BumpTrigger.MANUAL);
-    return Response.status(Response.Status.ACCEPTED)
-        .entity(new AcceptedResponse(id))
-        .type(MediaType.APPLICATION_JSON)
-        .build();
-  }
-
-  /**
-   * Renders one release request's screenshot tests in the CI image and joins the reference images
-   * that changed to that request. Does NOT wait.
-   *
-   * <p><b>The re-run of the {@code screenshot-baselines} release-request automation</b> (qits-978),
-   * kept under its old address until the door is retired — {@code POST
-   * /release-requests/{requestId}/automations/screenshot-baselines/runs} is the same call. The run
-   * starts from the request's fold, writes every reference that is missing or differs, commits only
-   * the kind's paths onto {@code maintenance/automations/screenshot-baselines/<request>} and joins
-   * that branch to the request. {@code GET /bumps/{id}} follows it: SUCCEEDED (joined),
-   * NOTHING_TO_DO (unchanged) or FAILED with the reason.
-   *
-   * <p>The same three roles as every route here.
-   */
-  @POST
-  @jakarta.ws.rs.Path("/{name}/release-requests/{requestId}/screenshot-baselines")
-  @Operation(summary = "Update a release request's screenshot baselines in the CI image")
-  @APIResponse(responseCode = "202", description = "Requested; poll GET /bumps/{id}")
-  @APIResponse(responseCode = "400", description = "Not a request id, or not a work item")
-  @APIResponse(responseCode = "404", description = "No such repository in the inventory")
-  @APIResponse(
-      responseCode = "409",
-      description =
-          "The request takes no branch, one is already running for it, or bumping is disabled")
-  @RolesAllowed({"qits:admin", "qits:system", "qits:agent"})
-  public Response updateBaselines(
-      @PathParam("name") String name,
-      @PathParam("requestId") String requestId,
-      BaselinesRequest request) {
-    UUID id =
-        automations.run(
-            name,
-            requestId == null ? null : requestId.trim(),
-            ScreenshotBaselinesAutomation.KIND,
-            request == null ? null : request.workItem(),
-            BumpTrigger.MANUAL);
     return Response.status(Response.Status.ACCEPTED)
         .entity(new AcceptedResponse(id))
         .type(MediaType.APPLICATION_JSON)

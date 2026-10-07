@@ -68,6 +68,18 @@ public class EstatePinsAutomation implements ReleaseRequestAutomation {
 
   public static final String KIND = "estate-pins";
 
+  /**
+   * The payload's {@code group} on every run this kind dispatches — a sentinel rather than a real
+   * group, kept so the step still refuses it the way a plain group name is refused, and so the
+   * commit it writes still reads {@code bump(targeted): N dependencies}: a label for the history,
+   * never a key. {@code mt_bump.automation_kind} is the discriminator.
+   *
+   * <p><b>Moved here from {@code BumpService} (qits-1006)</b>, where it was declared for the
+   * {@code /branches/bumps} door's TARGETED mode. That door is retired and this kind is its only
+   * reader now, so the constant lives beside the one place that still writes the sentinel.
+   */
+  public static final String TARGETED_GROUP = "targeted";
+
   @Inject GitHostReader gitHost;
 
   @Inject MaintenanceStore store;

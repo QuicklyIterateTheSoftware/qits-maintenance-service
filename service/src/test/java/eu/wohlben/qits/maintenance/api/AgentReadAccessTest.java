@@ -114,6 +114,9 @@ class AgentReadAccessTest {
    *
    * <p>The window pair is opened and closed again in one breath, so this test leaves the dispatcher
    * where it found it.
+   *
+   * <p>{@code /branches/bumps} used to be asserted here too. It is retired (qits-1006) and answers a
+   * plain 404 to every role alike now, which is pinned in {@code MaintenanceApiTest}, not here.
    */
   @Test
   void anAgentWorksTheBumpDoors() {
@@ -123,11 +126,6 @@ class AgentReadAccessTest {
         agent()
             .contentType(ContentType.JSON)
             .post(BASE + "/repositories/qits-ci-service/groups/default/bumps"));
-    allowed(
-        agent()
-            .contentType(ContentType.JSON)
-            .body("{\"branch\":\"workspace/ws-agent\",\"changes\":[]}")
-            .post(BASE + "/repositories/qits-ci-service/branches/bumps"));
   }
 
   @Test
