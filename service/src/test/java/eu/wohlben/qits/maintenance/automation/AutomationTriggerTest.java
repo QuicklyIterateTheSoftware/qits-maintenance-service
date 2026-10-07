@@ -270,6 +270,72 @@ class AutomationTriggerTest {
         "an ending frees a slot and the waiting one goes");
   }
 
+  private AutomationDto entityDiagram(ReleaseRequestAutomationsDto answer) {
+    return answer.automations().stream()
+        .filter(entry -> EntityDiagramAutomation.KIND.equals(entry.kind()))
+        .findFirst()
+        .orElseThrow(() -> new AssertionError("no entity-diagram entry in " + answer));
+  }
+
+  /**
+   * Runs fold A's {@code entity-diagram} to a COMMITTED outcome: a green run that joined. Screenshots
+   * are turned off on fold A so the fixture's qits-ci shape exercises only the kind under test.
+   */
+  private AutomationDto commitEntityDiagramFoldA() {
+    String branch = AutomationFixture.branch(EntityDiagramAutomation.KIND, REQUEST);
+    AutomationFixture.scriptFold(peers, FOLD_A, false);
+    AutomationFixture.scriptEntityDiagramApplies(peers, FOLD_A);
+    Fixture.scriptForeignBranchAt(peers, branch, AutomationFixture.BEFORE);
+
+    AutomationDto entry = entityDiagram(trigger(REQUEST, FOLD_A, null, null));
+    Fixture.scriptForeignBranchAt(peers, branch, AutomationFixture.PUSHED);
+    Fixture.scriptRun(peers, RUN, "SUCCESS");
+    bumps.poll(UUID.fromString(entry.bumpId()));
+    queue.awaitIdle(Duration.ofSeconds(30));
+    assertEquals(BumpStatus.SUCCEEDED.name(), row(entry).status, row(entry).message);
+    return entry;
+  }
+
+  /**
+   * THE ENTITY-DIAGRAM TERMINATOR (qits-1031). {@code docs/database/**} is the kind's own output and
+   * no kind's input, so the re-fold its own join causes — changing only {@code docs/database/ci.md}
+   * — is carried, with no second run.
+   */
+  @Test
+  void onlyEntityDiagramPathsChangedCarriesTheOutcomeWithNoRun() {
+    commitEntityDiagramFoldA();
+    AutomationFixture.scriptFold(peers, FOLD_B, false);
+    AutomationFixture.scriptEntityDiagramApplies(peers, FOLD_B);
+    int before = triggers();
+
+    AutomationDto entry =
+        entityDiagram(trigger(REQUEST, FOLD_B, FOLD_A, List.of("docs/database/ci.md")));
+
+    assertEquals(AutomationState.FRESH.name(), entry.state(), entry.detail());
+    assertTrue(entry.detail().contains("carried"), entry.detail());
+    assertEquals(before, triggers(), "no second run for the fold its own commit made");
+  }
+
+  /** A change under the repository's own sources is not the automation's output: the fold runs. */
+  @Test
+  void aSourceChangeUnderSrcMainIsNotCarriedForEntityDiagram() {
+    commitEntityDiagramFoldA();
+    AutomationFixture.scriptFold(peers, FOLD_B, false);
+    AutomationFixture.scriptEntityDiagramApplies(peers, FOLD_B);
+
+    AutomationDto entry =
+        entityDiagram(
+            trigger(
+                REQUEST,
+                FOLD_B,
+                FOLD_A,
+                List.of(
+                    "docs/database/ci.md", "ci/src/main/java/eu/wohlben/qits/ci/CiReport.java")));
+
+    assertEquals(AutomationState.REQUESTED.name(), entry.state(), entry.detail());
+    assertEquals(BumpStatus.RUNNING.name(), row(entry).status);
+  }
+
   /** The same fold posted twice is answered from the rows the first one wrote. */
   @Test
   void aRepeatedTriggerForTheSameFoldIsIdempotent() {
