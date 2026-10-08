@@ -84,6 +84,15 @@ public class PeerClient {
   }
 
   /**
+   * A DELETE with no body, as the same pair — the one delete this service makes is of its own
+   * automation branches on the git host ({@code AutomationBranchSweep}).
+   */
+  public PeerExchange delete(PeerTarget target, String path) {
+    PeerCall call = new PeerCall("DELETE", url(target, path), null);
+    return new PeerExchange(call, send(call));
+  }
+
+  /**
    * Sends one call and turns everything that can happen into an answer.
    *
    * <p>Takes no {@link PeerTarget} any more: every peer takes the same bearer now (C4), so there is
@@ -99,7 +108,9 @@ public class PeerClient {
             // an operator's.
             .header("X-Qits-User", "qits-platform-maintenance")
             .header("X-Qits-Roles", "qits:system");
-    if (call.body() == null) {
+    if ("DELETE".equals(call.method())) {
+      request.DELETE();
+    } else if (call.body() == null) {
       request.GET();
     } else {
       request

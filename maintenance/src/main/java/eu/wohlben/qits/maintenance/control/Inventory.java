@@ -459,6 +459,8 @@ public class Inventory {
         row.releaseState,
         row.releaseDetail,
         row.releaseStateAt,
+        row.baseRef,
+        row.replaceHead,
         BumpService.changes(row));
   }
 }

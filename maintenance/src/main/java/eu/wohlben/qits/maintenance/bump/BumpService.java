@@ -56,6 +56,13 @@ import org.jboss.logging.Logger;
  * to overwrite. That is the STALE state: they own the branch now, and nothing bumps it again until
  * it is gone.
  *
+ * <p><b>The one exception is a REBUILD, and it is leased</b> (qits-1081). When the repository's
+ * newest release has not reached main, the branch is cut from that tag rather than from main — see
+ * {@link BumpBase} — and a branch that exists without it is sent as {@code replaceHead}: the step
+ * rebuilds it on the tag under {@code --force-with-lease} on exactly that head, so a branch that
+ * moved after this service read it is still refused rather than overwritten. A STALE branch is
+ * never offered for a rebuild.
+ *
  * <p><b>A GREEN ENDING ASKS FOR THE RELEASE WHENEVER THE BRANCH IS AHEAD OF MAIN</b> — which is not
  * the same test as "did this run push", and used to be. A branch nobody asks about is a branch that
  * sits there, so the ending opens a release request in qits-projects; see {@link
@@ -119,6 +126,9 @@ public class BumpService {
   @Inject GitHostReader gitHost;
 
   @Inject ReleaseRequestClient releases;
+
+  /** What a group bump's branch is cut from, and whether it is rebuilt (qits-1081). */
+  @Inject BumpBase bases;
 
   @Inject WorkQueue queue;
 
@@ -209,12 +219,27 @@ public class BumpService {
       return;
     }
     String branch = bump.branch;
-    String baseRef = baseRef(repository.get());
+    // THE BASE IS CHOSEN AT DISPATCH, NOT FROZEN AT REQUEST (qits-1081). The changes are what the
+    // operator saw and must not move; the base is a fact about the repository's releases right now,
+    // and a retry after a 503 should cut from the tag that is unmerged THEN. Recorded before the
+    // trigger, so a refused payload still says what it would have been cut from.
+    BumpBase.Choice base =
+        mode.ownsTheBranch()
+            ? bases.choose(repository.get(), bump.groupName, branch)
+            : BumpBase.Choice.main(repository.get());
+    String baseRef = base.baseRef();
+    store.bumpBase(id, baseRef, base.replaceHead());
+    if (base.rebuild()) {
+      LOG.infof(
+          "The bump %s rebuilds %s of %s on %s, over %s, which does not carry that release",
+          id, branch, bump.repository, baseRef, base.replaceHead());
+    }
 
     // REFUSED HERE RATHER THAN OVER THERE. The step holds every one of these to the same rule, so
     // a payload that fails validation is a red run and a step log somebody has to read. Failing on
     // this side puts the reason on the bump row, written by the component that composed it.
-    List<String> problems = BumpPayload.problems(bump.groupName, branch, baseRef, changes);
+    List<String> problems =
+        BumpPayload.problems(bump.groupName, branch, baseRef, base.replaceHead(), changes);
     if (!problems.isEmpty()) {
       store.bumpFinished(
           id, BumpStatus.FAILED, null, String.join("; ", problems), Instant.now());
@@ -228,7 +253,16 @@ public class BumpService {
     }
 
     CiClient.TriggerResult result =
-        ci.trigger(id.toString(), bump.repository, bump.groupName, branch, baseRef, changes);
+        ci.trigger(
+            id.toString(),
+            bump.repository,
+            bump.groupName,
+            branch,
+            baseRef,
+            changes,
+            // OMITTED, never sent empty, when the branch is continued: the step reads a missing
+            // `replaceHead` as "continue", which is every bump before qits-1081.
+            base.rebuild() ? Map.of("replaceHead", base.replaceHead()) : Map.of());
     switch (result.outcome()) {
       case ACCEPTED -> {
         store.bumpDispatched(id, result.eventId(), result.runIds());
@@ -483,7 +517,7 @@ public class BumpService {
     // per tick, on a listing that empties after one tick.
     Optional<MtRepository> repository = store.repository(bump.repository);
     String head = repository.map(row -> branchHead(row, bump.branch)).orElse(null);
-    String base = repository.map(row -> branchHead(row, baseRef(row))).orElse(null);
+    String base = repository.map(row -> branchHead(row, mainBranch(row))).orElse(null);
     if (head == null || base == null || head.equals(base)) {
       // head == base is the settled case and writes CONVERGED: there is nothing on the branch, and
       // there never will be under this bump. An UNREADABLE head is not — the git host being quiet
@@ -493,7 +527,7 @@ public class BumpService {
         store.bumpReleaseAsked(
             id,
             ReleaseRequestClient.CONVERGED,
-            note(bump, bump.branch + " is level with " + baseRef(repository.get())
+            note(bump, bump.branch + " is level with " + mainBranch(repository.get())
                 + "; there is nothing on it to release"));
       }
       return;
@@ -617,14 +651,14 @@ public class BumpService {
       // is something to release and this asks for it, exactly as the moved case does and by the same
       // convergent ask; the status stays NOTHING_TO_DO because this run really did write nothing,
       // and a reader deserves that distinction rather than a SUCCEEDED that invents a push.
-      String base = repository.map(row -> branchHead(row, baseRef(row))).orElse(null);
+      String base = repository.map(row -> branchHead(row, mainBranch(row))).orElse(null);
       if (after != null && base != null && !after.equals(base)) {
         store.recordBranch(bump.repository, bump.groupName, branch, BranchState.PUSHED, after, now);
         store.bumpFinished(
             bump.id,
             BumpStatus.NOTHING_TO_DO,
             ciRunStatus,
-            "the run passed and " + branch + " did not move, but it is ahead of " + baseRef(repository.get())
+            "the run passed and " + branch + " did not move, but it is ahead of " + mainBranch(repository.get())
                 + " and unreleased",
             now);
         // Closed before the ask, for the reason the moved case gives: a qits-projects that will not
@@ -722,10 +756,13 @@ public class BumpService {
         .toList();
   }
 
-  private static String baseRef(MtRepository repository) {
-    return repository.mainBranch == null || repository.mainBranch.isBlank()
-        ? "main"
-        : repository.mainBranch;
+  /**
+   * The repository's main branch — what "ahead of main" is measured against, whatever the bump's own
+   * base was. A branch cut from an unmerged tag is ahead of main by that tag as well, which is right:
+   * the fold carries the tag either way.
+   */
+  private static String mainBranch(MtRepository repository) {
+    return BumpBase.mainBranch(repository);
   }
 
   /** The branch rows of one repository, for the API's group listing. */

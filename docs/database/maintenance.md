@@ -54,6 +54,7 @@ erDiagram
     text automation_extras
     string automation_kind "length 64"
     boolean automation_only
+    string base_ref "length 255"
     string branch "not null, length 512"
     text changes
     string ci_event_id "length 255"
@@ -70,6 +71,7 @@ erDiagram
     string release_request_id "length 255"
     string release_state "length 32"
     instant release_state_at
+    string replace_head "length 64"
     string repository "not null, length 255"
     string result_sha "length 64"
     instant started_at "not null"

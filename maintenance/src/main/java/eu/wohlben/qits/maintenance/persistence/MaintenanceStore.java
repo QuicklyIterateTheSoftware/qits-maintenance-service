@@ -892,6 +892,26 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
         });
   }
 
+  /**
+   * Records what a group bump's payload is cut from and, when it is rebuilt, the head it replaces
+   * (qits-1081). Written before the trigger, so a trigger that fails still says what it would have
+   * sent.
+   */
+  @ActivateRequestContext
+  public void bumpBase(UUID id, String baseRef, String replaceHead) {
+    DbRetry.runInNewTx(
+        "record the base of bump " + id,
+        () -> {
+          MtBump row = MtBump.findById(id);
+          if (row == null) {
+            return;
+          }
+          row.baseRef = baseRef;
+          row.replaceHead = replaceHead;
+          getEntityManager().flush();
+        });
+  }
+
   /** Records what qits-projects said to the join, without ending anything. */
   @ActivateRequestContext
   public void bumpJoined(UUID id, String releaseState, String releaseDetail, Instant now) {
@@ -1556,6 +1576,25 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
                             branch,
                             BumpStatus.RUNNING.name())
                         .firstResult()));
+  }
+
+  /**
+   * Every automation row that wrote one branch of one repository, newest first — what the
+   * automation-branch sweep reads to see whether the branch is still being worked on and how long
+   * ago this service last touched it.
+   */
+  @ActivateRequestContext
+  public List<MtBump> automationsOnBranch(String repository, String branch) {
+    return DbRetry.inNewTx(
+        "read the automations of one branch",
+        () ->
+            MtBump.<MtBump>find(
+                    "mode = ?1 and repository = ?2 and branch = ?3",
+                    Sort.by("startedAt").descending(),
+                    BumpMode.AUTOMATION.name(),
+                    repository,
+                    branch)
+                .list());
   }
 
   /** Every automation row still waiting for a run, oldest first — what an ending dispatches next. */

@@ -51,6 +51,11 @@ import java.util.UUID;
  *     rejected request is re-armed to PENDING by the next merged sha
  * @param releaseDetail that service's sentence about it — usually the gating run that went red
  * @param releaseStateAt when the two above were read
+ * @param baseRef what a GROUP bump's branch was cut from — the repository's main branch, or {@code
+ *     refs/tags/<version>} when its newest release had not reached main (qits-1081). Null on an
+ *     automation, and on a bump dispatched before this was recorded
+ * @param replaceHead the branch head the step was told to rebuild the branch over, or null when the
+ *     branch was continued or started fresh
  * @param changes the payload's changes, verbatim
  */
 public record BumpDto(
@@ -75,4 +80,6 @@ public record BumpDto(
     String releaseState,
     String releaseDetail,
     Instant releaseStateAt,
+    String baseRef,
+    String replaceHead,
     List<Change> changes) {}

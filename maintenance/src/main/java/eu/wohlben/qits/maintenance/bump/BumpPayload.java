@@ -53,6 +53,9 @@ public final class BumpPayload {
   /** A plain ref: segments of the same characters, slashes between them, nothing git rejects. */
   static final Pattern REF = Pattern.compile("[0-9A-Za-z._-]+(?:/[0-9A-Za-z._-]+)*");
 
+  /** A full commit object name, as the step's {@code replaceHead} guard admits one. */
+  static final Pattern SHA = Pattern.compile("[0-9a-f]{40}|[0-9a-f]{64}");
+
   private BumpPayload() {}
 
   /**
@@ -83,7 +86,23 @@ public final class BumpPayload {
    * three bad entries should be told three times, not made to fix them one run at a time.
    */
   public static List<String> problems(String group, String branch, String baseRef, List<Change> changes) {
+    return problems(group, branch, baseRef, null, changes);
+  }
+
+  /**
+   * The same, for a payload that may carry a {@code replaceHead} (qits-1081).
+   *
+   * <p><b>{@code replaceHead} is the one value here that licenses a non-fast-forward push</b> — the
+   * step rebuilds the branch on {@code baseRef} under {@code --force-with-lease} on it — so it is
+   * held to exactly what the step admits: lowercase hex, 40 characters or 64 (a SHA-256 repository's
+   * object name), nothing else. Null is "continue the branch", the ordinary payload.
+   */
+  public static List<String> problems(
+      String group, String branch, String baseRef, String replaceHead, List<Change> changes) {
     List<String> problems = new ArrayList<>();
+    if (replaceHead != null && !SHA.matcher(replaceHead).matches()) {
+      problems.add("the replace head '" + replaceHead + "' is not a full lowercase commit sha");
+    }
     if (group == null || !GROUP.matcher(group).matches()) {
       problems.add("the group name '" + group + "' is not " + GROUP.pattern());
     }

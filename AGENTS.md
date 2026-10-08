@@ -249,6 +249,20 @@ run, and that is the estate loop's terminator. The sentinel the commit subject r
 discriminator, so a repository that really does declare a group spelled `targeted` collides with
 nothing.
 
+**AN OWN-BRANCH AUTOMATION'S BRANCH IS DELETED BY THIS SERVICE ONCE ITS REQUEST IS CLOSED** — the
+one ref this service writes itself, confined to `maintenance/automations/`. A request that releases
+deletes its named sources; one that ends any other way (WITHDRAWN, OBSOLETE, FINALIZED without the
+branch ever joined) left it behind for ever, and no agent may push to the namespace.
+`automation/AutomationBranchSweep`, on the worker via `schedule/AutomationBranchSweepSchedule` (5
+minutes after boot, then hourly — no event announces a withdrawal), lists each catalogued
+repository's branches (`GET /githost/api/repositories/{catalogId}`) and deletes through
+`githost/GitHostRefs` (`DELETE …/branches/{name}`, `qits:system`). **Closed is qits-projects'
+`ENDED` set and nothing else** — FINALIZED, WITHDRAWN, OBSOLETE; REJECTED, FAILED and CONFLICTED
+re-arm on the next fold and RELEASED is mid-pipeline, so they are open. A request qits-projects
+404s goes once this service's last row on the branch is older than seven days (or there is none);
+any other unreadable answer keeps it, and a branch with a REQUESTED or RUNNING row is never
+touched. A failed delete is a WARN and the next pass's retry; an already-gone branch is success.
+
 **Two callers on the group path, and no scan is one of them.** The button is `POST
 /repositories/{name}/groups/{group}/bumps`; the clock is `schedule/BumpSchedule` at 02:00, INTERNAL
 group only. A SCHEDULED scan used to ask for the bumps it found, gated by `bump.auto` — that key and

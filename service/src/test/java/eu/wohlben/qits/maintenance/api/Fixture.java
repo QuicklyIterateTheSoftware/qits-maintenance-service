@@ -416,6 +416,61 @@ public final class Fixture {
         FakePeers.Scripted.unreachable("connection refused"));
   }
 
+  /**
+   * The repository's whole release-request history — {@code GET …/release-requests?state=all}, the
+   * read a bump's base is chosen from (qits-1081). A different path from the collection's POST, so
+   * arming it never answers the release ask.
+   */
+  public static final String RELEASE_LISTING_PATH = RELEASE_REQUESTS_PATH + "?state=all";
+
+  /** The commit an unmerged release tag points at — on no branch the fixture otherwise names. */
+  public static final String TAG_SHA = "7a9e5c3b1d0f2e4a6c8b0d1f3e5a7c9b2d4f6e80";
+
+  /** The tag {@link #TAG_SHA} is. */
+  public static final String TAG_VERSION = "2026.1007.171656";
+
+  /**
+   * qits-projects lists one release that is cut and has not reached main, {@link #TAG_VERSION} at
+   * {@link #TAG_SHA} — beside the shapes that must NOT be chosen: an older unmerged release that
+   * sorts AFTER it as text ({@code 2026.1007.61854}), a newer one that has merged, and a request
+   * that never released.
+   */
+  public static void scriptUnmergedRelease(FakePeers peers) {
+    peers.answer(
+        PeerTarget.PROJECTS,
+        RELEASE_LISTING_PATH,
+        FakePeers.Scripted.ok(
+            "{\"requests\":["
+                + "{\"id\":\"rr-open\",\"state\":\"PENDING\",\"version\":null,\"releasedSha\":null,"
+                + "\"mergedToMainAt\":null},"
+                + "{\"id\":\"rr-merged\",\"state\":\"FINALIZED\",\"version\":\"2026.1008.10000\","
+                + "\"releasedSha\":\"1111111111111111111111111111111111111111\","
+                + "\"mergedToMainAt\":\"2026-10-08T01:00:00Z\"},"
+                + "{\"id\":\"rr-newest\",\"state\":\"RELEASED\",\"version\":\"" + TAG_VERSION + "\","
+                + "\"releasedSha\":\"" + TAG_SHA + "\",\"mergedToMainAt\":null},"
+                + "{\"id\":\"rr-older\",\"state\":\"OBSOLETE\",\"version\":\"2026.1007.61854\","
+                + "\"releasedSha\":\"2222222222222222222222222222222222222222\","
+                + "\"mergedToMainAt\":null}]}"));
+  }
+
+  /**
+   * The git host's ancestry door — {@code GET /githost/api/repositories/<catalog id>/contains} — for
+   * one (commit, in) pair. Unscripted, the pair is a 404: a failed answer, never a false.
+   */
+  public static void scriptContains(FakePeers peers, String commit, String in, boolean contains) {
+    peers.answer(
+        PeerTarget.GITHOST,
+        containsPath(commit, in),
+        FakePeers.Scripted.ok(
+            "{\"repoId\":\"" + CATALOG_ID + "\",\"commit\":\"" + commit + "\",\"in\":\"" + in
+                + "\",\"contains\":" + contains + "}"));
+  }
+
+  /** The ancestry door's path for one pair, as {@code GitHostReader} spells it. */
+  public static String containsPath(String commit, String in) {
+    return "/githost/api/repositories/" + CATALOG_ID + "/contains?commit=" + commit + "&in=" + in;
+  }
+
   /** qits-projects answers something else — a 5xx, a refusal, an auth failure. */
   public static void scriptReleaseRequestAnswers(FakePeers peers, int status, String body) {
     peers.answer(

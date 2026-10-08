@@ -230,6 +230,31 @@ public final class StoryPeers {
   }
 
   /**
+   * A JSON document for ONE METHOD at {@code path}, which wins over a method-less answer there.
+   *
+   * <p>qits-projects serves a repository's release-request collection on one path for two reads
+   * that mean opposite things: the POST that opens a request and the GET that lists every request
+   * (qits-1081, a bump's base). A path-only answer would hand the listing the POST's wrapped request
+   * — a body with no {@code requests} array — so a story arms the listing by method and leaves the
+   * ask where it was.
+   */
+  public StoryPeers jsonFor(String method, String path, String body) {
+    return answerFor(method, path, 200, "application/json", body);
+  }
+
+  /** {@link #jsonFor} at any status — a 503 for a listing that cannot be read. */
+  public StoryPeers answerFor(
+      String method, String path, int status, String contentType, String body) {
+    Map<String, String> control = new LinkedHashMap<>();
+    control.put("X-Path", encodeHeader(path));
+    control.put("X-Method", method);
+    control.put("X-Status", Integer.toString(status));
+    control.put("X-Content-Type", contentType);
+    control("serve", control, body.getBytes(StandardCharsets.UTF_8));
+    return this;
+  }
+
+  /**
    * Whether this peer answers at all.
    *
    * <p>{@code false} means the connection goes away with no status and no body, which is what an
@@ -330,7 +355,7 @@ public final class StoryPeers {
       exchange.close();
       return;
     }
-    Answer answer = answers.get(decoded);
+    Answer answer = answers.getOrDefault(method + " " + decoded, answers.get(decoded));
     if (answer == null) {
       // An unregistered route is this peer's genuine "no such thing" — which for the git host is the
       // ordinary case: a repository that carries no .config/qits/maintenance.yml is a 404 and then a
@@ -363,8 +388,10 @@ public final class StoryPeers {
                         header.substring("X-Answer-".length()), decodeHeader(values.getFirst()));
                   }
                 });
+        String method = exchange.getRequestHeaders().getFirst("X-Method");
+        String path = decodeHeader(exchange.getRequestHeaders().getFirst("X-Path"));
         answers.put(
-            decodeHeader(exchange.getRequestHeaders().getFirst("X-Path")),
+            method == null || method.isBlank() ? path : method + " " + path,
             new Answer(
                 Integer.parseInt(exchange.getRequestHeaders().getFirst("X-Status")),
                 exchange.getRequestHeaders().getFirst("X-Content-Type"),

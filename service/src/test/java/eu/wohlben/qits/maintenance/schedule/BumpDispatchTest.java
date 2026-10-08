@@ -408,6 +408,92 @@ class BumpDispatchTest {
   }
 
   /**
+   * <b>A CONFLICT WITH AN UNMERGED RELEASE IS REBUILT, ONCE</b> (qits-1081). The branch was cut from
+   * main; a release of the repository was cut afterwards and has not reached main; qits-projects
+   * folds that tag into every request, so the branch conflicts with it in every fold, for good. A
+   * person cannot fix that by pushing, because the branch is what is wrong — so the clock sends the
+   * candidate again, cut from the tag, with the branch's head as {@code replaceHead}.
+   *
+   * <p>And only once for that tag: the rebuild's own row records the base it was cut from, and a
+   * rebuild that did not clear the conflict stays STALLED, saying so, instead of being re-sent
+   * every fifteen seconds.
+   */
+  @Test
+  void aConflictWithAnUnmergedReleaseIsRebuiltOnItOnce() {
+    UUID first = conflictedOverAnUnmergedRelease();
+    Fixture.scriptContains(peers, Fixture.TAG_SHA, Fixture.BUMPED_SHA, false);
+
+    BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
+    assertTrue(decision.stalled().isEmpty(), "a conflict the base can clear is not a stall");
+    assertEquals("DISPATCH", decision.outcome(), decision.summary());
+
+    UUID rebuild = only(dispatcher.tick());
+    queue.awaitIdle(Duration.ofSeconds(30));
+    assertTrue(!rebuild.equals(first));
+    List<String> triggers = peers.bodiesFor(CiClient.TRIGGER_PATH);
+    String payload = triggers.get(triggers.size() - 1);
+    assertTrue(
+        payload.contains("\"baseRef\":\"refs/tags/" + Fixture.TAG_VERSION + "\""),
+        "cut from the newest unmerged release, chosen numerically: " + payload);
+    assertTrue(
+        payload.contains("\"replaceHead\":\"" + Fixture.BUMPED_SHA + "\""),
+        "and the branch that lacks it is rebuilt over its head: " + payload);
+    var row = store.bump(rebuild).orElseThrow();
+    assertEquals("refs/tags/" + Fixture.TAG_VERSION, row.baseRef);
+    assertEquals(Fixture.BUMPED_SHA, row.replaceHead);
+
+    // The rebuild pushed and the request is STILL conflicted: whatever it conflicts with, it is not
+    // the tag. Once per tag means the next tick leaves it stalled.
+    store.bumpFinished(rebuild, BumpStatus.SUCCEEDED, "SUCCESS", "rebuilt", Instant.now());
+    store.bumpReleaseAsked(rebuild, "rr-conflicted", "the release request rr-conflicted is PENDING");
+    BumpDispatcher.Decision after = dispatcher.explain(Instant.now());
+    assertEquals(1, after.stalled().size(), after.summary());
+    assertEquals("CONFLICTED", after.stalled().get(0).state());
+    String reason = after.stalled().get(0).reason();
+    assertTrue(reason.contains("already cut from refs/tags/" + Fixture.TAG_VERSION), reason);
+    assertTrue(dispatcher.tick().isEmpty(), "never a second rebuild on the same tag");
+    assertEquals(2, store.bumps(Fixture.REPOSITORY, 50).size());
+  }
+
+  /**
+   * <b>A branch that already carries the release conflicts with something else</b>, and rebuilding
+   * it on the tag would change nothing — so it stays STALLED exactly as a conflict always did.
+   */
+  @Test
+  void aConflictOnABranchThatCarriesTheReleaseStaysStalled() {
+    conflictedOverAnUnmergedRelease();
+    Fixture.scriptContains(peers, Fixture.TAG_SHA, Fixture.BUMPED_SHA, true);
+
+    BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
+    assertEquals("ALL_STALLED", decision.outcome(), decision.summary());
+    assertEquals("CONFLICTED", decision.stalled().get(0).state());
+    assertTrue(dispatcher.tick().isEmpty());
+    assertEquals(1, store.bumps(Fixture.REPOSITORY, 50).size(), "nothing is re-sent");
+  }
+
+  /**
+   * One bump cut from main, pushed to {@link Fixture#BUMPED_SHA}, whose release request is
+   * CONFLICTED — and then a release of the repository that main does not contain.
+   */
+  private UUID conflictedOverAnUnmergedRelease() {
+    Fixture.scriptCiQueueEmpty(peers);
+    dispatcher.open(Instant.now());
+    UUID id = only(dispatcher.tick());
+    queue.awaitIdle(Duration.ofSeconds(30));
+    assertEquals("main", store.bump(id).orElseThrow().baseRef, "no release was unmerged yet");
+    assertEquals(null, store.bump(id).orElseThrow().replaceHead);
+
+    store.bumpFinished(id, BumpStatus.SUCCEEDED, "SUCCESS", "pushed", Instant.now());
+    store.bumpReleaseAsked(id, "rr-conflicted", "the release request rr-conflicted is PENDING");
+    Fixture.scriptReleaseRequestState(
+        peers, "rr-conflicted", "CONFLICTED", "Dockerfile: ARG BASE conflicts with 2026.1007.171656");
+    Fixture.scriptBranchAt(peers, Fixture.BUMPED_SHA);
+    Fixture.scriptUnmergedRelease(peers);
+    Fixture.scriptContains(peers, Fixture.TAG_SHA, Fixture.HEAD_SHA, false);
+    return id;
+  }
+
+  /**
    * <b>WITHDRAWN COUNTS AS NO REQUEST AT ALL</b> (owner decision 2026-10-04, qits-886). It used to
    * stall like a rejection, but qits-projects re-arms nothing it withdrew, and nothing here could
    * put the request id back to null — so the sweep never re-asked, and qits-maintenance-frontend sat
