@@ -194,6 +194,9 @@ import org.jboss.logging.Logger;
  *       going to be cut, and building against the pin that exists is the honest answer), and it
  *       stops keeping the window open (a night must not stay open for work that cannot be done).
  *       It is reported, with qits-projects' own sentence, on {@code GET /bumps/window}.
+ *   <li><b>CONFLICTED, with an unmerged release the branch does not carry</b> — <b>REBUILT</b>,
+ *       once per tag: dispatched again as an ordinary bump, cut from that tag with the branch's
+ *       head as {@code replaceHead}. See the next section.
  *   <li><b>Unreadable</b> — HELD. A peer that could not be asked is never evidence, which is the
  *       same reading the CI gate takes of an unreadable queue.
  * </ul>
@@ -211,6 +214,21 @@ import org.jboss.logging.Logger;
  * re-dispatched either — it needs no new bump, only a new request for the branch it already has,
  * and that is the release sweep's job. Pressing Bump by hand goes through {@link
  * BumpService#request} and is not gated here at all.
+ *
+ * <h2>The one stall the clock does act on: a conflict with an unmerged release — qits-1081</h2>
+ *
+ * <p>qits-projects folds every released-but-unmerged tag of a repository into each request, so a
+ * branch cut from main that edits the pin line such a tag already moved (a Dockerfile {@code ARG
+ * BASE=…:<ver>}) is CONFLICTED in every fold until the tag merges — and that is not something a
+ * person or a re-arming push fixes, because the branch is the thing that is wrong. So a CONFLICTED
+ * candidate whose repository has a newest unmerged release ({@link BumpBase}: from qits-projects'
+ * listing, not on main by the git host's ancestry door) that its {@code maintenance/<group>} does
+ * not contain is FREE rather than stalled, and goes out as an ordinary bump that rebuilds the
+ * branch on that tag. <b>Once per (repository, group, tag)</b>: the newest bump row's {@code
+ * base_ref} records the tag a rebuild was cut from, and a candidate whose newest row already used
+ * it stays STALLED, saying so — a conflict the rebuild did not clear is not one the next tick will.
+ * A branch that already carries the tag, and any answer that could not be read, is the ordinary
+ * stall.
  */
 @ApplicationScoped
 public class BumpDispatcher {
@@ -226,6 +244,9 @@ public class BumpDispatcher {
   @Inject BumpService bumps;
 
   @Inject ReleaseRequestClient releases;
+
+  /** The rebuild decision for a CONFLICTED release (qits-1081). */
+  @Inject BumpBase bases;
 
   @Inject ArtifactGraph artifacts;
 
@@ -944,14 +965,54 @@ public class BumpDispatcher {
       // re-dispatching would only come back NOTHING_TO_DO — the same hold as an ask not yet made.
       return Hold.HELD;
     }
-    return new Hold(
-        false,
-        new Stalled(
-            row.name,
-            group,
-            requestId,
-            state.state(),
-            state.detail() == null ? "" : state.detail()));
+    String detail = state.detail() == null ? "" : state.detail();
+    if (CONFLICTED.equals(state.state())) {
+      String notRebuilt = rebuildOnTheUnmergedTag(row, group, bump);
+      if (notRebuilt == null) {
+        // FREE, not held: the candidate goes out as an ordinary bump, and BumpService's dispatch
+        // makes the same base decision again and sends the branch head as `replaceHead`.
+        return Hold.FREE;
+      }
+      if (!notRebuilt.isEmpty()) {
+        detail = detail.isEmpty() ? notRebuilt : detail + " (" + notRebuilt + ")";
+      }
+    }
+    return new Hold(false, new Stalled(row.name, group, requestId, state.state(), detail));
+  }
+
+  private static final String CONFLICTED = "CONFLICTED";
+
+  /**
+   * Whether a CONFLICTED candidate is dispatched again as a REBUILD on its repository's newest
+   * unmerged release (qits-1081), and if not, why.
+   *
+   * <p>Rebuilt when there is such a tag, main does not contain it, the group's branch exists without
+   * it, and the newest bump row was not already cut from that same tag. The last is the
+   * once-per-(repository, group, tag) guard: a rebuild that did not clear the conflict — the tag was
+   * never what it conflicted with — must not be re-sent every tick, and the newest row's {@code
+   * base_ref} is the record that it was tried. A NEWER tag is a new attempt.
+   *
+   * @return null to rebuild; otherwise the sentence the stall carries beside qits-projects' own, or
+   *     an empty string when there is nothing to add (no unmerged tag, or one main or the branch
+   *     already carries — the ordinary stall)
+   */
+  private String rebuildOnTheUnmergedTag(MtRepository row, String group, MtBump bump) {
+    ReleaseRequestClient.Unmerged tag = bases.newestUnmerged(row);
+    if (tag == null) {
+      return "";
+    }
+    String tagRef = BumpBase.TAG_PREFIX + tag.version();
+    if (tagRef.equals(bump.baseRef)) {
+      return "its newest bump was already cut from " + tagRef;
+    }
+    BumpBase.Choice choice = bases.choose(row, group, bump.branch, tag);
+    if (!choice.rebuild()) {
+      return "";
+    }
+    LOG.debugf(
+        "The release request of %s/%s is CONFLICTED and %s does not carry %s; it is rebuilt on it",
+        row.name, group, bump.branch, tagRef);
+    return null;
   }
 
   /**
@@ -1021,7 +1082,7 @@ public class BumpDispatcher {
   private static Set<String> keys(List<Change> changes) {
     Set<String> keys = new LinkedHashSet<>();
     for (Change change : changes) {
-      keys.add(change.ecosystem() + " " + change.name() + " " + change.from() + " " + change.to());
+      keys.add(change.ecosystem() + "\0" + change.name() + "\0" + change.from() + "\0" + change.to());
     }
     return keys;
   }

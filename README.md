@@ -367,6 +367,19 @@ the image name, and gitlink restates the path. It is sent anyway. **A gitlink ch
 `to` is a quiet no-op. Every value is validated on this side against what the step enforces, so a
 bad payload is a sentence on the bump row rather than a step log somebody has to read.
 
+**`baseRef` is main unless a release has not reached it (qits-1081).** qits-projects folds every
+released-but-unmerged tag into each release request, so a branch cut from main that edits a pin line
+such a tag already moved conflicts in every fold. At dispatch `BumpBase` reads `GET
+…/release-requests?state=all`, takes the newest request with a `releasedSha` and no `mergedToMainAt`
+(calver compared numerically per segment), and asks qits-githost's `GET
+/githost/api/repositories/<catalog id>/contains?commit=<releasedSha>&in=<main head>` — the door is
+storage-id addressed, and the storage id is the catalog id. Not contained: `baseRef` is
+`refs/tags/<version>`, and when `maintenance/<group>` exists without the tag (same door, `in=<branch
+head>`) and is not STALE, its head is sent as `replaceHead`; the step rebuilds the branch on the tag
+under `--force-with-lease` on that head. Anything unreadable is `main` with a WARN — never a failed
+bump. Both are recorded on the row (`base_ref`, `replace_head`, V19) and answered on `GET /bumps`. The
+dispatcher rebuilds a CONFLICTED release this way too, once per tag; see `BumpDispatcher`.
+
 **Three answers from qits-ci and they mean different things:**
 
 | answer | outcome |
