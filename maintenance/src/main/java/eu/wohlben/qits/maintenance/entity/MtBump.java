@@ -223,4 +223,21 @@ public class MtBump extends PanacheEntityBase {
    */
   @Column(name = "replace_head", length = 64)
   public String replaceHead;
+
+  /**
+   * Why a FAILED row's run went red (qits-1116): the failing step's index, the image it ran, its
+   * exit code and a few lines of its log. All four null on every other ending, and on a red run whose
+   * steps named no failure.
+   */
+  @Column(name = "failed_step_index")
+  public Integer failedStepIndex;
+
+  @Column(name = "failed_step_image", columnDefinition = "text")
+  public String failedStepImage;
+
+  @Column(name = "failed_step_exit")
+  public Integer failedStepExit;
+
+  @Column(name = "failure_excerpt", columnDefinition = "text")
+  public String failureExcerpt;
 }

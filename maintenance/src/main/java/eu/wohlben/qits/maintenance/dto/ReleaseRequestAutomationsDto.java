@@ -40,6 +40,8 @@ public record ReleaseRequestAutomationsDto(
    * @param branch the branch the deciding row writes
    * @param resultSha the commit a COMMITTED outcome left on {@code branch}; null in every other state
    * @param updatedAt when the deciding row last changed
+   * @param failure why the deciding row's run went red (qits-1116); null unless it is FAILED with a
+   *     failing step recorded
    */
   public record AutomationDto(
       String kind,
@@ -50,5 +52,6 @@ public record ReleaseRequestAutomationsDto(
       List<String> runIds,
       String branch,
       String resultSha,
-      Instant updatedAt) {}
+      Instant updatedAt,
+      FailureDto failure) {}
 }

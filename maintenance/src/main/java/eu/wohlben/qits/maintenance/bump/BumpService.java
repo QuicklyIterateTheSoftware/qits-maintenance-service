@@ -319,6 +319,8 @@ public class BumpService {
     // from there. Every other run is the head of a chain whose LAST run holds the verdict.
     boolean allPassed = true;
     String lastStatus = null;
+    // Why it went red (qits-1116): of several runs, the first red one that says.
+    CiClient.Failure failure = null;
     for (String runId : runIds) {
       CiClient.RunState state = states.get(runId);
       if (state.retryOfRunId() != null
@@ -332,8 +334,11 @@ public class BumpService {
       }
       lastStatus = verdict.status();
       allPassed = allPassed && verdict.passed();
+      if (failure == null && !verdict.passed()) {
+        failure = verdict.failure();
+      }
     }
-    finish(bump, allPassed, lastStatus);
+    finish(bump, allPassed, lastStatus, allPassed ? null : failure);
   }
 
   /**
@@ -593,9 +598,10 @@ public class BumpService {
    * <p>Which of the two follows is the whole of what the mode is for; see the class javadoc and
    * {@link BumpMode}.
    */
-  private void finish(MtBump bump, boolean passed, String ciRunStatus) {
+  private void finish(
+      MtBump bump, boolean passed, String ciRunStatus, CiClient.Failure failure) {
     if (BumpMode.of(bump.mode) == BumpMode.AUTOMATION) {
-      automations.finish(bump, passed, ciRunStatus);
+      automations.finish(bump, passed, ciRunStatus, failure);
       return;
     }
     finishGroup(bump, passed, ciRunStatus);

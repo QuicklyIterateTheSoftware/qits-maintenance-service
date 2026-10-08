@@ -5,6 +5,7 @@ import eu.wohlben.qits.maintenance.bump.BumpService;
 import eu.wohlben.qits.maintenance.dto.BumpDto;
 import eu.wohlben.qits.maintenance.dto.BumpWindowDto;
 import eu.wohlben.qits.maintenance.dto.DependencyDto;
+import eu.wohlben.qits.maintenance.dto.FailureDto;
 import eu.wohlben.qits.maintenance.dto.GroupDto;
 import eu.wohlben.qits.maintenance.dto.PinDto;
 import eu.wohlben.qits.maintenance.dto.PinSourceDto;
@@ -461,6 +462,8 @@ public class Inventory {
         row.releaseStateAt,
         row.baseRef,
         row.replaceHead,
-        BumpService.changes(row));
+        BumpService.changes(row),
+        FailureDto.of(
+            row.failedStepIndex, row.failedStepImage, row.failedStepExit, row.failureExcerpt));
   }
 }

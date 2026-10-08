@@ -224,6 +224,30 @@ class AutomationSourceBranchEndingTest {
         "and no branch row was written — STALE is a state of a row this ending never creates");
   }
 
+  /** A red run onto a source branch names its failing step too (qits-1116). */
+  @Test
+  void aRedSourceBranchRunSaysWhichStepFailed() {
+    UUID id = trigger(WORKSPACE_BRANCH, gitlink());
+    peers.answer(
+        PeerTarget.CI,
+        "/ci/api/runs/" + RUN,
+        FakePeers.Scripted.ok(
+            "{\"id\":\"" + RUN + "\",\"status\":\"FAILED\",\"steps\":["
+                + "{\"stepIndex\":0,\"status\":\"SUCCESS\",\"exitCode\":0,\"output\":\"ok\"},"
+                + "{\"stepIndex\":1,\"image\":\"node:22\",\"status\":\"FAILED\",\"exitCode\":2,"
+                + "\"output\":\"npm error: code E404\\n\"}]}"));
+    bumps.poll(id);
+    queue.awaitIdle(Duration.ofSeconds(30));
+    MtBump done = store.bump(id).orElseThrow();
+
+    assertEquals(BumpStatus.FAILED.name(), done.status);
+    assertEquals("the ci run ended FAILED at step 1 (exit 2): npm error: code E404", done.message);
+    assertEquals(1, done.failedStepIndex);
+    assertEquals("node:22", done.failedStepImage);
+    assertEquals(2, done.failedStepExit);
+    assertNull(done.resultSha);
+  }
+
   /**
    * <b>A TIMED-OUT RUN IS TERMINAL AND ENDS THE BUMP FAILED</b> (qits-760 follow-up). Before this fix
    * {@code CiClient.RunState.terminal()} did not list {@code TIMED_OUT}, so the poll kept reading the

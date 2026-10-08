@@ -1,0 +1,121 @@
+qits-ci: fetched qits-platform-access-cli 2026.1008.130452
+[INFO] Scanning for projects...
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Build Order:
+[INFO] 
+[INFO] qits-artifacts                                                     [pom]
+[INFO] qits-artifacts :: artifacts                                        [jar]
+[INFO] qits-artifacts :: gc                                               [jar]
+[INFO] qits-artifacts :: service                                      [quarkus]
+[INFO] 
+[INFO] -------------------< eu.wohlben.qits:qits-artifacts >-------------------
+[INFO] Building qits-artifacts 2026.1008.30440                            [1/4]
+[INFO]   from pom.xml
+[INFO] --------------------------------[ pom ]---------------------------------
+[INFO] 
+[INFO] --- dependency:3.7.0:build-classpath (default-cli) @ qits-artifacts ---
+[INFO] No dependencies found.
+[INFO] Wrote classpath file '/workspace/target/qits-classpath.txt'.
+[INFO] 
+[INFO] --------------< eu.wohlben.qits:qits-artifacts-artifacts >--------------
+[INFO] Building qits-artifacts :: artifacts 2026.1008.30440               [2/4]
+[INFO]   from artifacts/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[WARNING] The artifact io.quarkus:quarkus-junit5:jar:3.34.6 has been relocated to io.quarkus:quarkus-junit:jar:3.34.6: Update the artifactId in your project build file. Refer to https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.31 for more information.
+[INFO] 
+[INFO] --- resources:3.3.1:resources (default-resources) @ qits-artifacts-artifacts ---
+[INFO] Copying 5 resources from src/main/resources to target/classes
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ qits-artifacts-artifacts ---
+[INFO] Compiling 43 source files with javac [debug parameters release 25] to target/classes
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by lombok.permit.Permit
+WARNING: Please consider reporting this to the maintainers of class lombok.permit.Permit
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+[INFO] 
+[INFO] --- jandex:3.4.0:jandex (make-index) @ qits-artifacts-artifacts ---
+[INFO] Saving Jandex index: /workspace/artifacts/target/classes/META-INF/jandex.idx
+[INFO] 
+[INFO] --- resources:3.3.1:testResources (default-testResources) @ qits-artifacts-artifacts ---
+[INFO] Not copying test resources
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ qits-artifacts-artifacts ---
+[INFO] Not compiling test sources
+[INFO] 
+[INFO] --- dependency:3.7.0:build-classpath (default-cli) @ qits-artifacts-artifacts ---
+[INFO] Wrote classpath file '/workspace/artifacts/target/qits-classpath.txt'.
+[INFO] 
+[INFO] -----------------< eu.wohlben.qits:qits-artifacts-gc >------------------
+[INFO] Building qits-artifacts :: gc 2026.1008.30440                      [3/4]
+[INFO]   from gc/pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[WARNING] The artifact io.quarkus:quarkus-junit5:jar:3.34.6 has been relocated to io.quarkus:quarkus-junit:jar:3.34.6: Update the artifactId in your project build file. Refer to https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.31 for more information.
+[INFO] 
+[INFO] --- resources:3.3.1:resources (default-resources) @ qits-artifacts-gc ---
+[INFO] Copying 1 resource from src/main/resources to target/classes
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ qits-artifacts-gc ---
+[INFO] Compiling 60 source files with javac [debug parameters release 25] to target/classes
+[INFO] /workspace/gc/src/main/java/eu/wohlben/qits/artifacts/gc/NpmKeepClosure.java: /workspace/gc/src/main/java/eu/wohlben/qits/artifacts/gc/NpmKeepClosure.java uses or overrides a deprecated API.
+[INFO] /workspace/gc/src/main/java/eu/wohlben/qits/artifacts/gc/NpmKeepClosure.java: Recompile with -Xlint:deprecation for details.
+[INFO] 
+[INFO] --- jandex:3.4.0:jandex (make-index) @ qits-artifacts-gc ---
+[INFO] Saving Jandex index: /workspace/gc/target/classes/META-INF/jandex.idx
+[INFO] 
+[INFO] --- resources:3.3.1:testResources (default-testResources) @ qits-artifacts-gc ---
+[INFO] Not copying test resources
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ qits-artifacts-gc ---
+[INFO] Not compiling test sources
+[INFO] 
+[INFO] --- dependency:3.7.0:build-classpath (default-cli) @ qits-artifacts-gc ---
+[INFO] Wrote classpath file '/workspace/gc/target/qits-classpath.txt'.
+[INFO] 
+[INFO] ---------------< eu.wohlben.qits:qits-artifacts-service >---------------
+[INFO] Building qits-artifacts :: service 2026.1008.30440                 [4/4]
+[INFO]   from service/pom.xml
+[INFO] ------------------------------[ quarkus ]-------------------------------
+[WARNING] The artifact io.quarkus:quarkus-junit5:jar:3.34.6 has been relocated to io.quarkus:quarkus-junit:jar:3.34.6: Update the artifactId in your project build file. Refer to https://github.com/quarkusio/quarkus/wiki/Migration-Guide-3.31 for more information.
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Summary for qits-artifacts 2026.1008.30440:
+[INFO] 
+[INFO] qits-artifacts ..................................... SUCCESS [  9.192 s]
+[INFO] qits-artifacts :: artifacts ........................ SUCCESS [ 28.495 s]
+[INFO] qits-artifacts :: gc ............................... SUCCESS [  1.955 s]
+[INFO] qits-artifacts :: service .......................... FAILURE [ 26.171 s]
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD FAILURE
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  01:22 min
+[INFO] Finished at: 2026-10-08T16:08:58Z
+[INFO] ------------------------------------------------------------------------
+[ERROR] Failed to execute goal on project qits-artifacts-service: Could not resolve dependencies for project eu.wohlben.qits:qits-artifacts-service:quarkus:2026.1008.30440
+[ERROR] dependency: com.microsoft.playwright:driver-bundle:jar:1.61.0 (test)
+[ERROR] 	Could not transfer artifact com.microsoft.playwright:driver-bundle:jar:1.61.0 from/to qits-central-proxy (https://mirror.qits.wohlben.eu/mirror/maven/central): Premature end of Content-Length delimited message body (expected: 201,257,970; received: 180,199,212)
+[ERROR] 	Could not find artifact com.microsoft.playwright:driver-bundle:jar:1.61.0 in qits-maven-network (https://registry.qits.wohlben.eu/artifacts/maven/maven)
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/DependencyResolutionException
+[ERROR] 
+[ERROR] After correcting the problems, you can resume the build with the command
+[ERROR]   mvn <args> -rf :qits-artifacts-service
+
+--- the step container's own log (from runner qits-ci) ---
+[container exited 0]
+2026-10-08 16:07:29,624 INFO  [io.quarkus] (main) ci-daemon 2026.1003.84955 native (powered by Quarkus 3.34.6) started in 0.022s. 
+2026-10-08 16:07:29,625 INFO  [io.quarkus] (main) Profile prod activated. 
+2026-10-08 16:07:29,625 INFO  [io.quarkus] (main) Installed features: [cdi, smallrye-context-propagation, vertx]
+2026-10-08 16:07:29,626 INFO  [eu.wohlben.qits.cidaemon.DaemonMain] (main) ci-daemon presents the run's token (subject tok-ci-run-REDACTED).
+2026-10-08 16:07:29,701 INFO  [eu.wohlben.qits.cidaemon.DaemonMain] (vert.x-eventloop-thread-0) ci-daemon registered as 92f2428f-8021-40aa-a2c8-708527b7ac37; awaiting Ack.
+2026-10-08 16:08:58,275 WARN  [eu.wohlben.qits.cidaemon.ControlSocket] (vert.x-eventloop-thread-0) ci-daemon control socket closed; re-dialling for up to 90000ms
+2026-10-08 16:08:58,702 INFO  [eu.wohlben.qits.cidaemon.DaemonMain] (ci-daemon-worker) ci-daemon holding its StepFinished until the control socket is back
+2026-10-08 16:08:58,843 INFO  [eu.wohlben.qits.cidaemon.ControlSocket] (vert.x-eventloop-thread-0) ci-daemon control socket re-established (attempt 1)
+2026-10-08 16:08:58,843 INFO  [eu.wohlben.qits.cidaemon.DaemonMain] (vert.x-eventloop-thread-0) ci-daemon re-registering as 92f2428f-8021-40aa-a2c8-708527b7ac37; awaiting Ack.
+2026-10-08 16:08:58,857 INFO  [eu.wohlben.qits.cidaemon.DaemonMain] (vert.x-eventloop-thread-0) ci-daemon replaying 27 chunk(s) held through the outage
+2026-10-08 16:08:58,858 INFO  [eu.wohlben.qits.cidaemon.DaemonMain] (vert.x-eventloop-thread-0) ci-daemon exiting 0
+2026-10-08 16:08:58,859 INFO  [eu.wohlben.qits.cidaemon.DaemonMain] (vert.x-eventloop-thread-0) ci-daemon ignored a second RunStep (cd48c630-5d47-47ba-bb52-f955fa4d8a4d)
+2026-10-08 16:08:58,876 INFO  [io.quarkus] (main) ci-daemon stopped in 0.017s

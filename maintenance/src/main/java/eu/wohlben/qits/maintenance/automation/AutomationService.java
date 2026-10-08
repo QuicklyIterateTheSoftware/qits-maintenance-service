@@ -6,6 +6,7 @@ import eu.wohlben.qits.maintenance.bump.BumpService;
 import eu.wohlben.qits.maintenance.bump.CiClient;
 import eu.wohlben.qits.maintenance.bump.ReleaseRequestClient;
 import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
+import eu.wohlben.qits.maintenance.dto.FailureDto;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto.AutomationDto;
 import eu.wohlben.qits.maintenance.entity.MtBump;
@@ -669,8 +670,13 @@ public class AutomationService {
    * The verdict, once every run is terminal: what the TARGET says a green run means — against the
    * run's own fold, whether or not the request has moved on (see the class javadoc) — and for a red
    * one SUPERSEDED when the fold moved on, FAILED when it did not.
+   *
+   * <p>A red run says why (qits-1116): the failing step, its exit code and the first line of its
+   * excerpt go into the sentence, and the whole failure onto the row's own columns, where {@code
+   * GET /bumps/{id}} and the automations answer read it. A null failure — a run whose steps named
+   * none — keeps the sentence it always had.
    */
-  public void finish(MtBump row, boolean passed, String ciRunStatus) {
+  public void finish(MtBump row, boolean passed, String ciRunStatus, CiClient.Failure failure) {
     ReleaseRequestAutomation kind = kind(row.automationKind).orElse(null);
     Target target = target(row, kind);
     Optional<MtRepository> repository = store.repository(row.repository);
@@ -688,13 +694,11 @@ public class AutomationService {
           now);
       LOG.infof("The %s automation %s was superseded by fold %s", row.automationKind, row.id, moved);
     } else if (!passed) {
-      store.bumpFinished(
+      store.bumpFailed(
           row.id,
-          BumpStatus.FAILED,
           ciRunStatus,
-          target == Target.OWN_BRANCH
-              ? "the " + label.toLowerCase() + " run ended " + ciRunStatus + "; its step log says why"
-              : "the ci run ended " + ciRunStatus,
+          failedMessage(target == Target.OWN_BRANCH ? label : null, ciRunStatus, failure),
+          failure,
           now);
       LOG.warnf("The %s automation %s of %s ended %s", row.automationKind, row.id, row.repository,
           ciRunStatus);
@@ -705,6 +709,33 @@ public class AutomationService {
     }
     // An ending frees a slot, and the newest waiting fold of this request may be behind it.
     queue.submit("dispatch the waiting automations", this::dispatchWaiting);
+  }
+
+  /**
+   * The sentence of a red run: {@code the <label> run ended FAILED at step 0 (exit 1): <line>} on
+   * an own-branch kind, {@code the ci run ended FAILED at step 0 (exit 1): <line>} on a source-branch
+   * one. With no failure it is exactly the sentence before qits-1116.
+   *
+   * @param label the kind's label on an own-branch kind, null on a source-branch one
+   */
+  static String failedMessage(String label, String ciRunStatus, CiClient.Failure failure) {
+    String run = label == null ? "the ci run" : "the " + label.toLowerCase() + " run";
+    if (failure == null) {
+      return label == null
+          ? run + " ended " + ciRunStatus
+          : run + " ended " + ciRunStatus + "; its step log says why";
+    }
+    StringBuilder message =
+        new StringBuilder(run).append(" ended ").append(ciRunStatus)
+            .append(" at step ").append(failure.stepIndex());
+    if (failure.exitCode() != null) {
+      message.append(" (exit ").append(failure.exitCode()).append(')');
+    }
+    String line = failure.firstLine();
+    if (line != null) {
+      message.append(": ").append(line);
+    }
+    return message.toString();
   }
 
   /**
@@ -881,7 +912,7 @@ public class AutomationService {
         entries.add(
             new AutomationDto(
                 kind, label, AutomationState.UNKNOWN.name(), unknown.get(kind), null, List.of(),
-                null, null, Instant.now()));
+                null, null, Instant.now(), null));
       } else {
         entries.add(aggregate(kind, label, rows));
       }
@@ -929,7 +960,15 @@ public class AutomationService {
         List.copyOf(runIds),
         deciding.branch,
         state == AutomationState.COMMITTED ? deciding.resultSha : null,
-        updated);
+        updated,
+        // Why it is red, from the row that makes it red — and only then (qits-1116).
+        state == AutomationState.FAILED && BumpStatus.FAILED.name().equals(deciding.status)
+            ? FailureDto.of(
+                deciding.failedStepIndex,
+                deciding.failedStepImage,
+                deciding.failedStepExit,
+                deciding.failureExcerpt)
+            : null);
   }
 
   /** The state several rows of one kind and fold read as together. */

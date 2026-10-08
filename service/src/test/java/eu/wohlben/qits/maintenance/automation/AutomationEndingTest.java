@@ -6,17 +6,23 @@ import static eu.wohlben.qits.maintenance.automation.AutomationFixture.FOLD_B;
 import static eu.wohlben.qits.maintenance.automation.AutomationFixture.PUSHED;
 import static eu.wohlben.qits.maintenance.automation.AutomationFixture.REQUEST;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.maintenance.api.Fixture;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
 import eu.wohlben.qits.maintenance.bump.BumpService;
+import eu.wohlben.qits.maintenance.control.Inventory;
+import eu.wohlben.qits.maintenance.dto.FailureDto;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto.AutomationDto;
 import eu.wohlben.qits.maintenance.entity.MtBump;
 import eu.wohlben.qits.maintenance.model.BumpStatus;
 import eu.wohlben.qits.maintenance.model.BumpTrigger;
 import eu.wohlben.qits.maintenance.model.ScanScope;
 import eu.wohlben.qits.maintenance.peer.FakePeers;
+import eu.wohlben.qits.maintenance.peer.PeerTarget;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore.AutomationOpening;
 import eu.wohlben.qits.maintenance.scan.ScanService;
@@ -56,6 +62,8 @@ class AutomationEndingTest {
   @Inject InventoryReset inventory;
 
   @Inject WorkQueue queue;
+
+  @Inject Inventory inventoryApi;
 
   @BeforeEach
   void scriptThePeers() {
@@ -164,6 +172,82 @@ class AutomationEndingTest {
     assertTrue(done.message.contains("ended FAILED"), done.message);
     assertEquals(AutomationState.FAILED.name(), entry().state());
     assertTrue(peers.bodiesFor(AutomationFixture.joinPath(REQUEST)).isEmpty());
+  }
+
+  /** The run ends with a body carrying steps, the way qits-ci's {@code GET /ci/api/runs/{id}} does. */
+  private MtBump endWithSteps(UUID id, String ciStatus, String steps) {
+    peers.answer(
+        PeerTarget.CI,
+        "/ci/api/runs/" + RUN,
+        FakePeers.Scripted.ok(
+            "{\"id\":\"" + RUN + "\",\"status\":\"" + ciStatus + "\",\"steps\":" + steps + "}"));
+    bumps.poll(id);
+    queue.awaitIdle(Duration.ofSeconds(30));
+    return store.bump(id).orElseThrow();
+  }
+
+  private static final String FAILED_STEPS =
+      "[{\"stepIndex\":0,\"image\":\"maven-base:latest\",\"status\":\"FAILED\",\"exitCode\":1,"
+          + "\"output\":\"[INFO] building\\n[ERROR] Failed to execute goal: boom\\n"
+          + "[ERROR] -> [Help 1]\\n[ERROR] second reason\\n\"}]";
+
+  /** A red run says which step failed it and why, on the row, in the sentence and on the wire. */
+  @Test
+  void aRedRunSaysWhichStepFailedAndWhy() {
+    UUID id = running();
+    MtBump done = endWithSteps(id, "FAILED", FAILED_STEPS);
+
+    assertEquals(BumpStatus.FAILED.name(), done.status);
+    assertEquals(0, done.failedStepIndex);
+    assertEquals("maven-base:latest", done.failedStepImage);
+    assertEquals(1, done.failedStepExit);
+    assertEquals(
+        "[ERROR] Failed to execute goal: boom\n[ERROR] second reason", done.failureExcerpt);
+    assertTrue(
+        done.message.endsWith(
+            " run ended FAILED at step 0 (exit 1): [ERROR] Failed to execute goal: boom"),
+        done.message);
+    assertTrue(done.message.startsWith("the "), done.message);
+    assertFalse(done.message.contains("its step log says why"), done.message);
+
+    AutomationDto entry = entry();
+    assertEquals(AutomationState.FAILED.name(), entry.state());
+    assertNotNull(entry.failure(), "the entry exposes the failure");
+    assertEquals(0, entry.failure().stepIndex());
+    assertEquals("maven-base:latest", entry.failure().image());
+    assertEquals(1, entry.failure().exitCode());
+    assertEquals(done.failureExcerpt, entry.failure().excerpt());
+
+    FailureDto onTheBump = inventoryApi.bump(id).failure();
+    assertEquals(entry.failure(), onTheBump, "and so does the bump");
+  }
+
+  /** A red run whose steps name no failure keeps the sentence it always had. */
+  @Test
+  void aRedRunWithNoStepsKeepsTheOldSentence() {
+    MtBump done = end(running(), "FAILED");
+
+    assertEquals(BumpStatus.FAILED.name(), done.status);
+    assertTrue(done.message.endsWith(" run ended FAILED; its step log says why"), done.message);
+    assertNull(done.failedStepIndex);
+    assertNull(done.failureExcerpt);
+    assertNull(entry().failure());
+  }
+
+  /** A green run carries no failure, whatever its steps printed. */
+  @Test
+  void aGreenRunCarriesNoFailure() {
+    MtBump done =
+        endWithSteps(
+            running(),
+            "SUCCESS",
+            "[{\"stepIndex\":0,\"status\":\"SUCCESS\",\"exitCode\":0,"
+                + "\"output\":\"[ERROR] a warning dressed up\"}]");
+
+    assertEquals(BumpStatus.NOTHING_TO_DO.name(), done.status, done.message);
+    assertNull(done.failedStepIndex);
+    assertNull(done.failureExcerpt);
+    assertNull(entry().failure());
   }
 
   /** Red after the request re-folded: a verdict about a fold nobody will release, discarded. */
