@@ -62,7 +62,7 @@
              chase a release.
              First carries /work (qits-965/qits-974) at 2026.1007.25926; 2026.1007.35430 only adds
              getWork recordings. -->
-        <qits.projects-golden-masters.version>2026.1008.23609</qits.projects-golden-masters.version>
+        <qits.projects-golden-masters.version>2026.1008.124939</qits.projects-golden-masters.version>
         <!-- THE PLATFORM'S OWN MAVEN REPOSITORY, and this repo's artifacts from it: qits-db-core
              (PatientPgDriver, which the datasource opens every connection through, and
              DbRetry.inNewTx, which every write path runs in), qits-auth-core (the forward-auth
