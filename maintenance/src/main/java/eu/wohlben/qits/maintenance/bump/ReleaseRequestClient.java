@@ -270,13 +270,27 @@ public class ReleaseRequestClient {
    * @param branches the request's named BRANCH sources, in the order the answer lists them — what an
    *     automation that writes onto the request's own branches (estate pins) reads when a re-run
    *     carries no list of its own. Empty when unread
+   * @param unknown qits-projects answered 404: it holds no such request. Unreadable like any other
+   *     failure, and kept apart only because the automation-branch sweep may act on it — every other
+   *     reader treats it as the peer that could not be asked, which is what it was before
    */
   public record ReleaseState(
-      String state, String detail, String error, String mergedSha, List<String> branches) {
+      String state,
+      String detail,
+      String error,
+      String mergedSha,
+      List<String> branches,
+      boolean unknown) {
 
     /** The three-field answer every reader before the automations needed. */
     public ReleaseState(String state, String detail, String error) {
       this(state, detail, error, null, List.of());
+    }
+
+    /** Every answer that is not a 404. */
+    public ReleaseState(
+        String state, String detail, String error, String mergedSha, List<String> branches) {
+      this(state, detail, error, mergedSha, branches, false);
     }
 
     public ReleaseState {
@@ -364,7 +378,12 @@ public class ReleaseRequestClient {
       // A 404 is not "stalled" either. A request qits-projects no longer holds is a fact this
       // service cannot act on, and guessing at it would re-dispatch a branch that may be released.
       return new ReleaseState(
-          null, null, "the release request " + requestId + " could not be read: " + answer.failure());
+          null,
+          null,
+          "the release request " + requestId + " could not be read: " + answer.failure(),
+          null,
+          List.of(),
+          answer.notFound());
     }
     JsonNode request = answer.json() == null ? null : answer.json().get("request");
     String state = text(request, "state");
