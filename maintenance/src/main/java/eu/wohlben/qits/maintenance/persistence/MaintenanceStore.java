@@ -1578,6 +1578,25 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
                         .firstResult()));
   }
 
+  /**
+   * Every automation row that wrote one branch of one repository, newest first — what the
+   * automation-branch sweep reads to see whether the branch is still being worked on and how long
+   * ago this service last touched it.
+   */
+  @ActivateRequestContext
+  public List<MtBump> automationsOnBranch(String repository, String branch) {
+    return DbRetry.inNewTx(
+        "read the automations of one branch",
+        () ->
+            MtBump.<MtBump>find(
+                    "mode = ?1 and repository = ?2 and branch = ?3",
+                    Sort.by("startedAt").descending(),
+                    BumpMode.AUTOMATION.name(),
+                    repository,
+                    branch)
+                .list());
+  }
+
   /** Every automation row still waiting for a run, oldest first — what an ending dispatches next. */
   @ActivateRequestContext
   public List<MtBump> waitingAutomations() {

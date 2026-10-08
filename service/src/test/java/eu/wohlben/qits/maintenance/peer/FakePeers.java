@@ -81,6 +81,29 @@ public class FakePeers extends PeerClient {
     script.put(key(target, path), scripted);
   }
 
+  /**
+   * Scripts one answer to a DELETE. Keyed apart from a GET of the same path, because the git host
+   * serves both verbs on {@code …/branches/<name>} and they mean different things.
+   */
+  public void answerDelete(PeerTarget target, String path, Scripted scripted) {
+    script.put(key(target, "DELETE " + path), scripted);
+  }
+
+  /** Whether a DELETE went to that target and path. */
+  public boolean deleted(PeerTarget target, String path) {
+    String url = url(target, path);
+    return calls.stream()
+        .anyMatch(call -> "DELETE".equals(call.method()) && call.url().equals(url));
+  }
+
+  /**
+   * How many DELETEs were made. A method rather than a read of {@link #calls}: a test holds the
+   * client proxy, whose own copy of that field is always empty.
+   */
+  public long deleteCount() {
+    return calls.stream().filter(call -> "DELETE".equals(call.method())).count();
+  }
+
   /** Blocks every call until {@link #release()}, so a test can catch work mid-flight. */
   public CountDownLatch hold() {
     CountDownLatch latch = new CountDownLatch(1);
@@ -121,6 +144,11 @@ public class FakePeers extends PeerClient {
   @Override
   public PeerExchange post(PeerTarget target, String path, String body) {
     return exchange(target, new PeerCall("POST", url(target, path), body), path);
+  }
+
+  @Override
+  public PeerExchange delete(PeerTarget target, String path) {
+    return exchange(target, new PeerCall("DELETE", url(target, path), null), "DELETE " + path);
   }
 
   private PeerExchange exchange(PeerTarget target, PeerCall call, String path) {
