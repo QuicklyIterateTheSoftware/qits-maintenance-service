@@ -61,6 +61,10 @@ erDiagram
     text ci_run_id
     string ci_run_status "length 32"
     string environment "not null, length 64"
+    int failed_step_exit
+    text failed_step_image
+    int failed_step_index
+    text failure_excerpt
     instant finished_at
     string fold_sha "length 64"
     string group_name "not null, length 255"
