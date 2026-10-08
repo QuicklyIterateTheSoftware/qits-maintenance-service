@@ -10,14 +10,20 @@ import eu.wohlben.qits.maintenance.peer.PeerTarget;
 import eu.wohlben.qits.maintenance.pending.Change;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
- * The three calls this service makes to qits-ci: apply a bump, read the run that applies it, and
- * ask how much room qits-ci has.
+ * The calls this service makes to qits-ci: apply a bump, read the run that applies it (and the
+ * automatic retry qits-ci re-fired it as), and ask how much room qits-ci has.
  *
  * <p><b>{@code eventId} is the bump's row id and that is the dedupe key.</b> qits-ci records at most
  * one run per (event id, repository, config path), so a dispatch whose ANSWER this service lost —
@@ -227,22 +233,67 @@ public class CiClient {
   /**
    * One run's state.
    *
+   * <p><b>The last four fields are what following qits-ci's automatic infra retry needs</b>
+   * (qits-760). qits-ci re-fires a run whose step the infrastructure failed (a runner that
+   * disconnected, a container that never started) as a NEW run, and leaves the original row {@code
+   * FAILED} for good: its {@code BuildFailed} is never announced, and the only link between the two
+   * is the retry's {@code retryOfRunId} with {@code autoRetry} true. The original's failing step
+   * also ends with the line {@code [infra failure (…) — retried automatically as run <id>]}, which
+   * is read into {@code retriedAs} — a candidate only, held to the retry's own link before it is
+   * believed.
+   *
    * @param status the CI status verbatim, or null when the run could not be read
    * @param error why it could not be read
+   * @param repoId the repository qits-ci records the run under, for listing its siblings, or null
+   * @param retryOfRunId the run this one re-fires, or null
+   * @param autoRetry whether qits-ci fired it itself, for an infra failure of {@code retryOfRunId}
+   * @param finishedAt when it ended, or null
+   * @param retriedAs the run its step output says it was retried as, or null
    */
-  public record RunState(String status, String error) {
+  public record RunState(
+      String status,
+      String error,
+      String repoId,
+      String retryOfRunId,
+      boolean autoRetry,
+      Instant finishedAt,
+      String retriedAs) {
 
-    /** The four statuses nothing further happens after. */
+    public RunState(String status, String error) {
+      this(status, error, null, null, false, null, null);
+    }
+
+    /** The statuses nothing further happens after. */
     public boolean terminal() {
       return status != null
           && List.of("SUCCESS", "FAILED", "CANCELLED", "CONFIG_ERROR").contains(status);
     }
 
-    /** Only one of the four terminal statuses means the step did its work. */
+    /** Only one of the terminal statuses means the step did its work. */
     public boolean passed() {
       return "SUCCESS".equals(status);
     }
+
+    /** The one status qits-ci re-fires an infra failure from. */
+    public boolean failed() {
+      return "FAILED".equals(status);
+    }
+
+    /** Whether this run is qits-ci's automatic retry of that one — the link, and nothing else. */
+    public boolean automaticRetryOf(String runId) {
+      return autoRetry && runId != null && runId.equals(retryOfRunId);
+    }
   }
+
+  /** The line qits-ci appends to an infra-failed step once its automatic retry exists. */
+  private static final Pattern RETRIED_AS =
+      Pattern.compile("retried automatically as run ([0-9A-Za-z][0-9A-Za-z-]{0,63})");
+
+  /**
+   * How far back {@link #automaticRetryOf} looks in a repository's run listing. A retry is
+   * recorded the moment its original fails, so it is near the top; this bounds the read.
+   */
+  static final int RETRY_LOOKUP_LIMIT = 100;
 
   /** Reads one run. */
   public RunState run(String runId) {
@@ -254,7 +305,112 @@ public class CiClient {
     if (body == null || !body.hasNonNull("status")) {
       return new RunState(null, "the run " + runId + " answered no status");
     }
-    return new RunState(body.get("status").asText(), null);
+    return state(body, retriedAs(body));
+  }
+
+  /**
+   * What a search for a run's automatic retry found.
+   *
+   * @param readable whether the listing could be read at all — an unreadable one is not "none"
+   * @param retryId the retry, or null when there is none (yet)
+   * @param retry the retry's state as the listing carried it, or null
+   */
+  public record RetryLookup(boolean readable, String retryId, RunState retry) {
+    static RetryLookup none() {
+      return new RetryLookup(true, null, null);
+    }
+
+    static RetryLookup unreadable() {
+      return new RetryLookup(false, null, null);
+    }
+  }
+
+  /**
+   * qits-ci's automatic retry of {@code runId}, found by the retry's own {@code retryOfRunId} link
+   * in its repository's newest runs. qits-ci names the retry nowhere on the original's row, so this
+   * is the one place the link can be read from the original's side.
+   *
+   * @param repoId the repository the original ran under, from its own row
+   */
+  public RetryLookup automaticRetryOf(String repoId, String runId) {
+    if (repoId == null || repoId.isBlank() || runId == null) {
+      return RetryLookup.none();
+    }
+    String path =
+        "/ci/api/runs?repositoryId="
+            + URLEncoder.encode(repoId, StandardCharsets.UTF_8)
+            + "&limit="
+            + RETRY_LOOKUP_LIMIT;
+    PeerAnswer answer = peers.get(PeerTarget.CI, path).answer();
+    if (!answer.ok()) {
+      return RetryLookup.unreadable();
+    }
+    JsonNode body = answer.json();
+    if (body == null || !body.hasNonNull("runs") || !body.get("runs").isArray()) {
+      return RetryLookup.unreadable();
+    }
+    for (JsonNode run : body.get("runs")) {
+      if (!run.hasNonNull("id") || !run.hasNonNull("status")) {
+        continue;
+      }
+      RunState state = state(run, null);
+      if (state.automaticRetryOf(runId)) {
+        return new RetryLookup(true, run.get("id").asText(), state);
+      }
+    }
+    return RetryLookup.none();
+  }
+
+  private static RunState state(JsonNode body, String retriedAs) {
+    return new RunState(
+        body.get("status").asText(),
+        null,
+        text(body, "repoId"),
+        text(body, "retryOfRunId"),
+        body.path("autoRetry").asBoolean(false),
+        instant(text(body, "finishedAt")),
+        retriedAs);
+  }
+
+  /** The run id the newest "retried automatically as run" line of any step names, or null. */
+  private static String retriedAs(JsonNode body) {
+    String found = null;
+    JsonNode steps = body.get("steps");
+    if (steps == null || !steps.isArray()) {
+      return null;
+    }
+    for (JsonNode step : steps) {
+      String output = text(step, "output");
+      if (output == null) {
+        continue;
+      }
+      Matcher matcher = RETRIED_AS.matcher(output);
+      while (matcher.find()) {
+        found = matcher.group(1);
+      }
+    }
+    return found;
+  }
+
+  private static String text(JsonNode node, String field) {
+    JsonNode value = node == null ? null : node.get(field);
+    return value == null || !value.isValueNode() || value.isNull() ? null : value.asText();
+  }
+
+  private static Instant instant(String value) {
+    if (value == null || value.isBlank()) {
+      return null;
+    }
+    try {
+      return Instant.parse(value);
+    } catch (DateTimeParseException e) {
+      try {
+        // A numeric timestamp, should the serializer write one: seconds with a fraction.
+        return Instant.ofEpochMilli(Math.round(Double.parseDouble(value) * 1000));
+      } catch (NumberFormatException ignored) {
+        return null;
+      }
+    }
   }
 
   /**

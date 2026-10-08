@@ -21,11 +21,15 @@ import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import eu.wohlben.qits.maintenance.work.WorkQueue;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.jboss.logging.Logger;
 
@@ -240,6 +244,13 @@ public class BumpService {
     }
   }
 
+  /**
+   * How long a FAILED run is given for qits-ci's automatic retry of it to appear. qits-ci commits
+   * the red row first and records the retry right after — a read of the git host apart — so a poll
+   * can land in between. A run that ended longer ago than this with no retry was not retried.
+   */
+  static final Duration RETRY_GRACE = Duration.ofSeconds(60);
+
   /** Follows one running bump to its end, or leaves it running. */
   public void poll(UUID id) {
     Optional<MtBump> found = store.bump(id);
@@ -257,8 +268,7 @@ public class BumpService {
       return;
     }
 
-    boolean allPassed = true;
-    String lastStatus = null;
+    Map<String, CiClient.RunState> states = new LinkedHashMap<>();
     for (String runId : runIds) {
       CiClient.RunState state = ci.run(runId);
       if (state.status() == null) {
@@ -268,14 +278,115 @@ public class BumpService {
         LOG.debugf("The bump %s could not read run %s: %s", id, runId, state.error());
         return;
       }
-      lastStatus = state.status();
-      if (!state.terminal()) {
-        store.bumpRunStatus(id, state.status());
+      states.put(runId, state);
+    }
+
+    // AN ADOPTED RETRY IS NOT A RUN OF ITS OWN: it answers for the run it re-fires, and is reached
+    // from there. Every other run is the head of a chain whose LAST run holds the verdict.
+    boolean allPassed = true;
+    String lastStatus = null;
+    for (String runId : runIds) {
+      CiClient.RunState state = states.get(runId);
+      if (state.retryOfRunId() != null
+          && state.autoRetry()
+          && states.containsKey(state.retryOfRunId())) {
+        continue;
+      }
+      CiClient.RunState verdict = followRetries(bump, runId, state, states);
+      if (verdict == null) {
         return;
       }
-      allPassed = allPassed && state.passed();
+      lastStatus = verdict.status();
+      allPassed = allPassed && verdict.passed();
     }
     finish(bump, allPassed, lastStatus);
+  }
+
+  /**
+   * <b>A run qits-ci re-fired for an infra failure is answered by its retry</b> (qits-760). qits-ci
+   * leaves the original row FAILED and records the retry as a NEW run carrying {@code
+   * retryOfRunId}, so a bump that read only the ids its trigger was answered with would call a
+   * runner disconnecting a red verdict while the retry went on to pass. Followed through every
+   * automatic retry of a chain, each one adopted into the row's run ids the first time it is found,
+   * so the next poll reads it directly.
+   *
+   * <p>The link is the retry's own {@code retryOfRunId} with {@code autoRetry}, read from the retry
+   * the original's step output names or else from the repository's newest runs; a candidate whose
+   * row does not carry it is not followed. The answer is the same whichever order the two runs are
+   * seen to end in: a FAILED original whose retry is still going is RUNNING, and one whose retry
+   * already ended takes that verdict.
+   *
+   * @return the terminal state that decides this chain, or null when the bump stays RUNNING — a run
+   *     still going, a run or listing that could not be read, or a FAILED run young enough that its
+   *     retry may not have been recorded yet
+   */
+  private CiClient.RunState followRetries(
+      MtBump bump, String runId, CiClient.RunState state, Map<String, CiClient.RunState> states) {
+    String current = runId;
+    CiClient.RunState at = state;
+    Set<String> seen = new HashSet<>();
+    while (seen.add(current)) {
+      if (!at.terminal()) {
+        store.bumpRunStatus(bump.id, at.status());
+        return null;
+      }
+      if (!at.failed()) {
+        return at;
+      }
+      String retryId = null;
+      CiClient.RunState retry = null;
+      for (Map.Entry<String, CiClient.RunState> held : states.entrySet()) {
+        if (held.getValue().automaticRetryOf(current)) {
+          retryId = held.getKey();
+          retry = held.getValue();
+        }
+      }
+      if (retryId == null && at.retriedAs() != null && !seen.contains(at.retriedAs())) {
+        CiClient.RunState named = ci.run(at.retriedAs());
+        if (named.status() != null && named.automaticRetryOf(current)) {
+          retryId = at.retriedAs();
+          retry = named;
+        }
+      }
+      if (retryId == null) {
+        CiClient.RetryLookup lookup = ci.automaticRetryOf(at.repoId(), current);
+        if (!lookup.readable()) {
+          store.bumpRunStatus(bump.id, null);
+          LOG.debugf("The bump %s could not look for a retry of run %s", bump.id, current);
+          return null;
+        }
+        retryId = lookup.retryId();
+        retry = lookup.retry();
+      }
+      if (retryId == null) {
+        if (at.finishedAt() != null
+            && Instant.now().isBefore(at.finishedAt().plus(RETRY_GRACE))) {
+          store.bumpRunStatus(bump.id, at.status());
+          return null;
+        }
+        return at;
+      }
+      if (!states.containsKey(retryId)) {
+        store.bumpRunAdopted(bump.id, retryId);
+        LOG.infof(
+            "The bump %s follows run %s, qits-ci's automatic retry of run %s", bump.id, retryId,
+            current);
+        // Read again by id: the listing carries no step output, and the step output is where a
+        // further retry of this one is named first.
+        CiClient.RunState read = ci.run(retryId);
+        if (read.status() == null) {
+          store.bumpRunStatus(bump.id, null);
+          return null;
+        }
+        retry = read;
+        states.put(retryId, retry);
+      }
+      current = retryId;
+      at = retry;
+    }
+    // A cycle along retryOfRunId cannot be recorded by qits-ci; reaching here means the rows say
+    // something impossible, and the run last read is the most that can be said.
+    return at;
   }
 
   /**

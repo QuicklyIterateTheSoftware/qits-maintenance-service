@@ -43,6 +43,7 @@ import io.quarkus.panache.common.Sort;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.context.control.ActivateRequestContext;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -921,6 +922,37 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
           row.ciEventId = eventId;
           row.ciRunId = runIds.isEmpty() ? null : String.join(",", runIds);
           row.status = BumpStatus.RUNNING.name();
+          getEntityManager().flush();
+        });
+  }
+
+  /**
+   * Adds qits-ci's automatic retry of one of a bump's runs to the runs it follows (qits-760), once:
+   * the retry's verdict stands for the run it re-fires. Appended rather than substituted, so the
+   * row keeps naming every run that was part of its answer.
+   */
+  @ActivateRequestContext
+  public void bumpRunAdopted(UUID id, String runId) {
+    DbRetry.runInNewTx(
+        "adopt run " + runId + " into bump " + id,
+        () -> {
+          MtBump row = MtBump.findById(id);
+          if (row == null) {
+            return;
+          }
+          List<String> ids = new ArrayList<>();
+          if (row.ciRunId != null) {
+            for (String held : row.ciRunId.split(",")) {
+              if (!held.isBlank()) {
+                ids.add(held.trim());
+              }
+            }
+          }
+          if (ids.contains(runId)) {
+            return;
+          }
+          ids.add(runId);
+          row.ciRunId = String.join(",", ids);
           getEntityManager().flush();
         });
   }
