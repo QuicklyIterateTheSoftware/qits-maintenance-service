@@ -27,4 +27,16 @@ public class NoSuchRepositoryException extends MaintenanceException {
             + ": no automation has been asked about it yet, so name the repository",
         true);
   }
+
+  /**
+   * The settle door was asked about a repository no scan has read yet — a newly created one, whose
+   * first release request would otherwise wait for the nightly scan (qits-1118). Still a 404, but
+   * one that says a scan of it is queued, so the next ask is the one that finds it.
+   */
+  public static NoSuchRepositoryException scanQueued(String name) {
+    return new NoSuchRepositoryException(
+        "no repository '" + name + "' in the inventory yet — a scan of it is queued; ask again"
+            + " shortly",
+        true);
+  }
 }

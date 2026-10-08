@@ -1007,7 +1007,7 @@ paths:
         "400":
           description: "Not a request id, not a sha, or not a work item"
         "404":
-          description: No such repository in the inventory
+          description: No such repository in the inventory yet; a scan of it is queued
         "401":
           description: Not Authorized
         "403":

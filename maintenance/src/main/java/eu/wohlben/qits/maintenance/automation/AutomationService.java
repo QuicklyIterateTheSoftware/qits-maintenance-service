@@ -21,9 +21,12 @@ import eu.wohlben.qits.maintenance.githost.TreeLookup;
 import eu.wohlben.qits.maintenance.model.BumpMode;
 import eu.wohlben.qits.maintenance.model.BumpStatus;
 import eu.wohlben.qits.maintenance.model.BumpTrigger;
+import eu.wohlben.qits.maintenance.model.ScanScope;
 import eu.wohlben.qits.maintenance.pending.Change;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore.AutomationOpening;
+import eu.wohlben.qits.maintenance.scan.ScanService;
+import eu.wohlben.qits.maintenance.scan.ScanTrigger;
 import eu.wohlben.qits.maintenance.work.WorkQueue;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Any;
@@ -170,6 +173,9 @@ public class AutomationService {
 
   @Inject WorkQueue queue;
 
+  /** What a trigger for a repository no scan has read yet asks to read it. */
+  @Inject ScanService scans;
+
   @Inject @Any Instance<ReleaseRequestAutomation> registered;
 
   /**
@@ -209,10 +215,32 @@ public class AutomationService {
   // --- the every-fold trigger -------------------------------------------------------------------
 
   /**
+   * A trigger for a repository the inventory does not hold yet, answered — and asked to be read.
+   *
+   * <p>A newly created repository's first release request is the ordinary case (qits-1118): nothing
+   * else scans it before the nightly scan, so without this the request held on UNKNOWN until then.
+   * The thirty-second re-ask is the debounce's other half — {@link MaintenanceStore#scanPending}
+   * keeps it to one scan at a time, as on the bus, and a scan that fails (a name the catalog does
+   * not list) closes FAILED, so the next ask queues another rather than waiting on it for ever.
+   * INTERNAL scope for the bus's reason: every scan reads every manifest, and the external lookups
+   * are the daily scan's job.
+   */
+  private NoSuchRepositoryException unscanned(String name) {
+    if (!store.scanPending(name)) {
+      UUID id = scans.request(ScanScope.INTERNAL, name, ScanTrigger.EVENT);
+      LOG.infof(
+          "a release request of %s was settled before any scan read it; queued the scan %s", name,
+          id);
+    }
+    return NoSuchRepositoryException.scanQueued(name);
+  }
+
+  /**
    * Settles every kind at one fold of one request and answers where each stands.
    *
    * @throws BadRequestException not a request id, not a sha, not a work item — a 400
-   * @throws NoSuchRepositoryException the inventory has no such repository — a 404
+   * @throws NoSuchRepositoryException the inventory has no such repository yet — a 404, after
+   *     queueing a scan of that one repository unless one is already queued or running
    */
   public ReleaseRequestAutomationsDto trigger(String requestId, Fold fold) {
     requireRequestId(requestId);
@@ -228,10 +256,8 @@ public class AutomationService {
     if (fold.repository() == null || fold.repository().isBlank()) {
       throw new BadRequestException("the trigger names the repository the request belongs to");
     }
-    MtRepository row =
-        store
-            .repository(fold.repository().trim())
-            .orElseThrow(() -> new NoSuchRepositoryException(fold.repository().trim()));
+    String name = fold.repository().trim();
+    MtRepository row = store.repository(name).orElseThrow(() -> unscanned(name));
     AutomationSubject subject = subject(row, requestId, foldSha, fold.sourceBranches(), item);
 
     // A kind this fold already has rows for is answered from them — and it applied, or it would

@@ -7,6 +7,7 @@ import static eu.wohlben.qits.maintenance.automation.AutomationFixture.FOLD_D;
 import static eu.wohlben.qits.maintenance.automation.AutomationFixture.REQUEST;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.maintenance.api.Fixture;
@@ -16,10 +17,13 @@ import eu.wohlben.qits.maintenance.bump.CiClient;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto.AutomationDto;
 import eu.wohlben.qits.maintenance.entity.MtBump;
+import eu.wohlben.qits.maintenance.entity.MtScan;
+import eu.wohlben.qits.maintenance.error.NoSuchRepositoryException;
 import eu.wohlben.qits.maintenance.model.BumpMode;
 import eu.wohlben.qits.maintenance.model.BumpStatus;
 import eu.wohlben.qits.maintenance.model.BumpTrigger;
 import eu.wohlben.qits.maintenance.model.ScanScope;
+import eu.wohlben.qits.maintenance.model.ScanStatus;
 import eu.wohlben.qits.maintenance.peer.FakePeers;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import eu.wohlben.qits.maintenance.scan.ScanService;
@@ -30,6 +34,8 @@ import jakarta.inject.Inject;
 import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -350,5 +356,90 @@ class AutomationTriggerTest {
         again.bumpId(),
         screenshots(automations.automations(REQUEST, FOLD_A)).bumpId(),
         "and the read door answers the same row");
+  }
+
+  // --- a repository no scan has read yet (qits-1118) ---------------------------------------------
+
+  private NoSuchRepositoryException unknown(String repository) {
+    return assertThrows(
+        NoSuchRepositoryException.class,
+        () ->
+            automations.trigger(
+                REQUEST,
+                new AutomationService.Fold(
+                    repository, FOLD_A, null, null, List.of("main", "work"), null)));
+  }
+
+  private List<MtScan> scansOf(String repository) {
+    return store.scans(1000).stream().filter(scan -> repository.equals(scan.repository)).toList();
+  }
+
+  /** Holds the single worker until the latch opens, so a queued scan stays pending meanwhile. */
+  private CountDownLatch holdTheWorker() {
+    CountDownLatch release = new CountDownLatch(1);
+    queue.submit(
+        "hold the worker",
+        () -> {
+          try {
+            release.await(30, TimeUnit.SECONDS);
+          } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+          }
+        });
+    return release;
+  }
+
+  /**
+   * A repository the inventory does not hold is still a 404 — but it queues exactly one scan of
+   * itself, and a second ask while that scan is pending queues none. One the catalog does not list
+   * fails its scan, which closes the row, so the next ask queues another rather than waiting on a
+   * pending one for ever.
+   */
+  @Test
+  void anUnknownRepositoryQueuesOneScanAndStillAnswers404() {
+    String repository = "qits-never-scanned";
+    CountDownLatch release = holdTheWorker();
+    try {
+      NoSuchRepositoryException first = unknown(repository);
+      assertEquals(404, first.statusCode());
+      assertEquals(
+          "no repository '" + repository + "' in the inventory yet — a scan of it is queued; ask"
+              + " again shortly",
+          first.getMessage());
+      List<MtScan> queued = scansOf(repository);
+      assertEquals(1, queued.size(), "one scan of exactly that repository: " + queued);
+      assertEquals(ScanStatus.REQUESTED.name(), queued.getFirst().status);
+      assertEquals(ScanTrigger.EVENT.name(), queued.getFirst().trigger);
+      assertEquals(ScanScope.INTERNAL.name(), queued.getFirst().scope);
+
+      assertEquals(404, unknown(repository).statusCode());
+      assertEquals(1, scansOf(repository).size(), "a pending scan is not asked for twice");
+    } finally {
+      release.countDown();
+    }
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    assertEquals(ScanStatus.FAILED.name(), scansOf(repository).getFirst().status);
+    unknown(repository);
+    assertEquals(2, scansOf(repository).size(), "a failed scan does not hold the next ask");
+    queue.awaitIdle(Duration.ofSeconds(30));
+  }
+
+  /**
+   * The case qits-1118 is about: a repository the catalog lists and no scan has read yet. The first
+   * ask is a 404 that queues its scan; once that scan has run, the next ask settles normally.
+   */
+  @Test
+  void aNewRepositoryIsScannedAndTheNextAskSettles() {
+    inventory.clear();
+
+    unknown(Fixture.REPOSITORY);
+    queue.awaitIdle(Duration.ofSeconds(60));
+
+    MtScan scan = scansOf(Fixture.REPOSITORY).getFirst();
+    assertEquals(ScanStatus.SUCCEEDED.name(), scan.status, scan.message);
+    AutomationDto entry = screenshots(trigger(REQUEST, FOLD_A, null, null));
+    assertEquals(AutomationState.REQUESTED.name(), entry.state(), entry.detail());
+    assertEquals(1, scansOf(Fixture.REPOSITORY).size(), "and a known repository queues no scan");
   }
 }

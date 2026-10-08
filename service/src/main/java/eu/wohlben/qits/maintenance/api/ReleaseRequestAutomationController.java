@@ -78,13 +78,18 @@ public class ReleaseRequestAutomationController {
    * <p>A kind that does not apply is not listed; a repository no kind applies to answers an empty
    * list. A kind that has to run answers REQUESTED, and its run is dispatched behind the scenes;
    * follow it with the read below.
+   *
+   * <p>A repository no scan has read yet — a new one's first request — is still a 404, but it queues
+   * a scan of that repository (one at a time), so the next thirty-second ask finds it.
    */
   @POST
   @Path("/{requestId}/automations")
   @Operation(summary = "Settle a release request's automations at one fold")
   @APIResponse(responseCode = "200", description = "Every applicable kind's state at the fold")
   @APIResponse(responseCode = "400", description = "Not a request id, not a sha, or not a work item")
-  @APIResponse(responseCode = "404", description = "No such repository in the inventory")
+  @APIResponse(
+      responseCode = "404",
+      description = "No such repository in the inventory yet; a scan of it is queued")
   @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
   public ReleaseRequestAutomationsDto trigger(
       @PathParam("requestId") String requestId, TriggerRequest request) {
