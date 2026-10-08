@@ -27,7 +27,7 @@ import java.util.UUID;
  * @param ciRunId the runs qits-ci named, comma-separated — the column verbatim, and the field the
  *     client reads
  * @param ciRunIds the same ids as a list, because a trigger can match more than one pipeline
- * @param configPath the pipeline file in the wrapper that ran it, which qits-ci records on the run
+ * @param configPath the pipeline file in qits-ci-service that ran it, which qits-ci records on the run
  * @param ciRunStatus the last ci run status this service read
  * @param startedAt when the row was opened
  * @param finishedAt when it ended, null while it has not

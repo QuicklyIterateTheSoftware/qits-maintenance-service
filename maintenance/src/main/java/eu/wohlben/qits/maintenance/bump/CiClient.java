@@ -59,7 +59,7 @@ public class CiClient {
   public static final String AUTOMATION_EVENT_NAME = "ReleaseRequestAutomation";
 
   /** Where qits-ci packages the kind files the automation core composes, {@code <kind>.yml}. */
-  public static final String AUTOMATION_CONFIG_DIR = ".config/qits/platform-pipelines/automations/";
+  public static final String AUTOMATION_CONFIG_DIR = "ci/src/main/resources/platform-pipelines/automations/";
 
   public static final String TRIGGER_PATH = "/ci/api/events/trigger";
 
@@ -72,7 +72,7 @@ public class CiClient {
   /** The bump pipeline, packaged into qits-ci under this path. qits-ci records it as a run's {@code
    * configPath}, and it is the same for every bump, so the bump detail carries it as a constant
    * rather than reading it back per run. */
-  public static final String CONFIG_PATH = ".config/qits/platform-pipelines/maintenance-bump.yml";
+  public static final String CONFIG_PATH = "ci/src/main/resources/platform-pipelines/maintenance-bump.yml";
 
   private static final ObjectMapper JSON = new ObjectMapper();
 

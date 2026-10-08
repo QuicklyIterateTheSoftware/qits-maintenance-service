@@ -421,7 +421,7 @@ poll the request, wait for a version, or record a release.
   name and the project cannot address it. A row with no catalog id records a refusal; the next scan
   fills the column and the next bump asks with it.
 - **`summary` is the commit subject shape the bump's own commits carry**, word for word from
-  qits-ci's `.config/qits/platform-pipelines/maintenance-bump.yml`. The `n` is what was ASKED FOR, and it
+  qits-ci's `ci/src/main/resources/platform-pipelines/maintenance-bump.yml`. The `n` is what was ASKED FOR, and it
   cannot be what a commit says: one bump is up to two commits and each counts what its own step
   applied. It doubles as the fold's commit message.
 - **No `expectedSha`, and that is a deliberate loss.** qits-workspaces' door armed a request at the
@@ -1037,9 +1037,9 @@ that githost release deploys, the fifteen `ci-event-upstream-frontend.yml` hop f
 work and nothing is lost.
 
 **qits-ci answers the events with its packaged platform pipelines**:
-`.config/qits/platform-pipelines/maintenance-bump.yml` for `MaintenanceBump`, and the shared
+`ci/src/main/resources/platform-pipelines/maintenance-bump.yml` for `MaintenanceBump`, and the shared
 release-request-automation core for `ReleaseRequestAutomation`, which composes one kind file per
-kind under `.config/qits/platform-pipelines/automations/<kind>.yml` (qits-978; this service no
+kind under `ci/src/main/resources/platform-pipelines/automations/<kind>.yml` (qits-978; this service no
 longer sends `ScreenshotBaselines`). Until 2026-10-02 the bump pipeline was a wrapper file. A qits-ci without them records no run, and every bump ends FAILED with `no run
 recorded for …`, which is the honest answer rather than a silent success.
 
