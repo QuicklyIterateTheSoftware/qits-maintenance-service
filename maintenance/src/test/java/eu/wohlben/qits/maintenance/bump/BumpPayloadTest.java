@@ -73,4 +73,52 @@ class BumpPayloadTest {
 
     assertEquals(3, problems.size(), problems.toString());
   }
+
+  /**
+   * <b>{@code replaceHead} licenses a leased force-push, so it is held to exactly what the step
+   * admits</b> (qits-1081): a full lowercase sha, 40 hex or 64, or absent. Anything else is refused
+   * here, where it is a sentence on the row, rather than there, where it is a red run.
+   */
+  @Test
+  void aReplaceHeadMustBeAFullLowercaseSha() {
+    Change change = gitlink("2026.901.1", "service/src/main/webui");
+    String tag = "refs/tags/2026.1007.171656";
+    assertTrue(
+        BumpPayload.problems("dependencies", BRANCH, tag, null, List.of(change)).isEmpty(),
+        "no replaceHead is the ordinary payload: continue the branch");
+    assertTrue(
+        BumpPayload.problems(
+                "dependencies", BRANCH, tag, "aa11bb22cc33dd44ee55ff6677889900aabbccdd", List.of(change))
+            .isEmpty());
+    assertTrue(
+        BumpPayload.problems("dependencies", BRANCH, tag, "ab".repeat(32), List.of(change))
+            .isEmpty(),
+        "a SHA-256 repository's object name is 64 hex, and the step admits it");
+
+    for (String bad :
+        List.of(
+            "",
+            "aa11bb2",
+            "AA11BB22CC33DD44EE55FF6677889900AABBCCDD",
+            "aa11bb22cc33dd44ee55ff6677889900aabbccdd0",
+            "aa11bb22cc33dd44ee55ff6677889900aabbccdz",
+            "aa11bb22cc33dd44ee55ff6677889900aabbccdd; git push --force")) {
+      List<String> problems =
+          BumpPayload.problems("dependencies", BRANCH, tag, bad, List.of(change));
+      assertEquals(1, problems.size(), "'" + bad + "': " + problems);
+      assertTrue(problems.get(0).contains("replace head"), problems.toString());
+    }
+  }
+
+  /** A tag base is a plain ref like any other, and the step fetches a {@code refs/…} base as written. */
+  @Test
+  void aTagBaseIsAPlainRef() {
+    Change change = gitlink("2026.901.1", "service/src/main/webui");
+    assertTrue(
+        BumpPayload.problems("dependencies", BRANCH, "refs/tags/2026.1007.171656", List.of(change))
+            .isEmpty());
+    assertEquals(
+        1,
+        BumpPayload.problems("dependencies", BRANCH, "refs/tags/../main", List.of(change)).size());
+  }
 }

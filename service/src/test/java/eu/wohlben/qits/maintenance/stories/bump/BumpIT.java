@@ -95,6 +95,15 @@ public class BumpIT {
 
   static final String UNMOVED_SLUG = Slugs.slug(UNMOVED);
 
+  static final String REBUILT =
+      "A branch is cut from the release that has not reached main, and rebuilt when it lacks it";
+
+  static final String REBUILT_SLUG = Slugs.slug(REBUILT);
+
+  static final String UNDECIDED = "A base nobody could answer for is main, and the bump goes anyway";
+
+  static final String UNDECIDED_SLUG = Slugs.slug(UNDECIDED);
+
   /**
    * The ids the two stories generated, kept so {@code @AfterAll} can pin that neither reached the
    * published bundle. A row id is a per-run value by definition: a note carrying one would move the
@@ -103,6 +112,10 @@ public class BumpIT {
   private static String pushedBumpId;
 
   private static String unmovedBumpId;
+
+  private static String rebuiltBumpId;
+
+  private static String undecidedBumpId;
 
   @BeforeAll
   static void tapEverySideOfThisService() {
@@ -144,6 +157,9 @@ public class BumpIT {
         "{\"request\":{\"id\":\"" + StoryCatalog.RELEASE_REQUEST + "\",\"repoId\":\""
             + StoryCatalog.CATALOG_ID + "\",\"state\":\"PENDING\",\"backingBranch\":\"release/"
             + StoryCatalog.RELEASE_REQUEST + "\",\"mergedSha\":null,\"detail\":null}}");
+    // …and the LISTING on the same path, which is the other read: no release of this repository is
+    // waiting to reach main, so the branch is cut from main exactly as every bump always was.
+    projects.jsonFor("GET", StoryCatalog.RELEASE_REQUESTS_PATH, "{\"requests\":[]}");
 
     // qits-ci accepts the trigger and names one run, which is still going. The branch is armed
     // NOWHERE: an unregistered path is a 404, which is exactly what the git host says about a
@@ -201,6 +217,9 @@ public class BumpIT {
         payload.contains("\"branch\":\"" + StoryCatalog.BRANCH + "\"")
             && payload.contains("\"baseRef\":\"main\""),
         "a group's name IS its branch, cut from the repository's main branch: " + payload);
+    assertFalse(
+        payload.contains("replaceHead"),
+        "a branch cut from main is continued or started, never rebuilt: " + payload);
     // One change, in full, because the shape is the contract three repositories build against.
     assertTrue(
         payload.contains("\"location\":\"property:qits.eventstream.version\"")
@@ -272,7 +291,10 @@ public class BumpIT {
         .body("finishedAt", not(nullValue()))
         .body("message", containsString(StoryCatalog.BRANCH))
         // AND THE BRANCH WAS HANDED ON. A branch nobody asks about is a branch that sits there.
-        .body("releaseRequestId", equalTo(StoryCatalog.RELEASE_REQUEST));
+        .body("releaseRequestId", equalTo(StoryCatalog.RELEASE_REQUEST))
+        // AND WHAT IT WAS CUT FROM, which is main when nothing released is still waiting for it.
+        .body("baseRef", equalTo("main"))
+        .body("replaceHead", nullValue());
     story
         .note("the run passed and the branch moved, so the row ends SUCCEEDED — with the changes it"
             + " SENT, which is the audit trail: what is pending now is a different question")
@@ -380,7 +402,9 @@ public class BumpIT {
         .json(
             StoryCatalog.SECOND_RELEASE_REQUESTS_PATH,
             "{\"request\":{\"id\":\"rr-unmoved\",\"repoId\":\"r2\",\"state\":\"PENDING\","
-                + "\"backingBranch\":\"release/rr-unmoved\",\"mergedSha\":null,\"detail\":null}}");
+                + "\"backingBranch\":\"release/rr-unmoved\",\"mergedSha\":null,\"detail\":null}}")
+        // Nothing of this repository is released and waiting for main either.
+        .jsonFor("GET", StoryCatalog.SECOND_RELEASE_REQUESTS_PATH, "{\"requests\":[]}");
 
     unmovedBumpId =
         StoryIdentities.operator(given())
@@ -441,6 +465,267 @@ public class BumpIT {
         "the head before the run is recorded, and the verdict is written against it");
   }
 
+  @UserStory(value = REBUILT, category = CATEGORY)
+  @UserStoryDescription(
+      """
+      A release of this repository was cut and has not reached main yet — its deployment has not
+      succeeded, or its merge will not apply. qits-projects folds every such tag into each release
+      request of the repository, so a maintenance branch cut from main that edits the line the
+      tag already moved — a base image argument, a property in a pom — conflicts with it in every
+      fold, for as long as the tag stays unmerged. So before the trigger this service reads the
+      repository's release history from qits-projects, takes the newest release that has no merge
+      to main — newest by the version's numbers, not its text — and asks the git host whether main
+      contains it after all. It does not, so the bump is cut from the tag. And because the branch
+      already exists, cut from main long ago, the git host is asked the same question about the
+      branch: it lacks the tag, so its head travels with the payload as the head to replace, and
+      the step rebuilds the branch on the tag under a lease on exactly that head. A branch that
+      moved in between is refused rather than overwritten.
+      """)
+  @UserflowRunsAfter(InventoryIT.class)
+  @Order(3)
+  void aBranchIsCutFromTheReleaseThatHasNotReachedMain(Interactions story, Network network) {
+    NetworkCapture.actor(StoryIdentities.OPERATOR);
+    StoryPeers ci = StoryPeers.attach(StoryTarget.CI);
+    StoryPeers githost = StoryPeers.attach(StoryTarget.GITHOST);
+    StoryPeers projects = StoryPeers.attach(StoryTarget.PROJECTS);
+
+    // THE HISTORY, as qits-projects lists it with state=all. The newest unmerged release is
+    // 2026.1007.171656; 2026.1007.61854 is older and sorts AFTER it as text, a newer one has merged,
+    // and a request that never released has no tag at all. Only the first may be chosen.
+    projects.jsonFor(
+        "GET",
+        StoryCatalog.RELEASE_REQUESTS_PATH,
+        "{\"requests\":["
+            + "{\"id\":\"rr-open\",\"state\":\"PENDING\",\"version\":null,\"releasedSha\":null,"
+            + "\"mergedToMainAt\":null},"
+            + "{\"id\":\"rr-merged\",\"state\":\"FINALIZED\",\"version\":\"2026.1008.10000\","
+            + "\"releasedSha\":\"1111111111111111111111111111111111111111\","
+            + "\"mergedToMainAt\":\"2026-10-08T01:00:00Z\"},"
+            + "{\"id\":\"rr-newest\",\"state\":\"RELEASED\",\"version\":\""
+            + StoryCatalog.TAG_VERSION + "\",\"releasedSha\":\"" + StoryCatalog.TAG_SHA
+            + "\",\"mergedToMainAt\":null},"
+            + "{\"id\":\"rr-older\",\"state\":\"OBSOLETE\",\"version\":\"2026.1007.61854\","
+            + "\"releasedSha\":\"2222222222222222222222222222222222222222\","
+            + "\"mergedToMainAt\":null}]}");
+    // Neither main nor the branch contains the tag — one answer, because the stand-in matches the
+    // door without its query, and both of the questions a rebuild asks are answered "no".
+    githost.json(
+        StoryCatalog.CONTAINS_PATH,
+        "{\"repoId\":\"" + StoryCatalog.CATALOG_ID + "\",\"commit\":\"" + StoryCatalog.TAG_SHA
+            + "\",\"in\":\"" + StoryCatalog.ANGULAR_BRANCH_SHA + "\",\"contains\":false}");
+    // The branch exists, cut from main before the release was.
+    githost.json(
+        StoryCatalog.tree(StoryCatalog.REPOSITORY, StoryCatalog.ANGULAR_BRANCH),
+        "{\"entries\":[]}",
+        Map.of("Git-Commit-Sha", StoryCatalog.ANGULAR_BRANCH_SHA));
+    ci.json(
+        StoryCatalog.TRIGGER_PATH,
+        "{\"eventId\":\"e-rebuilt\",\"runIds\":[\"" + StoryCatalog.THIRD_RUN + "\"],"
+            + "\"repositoriesRead\":1,\"repositoriesSkipped\":[]}");
+    ci.json(
+        StoryCatalog.runPath(StoryCatalog.THIRD_RUN),
+        "{\"id\":\"" + StoryCatalog.THIRD_RUN + "\",\"status\":\"RUNNING\"}");
+
+    rebuiltBumpId =
+        StoryIdentities.operator(given())
+            .contentType(ContentType.JSON)
+            .post(groupBumps(StoryCatalog.REPOSITORY, StoryCatalog.ANGULAR_GROUP))
+            .then()
+            .statusCode(202)
+            .extract()
+            .path("id");
+    StoryWaits.bumpReaches(rebuiltBumpId, "RUNNING");
+
+    List<String> triggers = ci.bodiesFor(StoryCatalog.TRIGGER_PATH);
+    String payload = triggers.getLast();
+    assertTrue(
+        payload.contains("\"eventId\":\"" + rebuiltBumpId + "\""),
+        "the trigger read is this story's own: " + payload);
+    assertTrue(
+        payload.contains("\"baseRef\":\"refs/tags/" + StoryCatalog.TAG_VERSION + "\""),
+        "the branch is cut from the newest release main does not carry: " + payload);
+    assertTrue(
+        payload.contains("\"replaceHead\":\"" + StoryCatalog.ANGULAR_BRANCH_SHA + "\""),
+        "and the branch that lacks it is rebuilt over the head this service read: " + payload);
+    story
+        .note("the newest release that has not reached main — newest by its numbers, not its text —"
+            + " is what the branch is cut from, because a branch cut from main would conflict with"
+            + " it in every fold")
+        .as("cut-from-the-unmerged-release");
+    story
+        .note("and the existing branch, which lacks it, travels as the head to replace: the step"
+            + " rebuilds it on the tag under a lease on exactly that head")
+        .as("rebuilt-over-a-leased-head");
+
+    githost.json(
+        StoryCatalog.tree(StoryCatalog.REPOSITORY, StoryCatalog.ANGULAR_BRANCH),
+        "{\"entries\":[]}",
+        Map.of("Git-Commit-Sha", StoryCatalog.REBUILT_SHA));
+    ci.json(
+        StoryCatalog.runPath(StoryCatalog.THIRD_RUN),
+        "{\"id\":\"" + StoryCatalog.THIRD_RUN + "\",\"status\":\"SUCCESS\"}");
+    assertEquals("SUCCEEDED", StoryWaits.bump(rebuiltBumpId));
+
+    StoryIdentities.operator(given())
+        .get(StoryTarget.BUMPS + "/" + rebuiltBumpId)
+        .then()
+        .statusCode(200)
+        .body("group", equalTo(StoryCatalog.ANGULAR_GROUP))
+        .body("status", equalTo("SUCCEEDED"))
+        .body("baseRef", equalTo("refs/tags/" + StoryCatalog.TAG_VERSION))
+        .body("replaceHead", equalTo(StoryCatalog.ANGULAR_BRANCH_SHA));
+    story
+        .note("the row says what the branch was cut from and what it replaced, which is also how the"
+            + " dispatcher knows a conflicted release was already rebuilt on that tag once")
+        .as("the-base-is-recorded");
+
+    network.declare(
+        NetworkEdge.JDBC,
+        StoryTarget.SERVICE,
+        StoryTarget.STORE,
+        "the base and the head it replaces are recorded on the bump row before the trigger");
+  }
+
+  @UserStory(value = UNDECIDED, category = CATEGORY)
+  @UserStoryDescription(
+      """
+      The base is an improvement on a bump, never a precondition of it. When qits-projects cannot
+      list the repository's releases, this service does not know whether a release is waiting to
+      reach main, and it does not guess: the bump is cut from main, exactly as every bump was
+      before the base was chosen at all, nothing is asked of the git host about a tag nobody named,
+      no head is offered for replacing, and the bump goes out and ends as it would have anyway. The
+      worst this costs is the conflict a tag base would have avoided.
+      """)
+  @UserflowRunsAfter(InventoryIT.class)
+  @Order(4)
+  void aBaseNobodyCouldAnswerForIsMain(Interactions story, Network network) {
+    NetworkCapture.actor(StoryIdentities.OPERATOR);
+    StoryPeers ci = StoryPeers.attach(StoryTarget.CI);
+    StoryPeers projects = StoryPeers.attach(StoryTarget.PROJECTS);
+
+    projects.answerFor(
+        "GET",
+        StoryCatalog.RELEASE_REQUESTS_PATH,
+        503,
+        "application/json",
+        "{\"message\":\"unavailable\"}");
+    ci.json(
+        StoryCatalog.TRIGGER_PATH,
+        "{\"eventId\":\"e-undecided\",\"runIds\":[\"" + StoryCatalog.FOURTH_RUN + "\"],"
+            + "\"repositoriesRead\":1,\"repositoriesSkipped\":[]}");
+    ci.json(
+        StoryCatalog.runPath(StoryCatalog.FOURTH_RUN),
+        "{\"id\":\"" + StoryCatalog.FOURTH_RUN + "\",\"status\":\"SUCCESS\"}");
+
+    undecidedBumpId =
+        StoryIdentities.operator(given())
+            .contentType(ContentType.JSON)
+            .post(groupBumps(StoryCatalog.REPOSITORY, StoryCatalog.EXTERNAL_GROUP))
+            .then()
+            .statusCode(202)
+            .extract()
+            .path("id");
+    // Nothing is pushed — the external branch is armed nowhere, before or after — so the ending is
+    // NOTHING_TO_DO, and it is an ending: the base did not stop the bump.
+    assertEquals("NOTHING_TO_DO", StoryWaits.bump(undecidedBumpId));
+
+    List<String> triggers = ci.bodiesFor(StoryCatalog.TRIGGER_PATH);
+    String payload = triggers.getLast();
+    assertTrue(
+        payload.contains("\"eventId\":\"" + undecidedBumpId + "\""),
+        "the trigger read is this story's own: " + payload);
+    assertTrue(
+        payload.contains("\"baseRef\":\"main\"") && !payload.contains("replaceHead"),
+        "an unreadable listing is main, and nothing is rebuilt on a guess: " + payload);
+    StoryIdentities.operator(given())
+        .get(StoryTarget.BUMPS + "/" + undecidedBumpId)
+        .then()
+        .statusCode(200)
+        .body("baseRef", equalTo("main"))
+        .body("replaceHead", nullValue());
+    story
+        .note("qits-projects could not list the releases, so the branch is cut from main and the"
+            + " bump goes out all the same — the base is never a reason for a bump to fail")
+        .as("unreadable-is-main");
+
+    network.declare(
+        NetworkEdge.JDBC,
+        StoryTarget.SERVICE,
+        StoryTarget.STORE,
+        "main is recorded as the base the bump was cut from");
+  }
+
+  /** {@code POST …/repositories/<repo>/groups/<group>/bumps}. */
+  private static String groupBumps(String repository, String group) {
+    return StoryTarget.REPOSITORIES + "/" + repository + "/groups/" + group + "/bumps";
+  }
+
+  @AfterAll
+  static void bothBaseStoriesAreComplete() {
+    // --- cut from the unmerged release, and rebuilt -----------------------------------------------
+    ReportAssertions.assertComplete(CATEGORY_SLUG, REBUILT_SLUG, UserflowReport.PASSED);
+    ReportAssertions.assertStepId(CATEGORY_SLUG, REBUILT_SLUG, "cut-from-the-unmerged-release");
+    ReportAssertions.assertStepId(CATEGORY_SLUG, REBUILT_SLUG, "rebuilt-over-a-leased-head");
+    ReportAssertions.assertStepId(CATEGORY_SLUG, REBUILT_SLUG, "the-base-is-recorded");
+    in(
+        REBUILT_SLUG,
+        "POST " + groupBumps(StoryCatalog.REPOSITORY, StoryCatalog.ANGULAR_GROUP) + " -> 202");
+    in(REBUILT_SLUG, "GET " + StoryTarget.BUMPS + "/" + StoryTarget.ID + " -> 200");
+    out(
+        REBUILT_SLUG,
+        StoryTarget.PROJECTS,
+        "GET " + StoryCatalog.releaseListingWire(StoryCatalog.RELEASE_REQUESTS_PATH) + " -> 200");
+    // Main's head, for the ancestry question — and the question itself, under the storage id, with
+    // both shas templated. ONE label for the two questions (on main, on the branch), because they
+    // are the same door asked about the same tag.
+    out(
+        REBUILT_SLUG,
+        StoryTarget.GITHOST,
+        "GET " + StoryCatalog.treeWire(StoryCatalog.REPOSITORY, "main") + " -> 200");
+    out(
+        REBUILT_SLUG,
+        StoryTarget.GITHOST,
+        "GET " + StoryCatalog.CONTAINS_PATH + "?commit=" + StoryTarget.DIGEST + "&in="
+            + StoryTarget.DIGEST + " -> 200");
+    out(
+        REBUILT_SLUG,
+        StoryTarget.GITHOST,
+        "GET " + StoryCatalog.treeWire(StoryCatalog.REPOSITORY, StoryCatalog.ANGULAR_BRANCH)
+            + " -> 200");
+    out(REBUILT_SLUG, StoryTarget.CI, "POST " + StoryCatalog.TRIGGER_PATH + " -> 200");
+    out(
+        REBUILT_SLUG,
+        StoryTarget.CI,
+        "GET " + StoryCatalog.runPath(StoryCatalog.THIRD_RUN) + " -> 200");
+    out(
+        REBUILT_SLUG,
+        StoryTarget.PROJECTS,
+        "POST " + StoryCatalog.RELEASE_REQUESTS_PATH + " -> 200");
+    // Two in; out, the listing, main's head, the ancestry door, the branch head, the trigger, the
+    // run and the release ask; and a row. Still no arrow into any repository: the rebuild is the
+    // step's, under its lease, and this service only named the head it may replace.
+    ReportAssertions.assertEdgeCount(CATEGORY_SLUG, REBUILT_SLUG, 10);
+    ReportAssertions.assertOnlyEdgesFrom(
+        CATEGORY_SLUG, REBUILT_SLUG, List.of(StoryIdentities.OPERATOR, StoryTarget.SERVICE));
+    ReportAssertions.assertNotLeaked(CATEGORY_SLUG, REBUILT_SLUG, rebuiltBumpId);
+
+    // --- the base nobody could answer for ---------------------------------------------------------
+    ReportAssertions.assertComplete(CATEGORY_SLUG, UNDECIDED_SLUG, UserflowReport.PASSED);
+    ReportAssertions.assertStepId(CATEGORY_SLUG, UNDECIDED_SLUG, "unreadable-is-main");
+    out(
+        UNDECIDED_SLUG,
+        StoryTarget.PROJECTS,
+        "GET " + StoryCatalog.releaseListingWire(StoryCatalog.RELEASE_REQUESTS_PATH) + " -> 503");
+    out(UNDECIDED_SLUG, StoryTarget.CI, "POST " + StoryCatalog.TRIGGER_PATH + " -> 200");
+    // Two in; out, the unreadable listing, the branch head (absent, before and after), the trigger,
+    // the run, main's head at the ending; and a row. EIGHT, and no ancestry question among them:
+    // there was no tag to ask about.
+    ReportAssertions.assertEdgeCount(CATEGORY_SLUG, UNDECIDED_SLUG, 8);
+    ReportAssertions.assertOnlyEdgesFrom(
+        CATEGORY_SLUG, UNDECIDED_SLUG, List.of(StoryIdentities.OPERATOR, StoryTarget.SERVICE));
+    ReportAssertions.assertNotLeaked(CATEGORY_SLUG, UNDECIDED_SLUG, undecidedBumpId);
+  }
+
   @AfterAll
   static void bothBumpStoriesAreComplete() {
     String branchWire = StoryCatalog.treeWire(StoryCatalog.REPOSITORY, StoryCatalog.BRANCH);
@@ -483,6 +768,12 @@ public class BumpIT {
     // because that is how qits-projects addresses one — its own catalog row id — and a label
     // without it would not say which repository was handed on.
     out(PUSHED_SLUG, StoryTarget.PROJECTS, "POST " + StoryCatalog.RELEASE_REQUESTS_PATH + " -> 200");
+    // AND THE READ BEFORE THE TRIGGER (qits-1081): is a release of this repository cut and not on
+    // main yet? None is, so nothing else is asked and the base is main.
+    out(
+        PUSHED_SLUG,
+        StoryTarget.PROJECTS,
+        "GET " + StoryCatalog.releaseListingWire(StoryCatalog.RELEASE_REQUESTS_PATH) + " -> 200");
 
     ReportAssertions.assertDeclaredEdge(
         CATEGORY_SLUG,
@@ -492,16 +783,18 @@ public class BumpIT {
         StoryTarget.STORE,
         "the changes are frozen onto the bump row at REQUEST time and never recomputed");
 
-    // THE DESIGN, ASSERTED AS A SHAPE. Four requests in; out, one trigger, one run read, two head
-    // reads, one release ask and a row. THIS SERVICE PUSHED NOTHING — there is no arrow from it to
-    // any repository, because there is no such call in it to make. An eleventh edge would be this
-    // process having grown a way to touch somebody else's tree, and no presence check could see it.
-    ReportAssertions.assertEdgeCount(CATEGORY_SLUG, PUSHED_SLUG, 10);
+    // THE DESIGN, ASSERTED AS A SHAPE. Four requests in; out, the release listing, one trigger, one
+    // run read, two head reads, one release ask and a row. THIS SERVICE PUSHED NOTHING — there is no
+    // arrow from it to any repository, because there is no such call in it to make. A twelfth edge
+    // would be this process having grown a way to touch somebody else's tree, and no presence check
+    // could see it.
+    ReportAssertions.assertEdgeCount(CATEGORY_SLUG, PUSHED_SLUG, 11);
     ReportAssertions.assertOnlyEdgesFrom(
         CATEGORY_SLUG, PUSHED_SLUG, List.of(StoryIdentities.OPERATOR, StoryTarget.SERVICE));
     // A bump reads no manifest and asks no registry: the changes were frozen at REQUEST time, out
     // of an inventory a scan wrote. Recomputing at dispatch would not be the list the operator saw.
-    // (qits-projects IS reached here — once, and it is the release ask above, never the catalog.)
+    // (qits-projects IS reached here — for the release listing and the release ask above, never the
+    // catalog.)
     ReportAssertions.assertNoEdgesTo(CATEGORY_SLUG, PUSHED_SLUG, StoryTarget.ARTIFACTS);
     ReportAssertions.assertNoEdgesTo(CATEGORY_SLUG, PUSHED_SLUG, StoryTarget.MIRROR);
     // The row id is generated per run and reaches no label, no note and no rendering.
@@ -544,6 +837,11 @@ public class BumpIT {
         UNMOVED_SLUG,
         StoryTarget.PROJECTS,
         "POST " + StoryCatalog.SECOND_RELEASE_REQUESTS_PATH + " -> 200");
+    out(
+        UNMOVED_SLUG,
+        StoryTarget.PROJECTS,
+        "GET " + StoryCatalog.releaseListingWire(StoryCatalog.SECOND_RELEASE_REQUESTS_PATH)
+            + " -> 200");
 
     ReportAssertions.assertDeclaredEdge(
         CATEGORY_SLUG,
@@ -553,11 +851,12 @@ public class BumpIT {
         StoryTarget.STORE,
         "the head before the run is recorded, and the verdict is written against it");
 
-    // Two in; out, two head reads (the branch and main), one trigger, one run read, one release ask
-    // and a row. EIGHT, where it was six: the two new arrows are main's head and the ask, and they
+    // Two in; out, the release listing, two head reads (the branch and main), one trigger, one run
+    // read, one release ask and a row. EIGHT where it was six came from main's head and the ask, which
     // are one change — you cannot honestly make the second without the first, because a branch that
-    // is level with main must still be asked about for nothing.
-    ReportAssertions.assertEdgeCount(CATEGORY_SLUG, UNMOVED_SLUG, 8);
+    // is level with main must still be asked about for nothing — and NINE from the listing a base is
+    // chosen from (qits-1081).
+    ReportAssertions.assertEdgeCount(CATEGORY_SLUG, UNMOVED_SLUG, 9);
     ReportAssertions.assertOnlyEdgesFrom(
         CATEGORY_SLUG, UNMOVED_SLUG, List.of(StoryIdentities.OPERATOR, StoryTarget.SERVICE));
     ReportAssertions.assertNoEdgesTo(CATEGORY_SLUG, UNMOVED_SLUG, StoryTarget.ARTIFACTS);

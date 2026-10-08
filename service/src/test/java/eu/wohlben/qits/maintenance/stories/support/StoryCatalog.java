@@ -127,6 +127,41 @@ public final class StoryCatalog {
    */
   public static final String SECOND_RELEASE_REQUESTS_PATH = StoryTarget.releaseRequests("r2");
 
+  // --- an unmerged release, for the base a bump is cut from (qits-1081) -------------------------
+
+  /** The branch {@link #ANGULAR_GROUP} is bumped on. */
+  public static final String ANGULAR_BRANCH = "maintenance/" + ANGULAR_GROUP;
+
+  /** Where {@link #ANGULAR_BRANCH} stands before the rebuild — cut from main, long ago. */
+  public static final String ANGULAR_BRANCH_SHA = "dd44ee55ff6677889900aabbccddeeff00112233";
+
+  /** …and where it stands once the step rebuilt it on the tag. */
+  public static final String REBUILT_SHA = "ee55ff6677889900aabbccddeeff001122334455";
+
+  /** {@link #REPOSITORY}'s newest release that has not reached main. */
+  public static final String TAG_VERSION = "2026.1007.171656";
+
+  /** …and the commit it points at. */
+  public static final String TAG_SHA = "7a9e5c3b1d0f2e4a6c8b0d1f3e5a7c9b2d4f6e80";
+
+  /**
+   * The git host's ancestry door for {@link #REPOSITORY}, under its storage id — which is the
+   * catalog id. The stand-in matches without the query, so one answer serves both questions a
+   * rebuild asks (is the tag on main, is it on the branch).
+   */
+  public static final String CONTAINS_PATH = "/githost/api/repositories/" + CATALOG_ID + "/contains";
+
+  /** The run of the bump that is rebuilt on the tag. */
+  public static final String THIRD_RUN = "run-gamma";
+
+  /** …and of the one whose base could not be decided. */
+  public static final String FOURTH_RUN = "run-delta";
+
+  /** {@code GET …/release-requests?state=all} as it goes out: the listing a base is chosen from. */
+  public static String releaseListingWire(String releaseRequestsPath) {
+    return releaseRequestsPath + "?state=all";
+  }
+
   private StoryCatalog() {}
 
   // --- routes, in two spellings ------------------------------------------------------------------

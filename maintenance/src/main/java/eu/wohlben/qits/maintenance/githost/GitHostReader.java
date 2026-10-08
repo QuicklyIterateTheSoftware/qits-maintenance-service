@@ -21,7 +21,8 @@ import java.util.Optional;
  *
  * <p><b>The routes are name-addressed</b>, {@code /git/<project>/<repo>/…}, which is the scheme the
  * repository-identity ruling makes the only clone URL. The id-addressed scheme beside it is
- * qits-projects' own and is refused to anyone else.
+ * qits-projects' own and is refused to anyone else. The one exception is {@link #contains}, a REST
+ * primitive that exists only under the storage id.
  *
  * <p><b>A revision is one path segment</b>, so a slash in a branch name is percent-encoded. It
  * matters for {@code maintenance/dependencies}, which is exactly the shape of every branch this
@@ -80,6 +81,66 @@ public class GitHostReader {
       default -> TreeLookup.unreachable(
           "the git host could not be asked whether " + repository + " holds " + revision);
     };
+  }
+
+  /** The git host's ancestry door, under the repository's storage id. */
+  public static final String REPOSITORIES_API = "/githost/api/repositories/";
+
+  /**
+   * What the ancestry door answered.
+   *
+   * @param contains whether {@code commit} is reachable from {@code in}, or null when unanswered
+   * @param error why it was not answered, or null
+   */
+  public record Containment(Boolean contains, String error) {
+
+    public boolean readable() {
+      return contains != null;
+    }
+  }
+
+  /**
+   * Whether {@code commit} is an ancestor of (or equal to) {@code in} — {@code GET
+   * /githost/api/repositories/{repoId}/contains?commit=&in=}, answering {@code {"repoId", "commit",
+   * "in", "contains"}}.
+   *
+   * <p><b>Addressed by STORAGE ID, unlike every other read here.</b> The door is one of the git
+   * host's REST primitives and has no name-addressed twin; its {@code repoId} is the id qits-projects
+   * mints a repository's storage under, which is the same row id the catalog answers and this
+   * service keeps as {@code mt_repository.catalog_id} — the address the release ask already uses.
+   * The door admits {@code qits:system}, which is what {@link PeerClient} presents.
+   *
+   * <p><b>A 404 is a FAILED answer and never a false.</b> It is {@code no-such-repository} or
+   * {@code no-such-commit}: a fact about the question, not an answer to it. Only a 200 carrying a
+   * boolean is read as one.
+   */
+  public Containment contains(String repoId, String commit, String in) {
+    if (repoId == null || repoId.isBlank() || commit == null || in == null) {
+      return new Containment(null, "nothing to ask the git host about");
+    }
+    String path =
+        REPOSITORIES_API
+            + encode(repoId)
+            + "/contains?commit="
+            + encode(commit)
+            + "&in="
+            + encode(in);
+    PeerAnswer answer = peers.get(PeerTarget.GITHOST, path).answer();
+    if (!answer.ok()) {
+      return new Containment(
+          null,
+          "the git host could not say whether " + commit + " is in " + in + ": " + answer.failure());
+    }
+    JsonNode body = answer.json();
+    if (body == null || !body.hasNonNull("contains") || !body.get("contains").isBoolean()) {
+      return new Containment(
+          null, "the git host answered a containment read with no answer: " + answer.body());
+    }
+    return new Containment(body.get("contains").asBoolean(), null);
+  }
+
+  private static String encode(String value) {
+    return java.net.URLEncoder.encode(value, java.nio.charset.StandardCharsets.UTF_8);
   }
 
   /** One file, as text. */

@@ -892,6 +892,26 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
         });
   }
 
+  /**
+   * Records what a group bump's payload is cut from and, when it is rebuilt, the head it replaces
+   * (qits-1081). Written before the trigger, so a trigger that fails still says what it would have
+   * sent.
+   */
+  @ActivateRequestContext
+  public void bumpBase(UUID id, String baseRef, String replaceHead) {
+    DbRetry.runInNewTx(
+        "record the base of bump " + id,
+        () -> {
+          MtBump row = MtBump.findById(id);
+          if (row == null) {
+            return;
+          }
+          row.baseRef = baseRef;
+          row.replaceHead = replaceHead;
+          getEntityManager().flush();
+        });
+  }
+
   /** Records what qits-projects said to the join, without ending anything. */
   @ActivateRequestContext
   public void bumpJoined(UUID id, String releaseState, String releaseDetail, Instant now) {

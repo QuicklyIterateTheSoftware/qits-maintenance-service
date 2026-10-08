@@ -166,6 +166,10 @@ components:
           type: string
         releaseStateAt:
           $ref: "#/components/schemas/Instant"
+        baseRef:
+          type: string
+        replaceHead:
+          type: string
         changes:
           type: array
           items:

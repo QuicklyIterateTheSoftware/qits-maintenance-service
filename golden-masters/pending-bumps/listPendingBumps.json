@@ -22,6 +22,8 @@
       "releaseState": null,
       "releaseDetail": null,
       "releaseStateAt": null,
+      "baseRef": null,
+      "replaceHead": null,
       "changes": [
         {
           "ecosystem": "DOCKER",
@@ -55,6 +57,8 @@
       "releaseState": null,
       "releaseDetail": null,
       "releaseStateAt": null,
+      "baseRef": null,
+      "replaceHead": null,
       "changes": [
         {
           "ecosystem": "MAVEN",
@@ -88,6 +92,8 @@
       "releaseState": null,
       "releaseDetail": null,
       "releaseStateAt": null,
+      "baseRef": null,
+      "replaceHead": null,
       "changes": [
         {
           "ecosystem": "MAVEN",
@@ -121,6 +127,8 @@
       "releaseState": "PENDING",
       "releaseDetail": null,
       "releaseStateAt": "2026-01-01T00:00:00Z",
+      "baseRef": null,
+      "replaceHead": null,
       "changes": [
         {
           "ecosystem": "NPM",

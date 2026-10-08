@@ -207,4 +207,20 @@ public class MtBump extends PanacheEntityBase {
   /** When the state above was last read. Null on a bump nothing has asked about. */
   @Column(name = "release_state_at")
   public Instant releaseStateAt;
+
+  /**
+   * <b>What a GROUP bump's branch was cut from</b> (qits-1081, V19): the repository's main branch, or
+   * {@code refs/tags/<version>} when its newest release had not reached main — see {@code BumpBase}.
+   * Written at dispatch, before the trigger. Null on a row dispatched before the column existed and
+   * on every automation row. It is also the dispatcher's once-per-tag guard for a CONFLICTED release.
+   */
+  @Column(name = "base_ref", length = 255)
+  public String baseRef;
+
+  /**
+   * The branch head the step was told to rebuild over ({@code replaceHead}), or null when the branch
+   * was continued or started fresh.
+   */
+  @Column(name = "replace_head", length = 64)
+  public String replaceHead;
 }

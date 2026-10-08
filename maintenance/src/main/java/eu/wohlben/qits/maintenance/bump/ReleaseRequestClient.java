@@ -382,6 +382,77 @@ public class ReleaseRequestClient {
   }
 
   /**
+   * One release that was cut and has not reached main: a tag qits-projects folds into every request
+   * of the repository until its merge lands.
+   *
+   * @param version the tag's name, {@code YYYY.MMDD.HHMMSS}
+   * @param releasedSha the commit the tag points at
+   */
+  public record Unmerged(String version, String releasedSha) {}
+
+  /**
+   * What the listing said about a repository's released-but-unmerged tags.
+   *
+   * @param newest the newest of them by {@link Calver}, or null when there is none — or when the
+   *     listing could not be read, which {@code error} then says
+   * @param error why the listing could not be read, or null when it answered
+   */
+  public record UnmergedReleases(Unmerged newest, String error) {
+
+    public boolean readable() {
+      return error == null;
+    }
+  }
+
+  /**
+   * <b>The newest release of a repository that has not reached main</b> (qits-1081), read off
+   * {@code GET …/release-requests?state=all} — every request, whatever its state, because a released
+   * tag outlives the request that cut it (RELEASED, then OBSOLETE once a later one shipped) and only
+   * {@code mergedToMainAt} says it has landed.
+   *
+   * <p><b>Why a bump wants it.</b> qits-projects folds every such tag into every release request of
+   * the repository, so a {@code maintenance/<group>} branch cut from main that edits the same pin line
+   * a released tag already moved conflicts in every fold until that tag is merged — which for a
+   * deployment stuck on its merge is for ever. A branch cut from the tag carries it, and the fold has
+   * nothing left to conflict on. See {@link BumpBase} for the decision.
+   *
+   * <p><b>The listing, and never the {@code SCMRelease} ledger.</b> That event is known to drop, and
+   * a missing release is precisely the one this read exists to find.
+   *
+   * <p>Candidates are the requests with a {@code releasedSha} and no {@code mergedToMainAt}; the
+   * newest is chosen by {@link Calver#ORDER}, numerically per segment. Anything this cannot read —
+   * a transport failure, any non-2xx including a 404, a body with no {@code requests} array — is an
+   * ERROR rather than "none": the caller falls back to main either way, but says why.
+   *
+   * @param repoId the repository as qits-projects ids it ({@code mt_repository.catalog_id})
+   */
+  public UnmergedReleases unmergedReleases(String repoId) {
+    String path = REQUESTS_PATH_PREFIX + encode(repoId) + REQUESTS_PATH_SUFFIX + "?state=all";
+    PeerAnswer answer = peers.get(PeerTarget.PROJECTS, path).answer();
+    if (!answer.ok()) {
+      return new UnmergedReleases(
+          null, "the release requests of " + repoId + " could not be read: " + answer.failure());
+    }
+    JsonNode body = answer.json();
+    if (body == null || !body.hasNonNull("requests") || !body.get("requests").isArray()) {
+      return new UnmergedReleases(
+          null, "the release requests of " + repoId + " answered no requests array");
+    }
+    Unmerged newest = null;
+    for (JsonNode request : body.get("requests")) {
+      String version = text(request, "version");
+      String sha = text(request, "releasedSha");
+      if (version == null || sha == null || request.hasNonNull("mergedToMainAt")) {
+        continue;
+      }
+      if (newest == null || Calver.compare(version, newest.version()) > 0) {
+        newest = new Unmerged(version, sha);
+      }
+    }
+    return new UnmergedReleases(newest, null);
+  }
+
+  /**
    * The request's named BRANCH sources, read off the same answer. A tag source is no branch anybody
    * commits to, and an entry with no kind is read as a branch — the older shape carried none.
    */
