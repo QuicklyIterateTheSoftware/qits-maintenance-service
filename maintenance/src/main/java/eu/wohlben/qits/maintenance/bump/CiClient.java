@@ -263,10 +263,17 @@ public class CiClient {
       this(status, error, null, null, false, null, null);
     }
 
-    /** The statuses nothing further happens after. */
+    /**
+     * The statuses nothing further happens after — qits-ci's own list ({@code CiRunStatus}):
+     * {@code SUCCESS}, {@code FAILED}, {@code CANCELLED}, {@code CONFIG_ERROR} and {@code
+     * TIMED_OUT}. A run left out of this list reads as still going, which is what used to happen to
+     * a run that ran out of qits-ci's clock: {@code TIMED_OUT} was missing here, so such a run's
+     * bump or automation stayed RUNNING forever (qits-760 follow-up).
+     */
     public boolean terminal() {
       return status != null
-          && List.of("SUCCESS", "FAILED", "CANCELLED", "CONFIG_ERROR").contains(status);
+          && List.of("SUCCESS", "FAILED", "CANCELLED", "CONFIG_ERROR", "TIMED_OUT")
+              .contains(status);
     }
 
     /** Only one of the terminal statuses means the step did its work. */
@@ -277,6 +284,16 @@ public class CiClient {
     /** The one status qits-ci re-fires an infra failure from. */
     public boolean failed() {
       return "FAILED".equals(status);
+    }
+
+    /**
+     * A deadline rather than a verdict — qits-ci's own line, {@code CiRunStatus#TIMED_OUT}'s
+     * javadoc. qits-ci deliberately never auto-retries one (a timeout is outside its infra-failure
+     * set), but {@link BumpService#followRetries} still checks, the same way it does for {@link
+     * #failed()}: harmless when qits-ci never answers one, and correct if that ever changes.
+     */
+    public boolean timedOut() {
+      return "TIMED_OUT".equals(status);
     }
 
     /** Whether this run is qits-ci's automatic retry of that one — the link, and nothing else. */

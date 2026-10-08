@@ -316,9 +316,15 @@ public class BumpService {
    * seen to end in: a FAILED original whose retry is still going is RUNNING, and one whose retry
    * already ended takes that verdict.
    *
+   * <p><b>A {@code TIMED_OUT} run takes the same look</b> (qits-760 follow-up). qits-ci never fires
+   * an automatic retry of a deadline — {@code CiRunService#autoRetry}'s own javadoc lists a timeout
+   * as outside its infra-failure set — so this always finds none and falls through to the run's own
+   * verdict exactly as a FAILED run with no retry does. Checking anyway costs nothing and means this
+   * does not have to be revisited the day qits-ci's answer changes.
+   *
    * @return the terminal state that decides this chain, or null when the bump stays RUNNING — a run
-   *     still going, a run or listing that could not be read, or a FAILED run young enough that its
-   *     retry may not have been recorded yet
+   *     still going, a run or listing that could not be read, or a FAILED/TIMED_OUT run young enough
+   *     that its retry may not have been recorded yet
    */
   private CiClient.RunState followRetries(
       MtBump bump, String runId, CiClient.RunState state, Map<String, CiClient.RunState> states) {
@@ -330,7 +336,7 @@ public class BumpService {
         store.bumpRunStatus(bump.id, at.status());
         return null;
       }
-      if (!at.failed()) {
+      if (!at.failed() && !at.timedOut()) {
         return at;
       }
       String retryId = null;

@@ -151,6 +151,28 @@ class AutomationInfraRetryTest {
     assertEquals(List.of(RUN), entry().runIds());
   }
 
+  /**
+   * <b>{@code TIMED_OUT} is terminal and ends the automation FAILED</b> (qits-760 follow-up). Before
+   * this fix {@code CiClient.RunState.terminal()} did not list {@code TIMED_OUT}, so a timed-out run
+   * read back as "not terminal" forever and the automation never left RUNNING. It is also checked
+   * for a retry the same way a FAILED run is — qits-ci never fires one for a deadline, so the listing
+   * here answers nothing and the run's own TIMED_OUT verdict decides, same as a FAILED run with no
+   * retry does in {@link #aRealFailureStillFails}.
+   */
+  @Test
+  void aTimedOutRunWithNoRetryStillFails() {
+    UUID id = running();
+    scriptRun(RUN, "TIMED_OUT", null, false, LONG_AGO, null);
+    scriptListing();
+
+    MtBump done = poll(id);
+
+    assertEquals(BumpStatus.FAILED.name(), done.status, done.message);
+    assertTrue(done.message.contains("ended TIMED_OUT"), done.message);
+    assertEquals(AutomationState.FAILED.name(), entry().state());
+    assertEquals(List.of(RUN), entry().runIds());
+  }
+
   /** A line naming a run that does not carry the link back is not believed. */
   @Test
   void aNamedRunWithoutTheLinkIsNotFollowed() {

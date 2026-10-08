@@ -225,6 +225,24 @@ class AutomationSourceBranchEndingTest {
   }
 
   /**
+   * <b>A TIMED-OUT RUN IS TERMINAL AND ENDS THE BUMP FAILED</b> (qits-760 follow-up). Before this fix
+   * {@code CiClient.RunState.terminal()} did not list {@code TIMED_OUT}, so the poll kept reading the
+   * run as still going and the row never left RUNNING. The sentence names the status verbatim, which
+   * is what "a detail saying it timed out" means here — the same {@code ciRunStatus} every other red
+   * ending already carries into its message.
+   */
+  @Test
+  void aTimedOutRunEndsTheBumpFailed() {
+    UUID id = trigger(WORKSPACE_BRANCH, gitlink());
+
+    MtBump done = complete(id, "TIMED_OUT");
+
+    assertEquals(BumpStatus.FAILED.name(), done.status, "a timed-out run is a failed row, plainly");
+    assertEquals("the ci run ended TIMED_OUT", done.message, "and the sentence says so");
+    assertNull(done.resultSha, "a failed run wrote no commit to report");
+  }
+
+  /**
    * Two things this ending must never do, asserted where a green ending would do them.
    *
    * <p><b>No {@code mt_branch} row</b>: that row's unique {@code (repository, group_name)} index is
