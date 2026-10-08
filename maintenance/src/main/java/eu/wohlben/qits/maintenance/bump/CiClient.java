@@ -249,6 +249,9 @@ public class CiClient {
    * @param autoRetry whether qits-ci fired it itself, for an infra failure of {@code retryOfRunId}
    * @param finishedAt when it ended, or null
    * @param retriedAs the run its step output says it was retried as, or null
+   * @param failure the step that failed it and why, or null — on a run that did not fail, on one
+   *     read from a listing (which carries no steps), and on one whose steps name no failure
+   *     (qits-1116)
    */
   public record RunState(
       String status,
@@ -257,10 +260,22 @@ public class CiClient {
       String retryOfRunId,
       boolean autoRetry,
       Instant finishedAt,
-      String retriedAs) {
+      String retriedAs,
+      Failure failure) {
 
     public RunState(String status, String error) {
-      this(status, error, null, null, false, null, null);
+      this(status, error, null, null, false, null, null, null);
+    }
+
+    public RunState(
+        String status,
+        String error,
+        String repoId,
+        String retryOfRunId,
+        boolean autoRetry,
+        Instant finishedAt,
+        String retriedAs) {
+      this(status, error, repoId, retryOfRunId, autoRetry, finishedAt, retriedAs, null);
     }
 
     /**
@@ -300,6 +315,70 @@ public class CiClient {
     public boolean automaticRetryOf(String runId) {
       return autoRetry && runId != null && runId.equals(retryOfRunId);
     }
+  }
+
+  /**
+   * <b>Why a run went red</b> (qits-1116): the step that failed it, its exit code and a few lines
+   * of its log. Without it every red automation read "its step log says why" and a person had to
+   * open the run to learn which of a dozen things it was.
+   *
+   * @param stepIndex the failing step's index in the run
+   * @param image the image that step ran, or null when the run did not say
+   * @param exitCode its exit code, or null when it has none (a step the infrastructure failed)
+   * @param excerpt a few lines of its output that say why — see {@link FailureExcerpt} — or null
+   *     when it wrote nothing
+   */
+  public record Failure(int stepIndex, String image, Integer exitCode, String excerpt) {
+
+    /** The first excerpt line, or null when there is no excerpt. */
+    public String firstLine() {
+      if (excerpt == null || excerpt.isBlank()) {
+        return null;
+      }
+      int newline = excerpt.indexOf('\n');
+      return newline < 0 ? excerpt : excerpt.substring(0, newline);
+    }
+  }
+
+  /**
+   * The failing step of a run body: the lowest-index step with status {@code FAILED}, else the
+   * last step that exited non-zero, else null. Package-visible for the test that pins it.
+   */
+  static Failure failure(JsonNode body) {
+    JsonNode steps = body == null ? null : body.get("steps");
+    if (steps == null || !steps.isArray()) {
+      return null;
+    }
+    JsonNode failed = null;
+    JsonNode nonZero = null;
+    for (JsonNode step : steps) {
+      if ("FAILED".equals(text(step, "status"))
+          && (failed == null || stepIndex(step) < stepIndex(failed))) {
+        failed = step;
+      }
+      Integer exit = exitCode(step);
+      if (exit != null && exit != 0) {
+        nonZero = step;
+      }
+    }
+    JsonNode step = failed != null ? failed : nonZero;
+    if (step == null) {
+      return null;
+    }
+    return new Failure(
+        stepIndex(step),
+        text(step, "image"),
+        exitCode(step),
+        FailureExcerpt.of(text(step, "output")));
+  }
+
+  private static int stepIndex(JsonNode step) {
+    return step.path("stepIndex").asInt(0);
+  }
+
+  private static Integer exitCode(JsonNode step) {
+    JsonNode value = step.get("exitCode");
+    return value == null || !value.canConvertToInt() ? null : value.asInt();
   }
 
   /** The line qits-ci appends to an infra-failed step once its automatic retry exists. */
@@ -386,7 +465,8 @@ public class CiClient {
         text(body, "retryOfRunId"),
         body.path("autoRetry").asBoolean(false),
         instant(text(body, "finishedAt")),
-        retriedAs);
+        retriedAs,
+        failure(body));
   }
 
   /** The run id the newest "retried automatically as run" line of any step names, or null. */

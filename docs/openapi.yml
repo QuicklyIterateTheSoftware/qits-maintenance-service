@@ -119,6 +119,8 @@ components:
           type: string
         updatedAt:
           $ref: "#/components/schemas/Instant"
+        failure:
+          $ref: "#/components/schemas/FailureDto"
     BumpDto:
       type: object
       properties:
@@ -174,6 +176,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Change"
+        failure:
+          $ref: "#/components/schemas/FailureDto"
     BumpWindowDto:
       type: object
       properties:
@@ -335,6 +339,19 @@ components:
         version:
           type: string
         reason:
+          type: string
+    FailureDto:
+      type: object
+      properties:
+        stepIndex:
+          type: integer
+          format: int32
+        image:
+          type: string
+        exitCode:
+          type: integer
+          format: int32
+        excerpt:
           type: string
     GroupDto:
       type: object

@@ -9,6 +9,7 @@ import eu.wohlben.qits.maintenance.dto.DependencyDto;
 import eu.wohlben.qits.maintenance.dto.DownstreamDto;
 import eu.wohlben.qits.maintenance.dto.DependentDto;
 import eu.wohlben.qits.maintenance.dto.DependentsDto;
+import eu.wohlben.qits.maintenance.dto.FailureDto;
 import eu.wohlben.qits.maintenance.dto.GroupDto;
 import eu.wohlben.qits.maintenance.dto.PinDto;
 import eu.wohlben.qits.maintenance.dto.PinSourceDto;
@@ -47,6 +48,8 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
       ReleaseRequestAutomationController.RunRequest.class,
       ReleaseRequestAutomationsDto.class,
       ReleaseRequestAutomationsDto.AutomationDto.class,
+      // Why a run went red (qits-1116), on an automation entry and on a bump.
+      FailureDto.class,
       ScanController.StartScanRequest.class,
       ScanController.StartScanRequest.Response.class,
       ArtifactController.IngestRequest.class,

@@ -2,6 +2,7 @@ package eu.wohlben.qits.maintenance.persistence;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import eu.wohlben.qits.db.DbRetry;
+import eu.wohlben.qits.maintenance.bump.CiClient;
 import eu.wohlben.qits.maintenance.entity.MtArtifact;
 import eu.wohlben.qits.maintenance.entity.MtArtifactComponent;
 import eu.wohlben.qits.maintenance.entity.MtArtifactEdge;
@@ -1031,8 +1032,54 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
           }
           row.message = message;
           row.finishedAt = status.terminal() ? now : null;
+          // Every ending but bumpFailed says nothing about a failing step, and a row must not
+          // carry one it did not end on (qits-1116).
+          clearFailure(row);
           getEntityManager().flush();
         });
+  }
+
+  /**
+   * Closes a bump FAILED, with why its run went red (qits-1116): the failing step, its image, its
+   * exit code and the excerpt of its log. A null failure writes the four columns null, which is what
+   * a run whose steps named no failure has to say.
+   */
+  @ActivateRequestContext
+  public void bumpFailed(
+      UUID id,
+      String ciRunStatus,
+      String message,
+      CiClient.Failure failure,
+      Instant now) {
+    DbRetry.runInNewTx(
+        "fail bump " + id,
+        () -> {
+          MtBump row = MtBump.findById(id);
+          if (row == null) {
+            return;
+          }
+          row.status = BumpStatus.FAILED.name();
+          if (ciRunStatus != null) {
+            row.ciRunStatus = ciRunStatus;
+          }
+          row.message = message;
+          row.finishedAt = now;
+          clearFailure(row);
+          if (failure != null) {
+            row.failedStepIndex = failure.stepIndex();
+            row.failedStepImage = failure.image();
+            row.failedStepExit = failure.exitCode();
+            row.failureExcerpt = failure.excerpt();
+          }
+          getEntityManager().flush();
+        });
+  }
+
+  private static void clearFailure(MtBump row) {
+    row.failedStepIndex = null;
+    row.failedStepImage = null;
+    row.failedStepExit = null;
+    row.failureExcerpt = null;
   }
 
   /**

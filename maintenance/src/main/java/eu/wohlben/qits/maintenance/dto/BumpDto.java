@@ -57,6 +57,8 @@ import java.util.UUID;
  * @param replaceHead the branch head the step was told to rebuild the branch over, or null when the
  *     branch was continued or started fresh
  * @param changes the payload's changes, verbatim
+ * @param failure why the run went red — the failing step, its exit code and an excerpt of its log
+ *     (qits-1116) — or null on every row that did not end FAILED on a run that said
  */
 public record BumpDto(
     UUID id,
@@ -82,4 +84,5 @@ public record BumpDto(
     Instant releaseStateAt,
     String baseRef,
     String replaceHead,
-    List<Change> changes) {}
+    List<Change> changes,
+    FailureDto failure) {}
