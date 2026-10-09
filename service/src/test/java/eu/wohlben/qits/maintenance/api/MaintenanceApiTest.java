@@ -683,7 +683,7 @@ class MaintenanceApiTest {
     bumps.sweep();
 
     assertEquals("FAILED", awaitTerminal("/bumps/" + id, "SUCCEEDED", "FAILED", "NOTHING_TO_DO"));
-    given().when().get(BASE + "/bumps/" + id).then().body("message", containsString("rewritten by hand"));
+    given().when().get(BASE + "/bumps/" + id).then().body("message", containsString("qits maintenance did not write"));
     given()
         .when()
         .get(BASE + "/repositories")

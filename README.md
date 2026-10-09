@@ -374,10 +374,19 @@ such a tag already moved conflicts in every fold. At dispatch `BumpBase` reads `
 (calver compared numerically per segment), and asks qits-githost's `GET
 /githost/api/repositories/<catalog id>/contains?commit=<releasedSha>&in=<main head>` — the door is
 storage-id addressed, and the storage id is the catalog id. Not contained: `baseRef` is
-`refs/tags/<version>`, and when `maintenance/<group>` exists without the tag (same door, `in=<branch
-head>`) and is not STALE, its head is sent as `replaceHead`; the step rebuilds the branch on the tag
-under `--force-with-lease` on that head. Anything unreadable is `main` with a WARN — never a failed
-bump. Both are recorded on the row (`base_ref`, `replace_head`, V19) and answered on `GET /bumps`. The
+`refs/tags/<version>`. Anything unreadable is `main` with a WARN — never a failed bump.
+
+**A `maintenance/<group>` branch is always ONE commit on its base (user decision 2026-10-09).** It
+replaced "ff-only, never force", which stacked one commit per bump. Whenever the branch exists and is
+not STALE, its head is sent as `replaceHead`, and the step rebuilds the branch from the base with
+every change in the payload, commits once and pushes under `--force-with-lease`. The changes are
+everything pending in the group against the scanned base, so the pins the old commit carried are in
+the payload again and survive. The step rebuilds only over commits authored `maintenance@qits.local`
+on top of the base; any other commit, or a branch that moved under the lease, ends the run with exit
+42 (`BumpBase.NOT_OURS_EXIT`) and no push, and the branch becomes STALE. A STALE branch is not
+dispatched again (the dispatcher reports it as stalled) until it is deleted. The estate-pins
+automation (group `targeted`) runs the same pipeline against a request's own branch, which the step
+still appends to, ff-only. Both are recorded on the row (`base_ref`, `replace_head`, V19) and answered on `GET /bumps`. The
 dispatcher rebuilds a CONFLICTED release this way too, once per tag; see `BumpDispatcher`.
 
 **Three answers from qits-ci and they mean different things:**
@@ -389,15 +398,15 @@ dispatcher rebuilds a CONFLICTED release this way too, once per tag; see `BumpDi
 | **200 with no run id** | FAILED, `no run recorded for MaintenanceBump (repository unreadable or no platform pipeline)`. A run exists only if the repository was readable in that evaluation, so nothing is running and nothing will be. |
 
 **The branch head is read twice — before the trigger and when the run ends — and only the head is
-compared, never a commit count.** One bump is up to two commits, because the maven step and the
-node/docker step each clone, commit and push.
+compared, never a commit count.** A bump that finds the same single commit already there pushes
+nothing.
 
 | run | branch | bump | `mt_branch` | release ask |
 |---|---|---|---|---|
 | SUCCESS | moved | `SUCCEEDED` | `PUSHED` | **asked** |
 | SUCCESS | unmoved | `NOTHING_TO_DO` | unchanged | not asked — nothing was pushed |
 | red | unmoved | `FAILED` | `FAILED` | not asked |
-| red | **moved** | `FAILED` | `STALE` — the push is ff-only and never forced, so a branch that moved anyway is a person's commit. They own it now. | not asked — releasing somebody else's commits on their behalf is the one thing this must never do |
+| red | **moved**, or step exit 42 | `FAILED` | `STALE` — the branch carries a commit qits maintenance did not write, or moved under the lease. They own it now. | not asked — releasing somebody else's commits on their behalf is the one thing this must never do |
 
 ### The release ask
 
@@ -421,9 +430,8 @@ poll the request, wait for a version, or record a release.
   name and the project cannot address it. A row with no catalog id records a refusal; the next scan
   fills the column and the next bump asks with it.
 - **`summary` is the commit subject shape the bump's own commits carry**, word for word from
-  qits-ci's `ci/src/main/resources/platform-pipelines/maintenance-bump.yml`. The `n` is what was ASKED FOR, and it
-  cannot be what a commit says: one bump is up to two commits and each counts what its own step
-  applied. It doubles as the fold's commit message.
+  qits-ci's `ci/src/main/resources/platform-pipelines/maintenance-bump.yml`. The `n` is what was ASKED FOR; the
+  commit's own `n` counts only the changes that differ from the base, so the two can differ. It doubles as the fold's commit message.
 - **No `expectedSha`, and that is a deliberate loss.** qits-workspaces' door armed a request at the
   instant it was asked, so a head that had moved in between had to be a refusal. A release request
   is re-folded and re-gated on every push to any of its named sources, so a commit landing after the
