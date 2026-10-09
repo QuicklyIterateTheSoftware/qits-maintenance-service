@@ -203,6 +203,68 @@ class AdoptionEvaluatorTest {
     assertEquals(AdoptionEvaluator.State.PENDING, adopter(journey, behind).state());
   }
 
+  // --- publish-if-changed: release version is not artifact version --------------------------------
+
+  /**
+   * <b>An artifact the release left unchanged is required at its "unchanged since" version.</b>
+   * Release V publishes only the image; the library jar stays at U. A consumer carrying the jar at U
+   * has everything V shipped of it and is ADOPTED; one below U is PENDING. A later release's jar
+   * is not what V carried.
+   */
+  @Test
+  void anUnchangedArtifactIsRequiredAtTheVersionItWasLastPublishedAt() {
+    String library = "qits-unchanged-lib" + run;
+    String jar = "eu.wohlben.qits:qits-unchanged" + run;
+    String image = "qits/unchanged" + run;
+
+    scanned(library, RepositoryArchetype.LIBRARY);
+    released(library, Ecosystem.MAVEN, jar, "2026.821.9", MARCH);
+    released(library, Ecosystem.DOCKER, image, "2026.821.9", MARCH);
+    // V: the jar's content did not change, so only the image was published.
+    released(library, Ecosystem.DOCKER, image, "2026.900.1", APRIL);
+    // A later release that changed the jar: not what V carried.
+    released(library, Ecosystem.MAVEN, jar, "2026.910.1", JUNE);
+
+    String carrying = "qits-unchanged-carrying" + run;
+    scanned(carrying, RepositoryArchetype.SERVICE, pin(Ecosystem.MAVEN, jar));
+    released(
+        carrying,
+        Ecosystem.MAVEN,
+        "eu.wohlben.qits:carrying" + run,
+        "1.0.0",
+        MAY,
+        contains(Ecosystem.MAVEN, jar, "2026.821.9"));
+
+    String behind = "qits-unchanged-behind" + run;
+    scanned(behind, RepositoryArchetype.SERVICE, pin(Ecosystem.MAVEN, jar));
+    released(
+        behind,
+        Ecosystem.MAVEN,
+        "eu.wohlben.qits:behind" + run,
+        "1.0.0",
+        MAY,
+        contains(Ecosystem.MAVEN, jar, "2026.800.1"));
+
+    AdoptionEvaluator.Journey journey = evaluator.of(library, "2026.900.1");
+
+    assertTrue(
+        journey.packages().contains(new ReleaseCoordinates.Coordinate(Ecosystem.MAVEN, jar)),
+        "the unchanged jar is still a package of V: " + journey.packages());
+    assertEquals(AdoptionEvaluator.State.ADOPTED, adopter(journey, carrying).state());
+    assertEquals("1.0.0", adopter(journey, carrying).adoptedVersion());
+    assertEquals(AdoptionEvaluator.State.PENDING, adopter(journey, behind).state());
+  }
+
+  /** A version this service knows no release of carries nothing, as before. */
+  @Test
+  void aVersionNoReleaseNamesCarriesNothing() {
+    String library = "qits-unknown-version-lib" + run;
+    scanned(library, RepositoryArchetype.LIBRARY);
+    released(library, Ecosystem.MAVEN, "eu.wohlben.qits:unknown" + run, "2026.821.9", MARCH);
+
+    assertTrue(evaluator.of(library, "2026.900.1").packages().isEmpty());
+  }
+
   /** And npm's order is semver's, where a release candidate is BELOW the release it precedes. */
   @Test
   void anNpmPrereleaseIsBelowTheReleaseItIsACandidateFor() {
