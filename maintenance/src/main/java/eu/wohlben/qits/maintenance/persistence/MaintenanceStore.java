@@ -6,6 +6,7 @@ import eu.wohlben.qits.maintenance.bump.CiClient;
 import eu.wohlben.qits.maintenance.entity.MtArtifact;
 import eu.wohlben.qits.maintenance.entity.MtArtifactComponent;
 import eu.wohlben.qits.maintenance.entity.MtArtifactEdge;
+import eu.wohlben.qits.maintenance.entity.MtAutomationDecision;
 import eu.wohlben.qits.maintenance.entity.MtBranch;
 import eu.wohlben.qits.maintenance.entity.MtBump;
 import eu.wohlben.qits.maintenance.entity.MtBumpWindow;
@@ -1672,6 +1673,60 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
           int count = supersedeWaitingRows(requestId, kind, exceptFold, Instant.now());
           getEntityManager().flush();
           return count;
+        });
+  }
+
+  /**
+   * Keeps "this kind does not apply at this fold" (qits-1133), once per (request, fold, kind). A
+   * second write of the same key is ignored, so two concurrent asks cannot fail on the unique key.
+   */
+  @ActivateRequestContext
+  public void recordNotApplicable(
+      String repository, String requestId, String foldSha, String kind, String reason, Instant now) {
+    if (requestId == null || foldSha == null || kind == null) {
+      return;
+    }
+    DbRetry.inNewTx(
+        "record that " + kind + " does not apply to " + repository + " at " + abbreviate(foldSha),
+        () ->
+            getEntityManager()
+                .createNativeQuery(
+                    "insert into mt_automation_decision"
+                        + " (id, release_request_id, fold_sha, automation_kind, repository, state,"
+                        + " reason, decided_at)"
+                        + " values (?1, ?2, ?3, ?4, ?5, 'NOT_APPLICABLE', ?6, ?7)"
+                        + " on conflict (release_request_id, fold_sha, automation_kind) do nothing")
+                .setParameter(1, UUID.randomUUID())
+                .setParameter(2, requestId)
+                .setParameter(3, foldSha)
+                .setParameter(4, kind)
+                .setParameter(5, repository)
+                .setParameter(6, reason)
+                .setParameter(7, now)
+                .executeUpdate());
+  }
+
+  /** Every kind that does not apply at one fold of one request, with its reason, by kind. */
+  @ActivateRequestContext
+  public Map<String, String> notApplicable(String requestId, String foldSha) {
+    if (requestId == null || foldSha == null) {
+      return Map.of();
+    }
+    return DbRetry.inNewTx(
+        "read the skipped automations of one fold",
+        () -> {
+          Map<String, String> out = new LinkedHashMap<>();
+          for (MtAutomationDecision row :
+              MtAutomationDecision.<MtAutomationDecision>find(
+                      "releaseRequestId = ?1 and foldSha = ?2 and state = ?3",
+                      Sort.by("automationKind"),
+                      requestId,
+                      foldSha,
+                      "NOT_APPLICABLE")
+                  .list()) {
+            out.put(row.automationKind, row.reason);
+          }
+          return out;
         });
   }
 

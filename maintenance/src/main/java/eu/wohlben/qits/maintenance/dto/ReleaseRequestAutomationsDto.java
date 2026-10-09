@@ -10,13 +10,14 @@ import java.util.List;
  *
  * <p><b>This is a wire contract.</b> qits-projects caches it per (request, fold) and passes the
  * request only when every entry is FRESH for the sha it is about to release; an entry that is
- * absent, UNKNOWN or anything else holds. A kind that does not apply to the repository is simply not
- * listed — a repository no kind applies to answers an empty list and releases as it always did.
+ * absent, UNKNOWN or anything else holds. A kind that does not apply to the repository is listed
+ * NOT_APPLICABLE with its reason when the caller accepts that word (qits-1133), and left out
+ * otherwise — a repository no kind applies to then answers an empty list, as before.
  *
  * @param requestId the release request
  * @param foldSha the fold the entries are for; null on a read of a request nothing was ever asked
  *     about
- * @param automations one entry per kind that applies, ordered by kind
+ * @param automations one entry per kind, ordered by kind
  */
 public record ReleaseRequestAutomationsDto(
     String requestId, String foldSha, List<AutomationDto> automations) {
@@ -32,7 +33,10 @@ public record ReleaseRequestAutomationsDto(
    *     re-folds the request, so this fold never ships), FAILED (a red run, a refused join, or a loop
    *     that did not converge), UNKNOWN (applicability or the plan could not be decided; nothing is
    *     stored and the next ask decides again) or SUPERSEDED (a newer fold arrived while it waited,
-   *     or its run went red after the request moved on; a green run keeps its own outcome)
+   *     or its run went red after the request moved on; a green run keeps its own outcome),
+   *     WAITING (a DERIVED kind waits for the SOURCE kinds to be FRESH at this fold; sent only to a
+   *     caller that accepts it, UNKNOWN otherwise) or NOT_APPLICABLE (the kind does not apply; the
+   *     detail says why; sent only to a caller that accepts it)
    * @param detail the sentence: the hold reason, the run's ending, why it is fresh
    * @param bumpId the {@code mt_bump} row that decides the state — {@code GET /bumps/{id}} has the
    *     rest; null on UNKNOWN

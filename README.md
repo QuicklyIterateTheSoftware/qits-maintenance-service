@@ -710,12 +710,16 @@ GET  /bumps/{id}                                  → {id, repository, group, br
 POST /release-requests/{id}/automations           → {requestId, foldSha,
      {repository, foldSha, previousFoldSha?,            automations:[{kind, label, state, detail,
       changedSincePrevious?:[path]|null,                             bumpId, runIds, branch,
-      sourceBranches:[…], workItem?}                                 resultSha, updatedAt}]}
-                                                    the every-fold trigger, idempotent per fold;
+      sourceBranches:[…], workItem?,                                 resultSha, updatedAt}]}
+      accepts?:[WAITING,NOT_APPLICABLE]}            the every-fold trigger, idempotent per fold;
                                                     state FRESH|REQUESTED|RUNNING|COMMITTED|
-                                                    FAILED|UNKNOWN|SUPERSEDED (qits-978)
+                                                    FAILED|UNKNOWN|SUPERSEDED (qits-978), and
+                                                    WAITING|NOT_APPLICABLE only when `accepts`
+                                                    names them (qits-1133; else WAITING reads
+                                                    UNKNOWN and NOT_APPLICABLE is left out)
                                                                 400 not a uuid/sha  404 unknown repo
-GET  /release-requests/{id}/automations[?foldSha=] → the same answer, newest fold when unnamed
+GET  /release-requests/{id}/automations[?foldSha=][&accepts=WAITING,NOT_APPLICABLE]
+                                                  → the same answer, newest fold when unnamed
 POST /release-requests/{id}/automations/{kind}/runs
      {workItem?, repository?}                     → 202 {id}    404 unknown kind or repo
                                                                 409 not open, no fold, one active,
@@ -1043,6 +1047,26 @@ no object name, this service reads `mode` and `sha` off a tree entry when they a
 applied into somebody else's repository. Both spellings (`mode` or `type`) are accepted here. Until
 that githost release deploys, the fifteen `ci-event-upstream-frontend.yml` hop files still do the
 work and nothing is lost.
+
+**The pre-run (qits-1133).** The automations of a release request run in two stages. SOURCE kinds
+(`estate-pins`, `dependency-bump`) write the build's inputs and are planned on every fold. DERIVED
+kinds (`screenshot-baselines`, `entity-diagram`) are planned only once every SOURCE kind is FRESH
+at the fold, and answer WAITING until then. A DERIVED kind is carried to a new fold when only
+DERIVED output changed, or when no changed path matches its `inputPaths()` (`entity-diagram`:
+`**/*.java`, `**/*.kt`, `**/pom.xml`). Two kinds whose paths overlap at a fold are both UNKNOWN. A
+kind that does not apply is kept in `mt_automation_decision`. The cap on running automation runs
+is half of qits-ci's slots (at least one; 2 when the queue cannot be read).
+
+**`dependency-bump`** (behind `qits.maintenance.automations.dependency-bump.enabled`, off) moves a
+request's platform-internal pins, never third-party ones, to their newest release. It plans the
+pins at the fold against `mt_latest`; when one is behind, it sends a `MaintenanceBump` (group
+`dependencies`, `kind: dependency-bump`, `requestId`, `foldSha`, `baseRef: main`, `replaceHead`
+when the branch exists) that rebuilds `maintenance/automations/dependency-bump/<request>` as ONE
+commit on main, with every change measured against main. A green run that moved the branch joins it
+at priority LOWEST; exit 42 (a commit qits maintenance did not write) is FAILED and holds the
+request. On a wrapper it leaves gitlinks to `estate-pins`. `hold: [<dependency>]` in the fold's
+`.config/qits/maintenance.yml` leaves a dependency alone. The automation-branch sweep deletes the
+branch once its request is FINALIZED, WITHDRAWN or OBSOLETE.
 
 **qits-ci answers the events with its packaged platform pipelines**:
 `ci/src/main/resources/platform-pipelines/maintenance-bump.yml` for `MaintenanceBump`, and the shared

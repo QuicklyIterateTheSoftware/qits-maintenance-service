@@ -1,6 +1,8 @@
 package eu.wohlben.qits.maintenance.automation;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
@@ -33,5 +35,17 @@ class PathspecsTest {
     assertTrue(Pathspecs.matches("docs/*.md", "docs/a/b.md"), "a plain wildcard crosses slashes");
     assertFalse(Pathspecs.matches(":(literal)docs/*.md", "docs/a.md"));
     assertFalse(Pathspecs.matches(null, "x"));
+  }
+
+  /** The runtime disjointness check (qits-1133): a path both lists claim, or null. */
+  @Test
+  void overlapNamesAPathBothListsClaim() {
+    assertEquals("webui", Pathspecs.overlap(List.of("webui"), List.of("pom.xml", "webui")));
+    assertEquals(
+        "docs/database/x.png",
+        Pathspecs.overlap(List.of(":(glob)docs/database/**"), List.of("docs")));
+    assertNull(Pathspecs.overlap(List.of("pom.xml"), SCREENSHOTS));
+    assertNull(Pathspecs.overlap(List.of(), List.of("pom.xml")));
+    assertNull(Pathspecs.overlap(null, List.of("pom.xml")));
   }
 }

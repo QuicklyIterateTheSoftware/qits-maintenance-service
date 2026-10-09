@@ -9,7 +9,8 @@ import eu.wohlben.qits.maintenance.model.BumpStatus;
  * <p><b>The rows keep the bump vocabulary</b> because they ARE bump rows, followed by the same poll
  * and read by {@code GET /bumps/{id}}: a green run that wrote nothing is NOTHING_TO_DO there and FRESH
  * here, a green run that wrote a commit is SUCCEEDED there and COMMITTED here. UNKNOWN has no row at
- * all — it is answered and never stored, so the next ask decides again.
+ * all — it is answered and never stored, so the next ask decides again. WAITING is the same.
+ * NOT_APPLICABLE has no bump row either; it is kept in {@code mt_automation_decision}.
  */
 public enum AutomationState {
   /** Nothing to regenerate at this fold: a FRESH plan, a run that found nothing, or a carry-over. */
@@ -25,7 +26,17 @@ public enum AutomationState {
   /** Applicability or the plan could not be decided. Answered, never stored. */
   UNKNOWN,
   /** The request moved to another fold before this ended. */
-  SUPERSEDED;
+  SUPERSEDED,
+  /**
+   * A DERIVED kind that applies and waits for the SOURCE kinds to be FRESH at this fold (qits-1133).
+   * Answered, never stored: the next ask decides again.
+   */
+  WAITING,
+  /**
+   * The kind does not apply to the repository at this fold; the detail says why (qits-1133).
+   * Stored per (request, fold, kind) so the next ask does not read the fold again.
+   */
+  NOT_APPLICABLE;
 
   /** The state one row reads as. */
   public static AutomationState of(String status) {

@@ -342,6 +342,66 @@ class AutomationTriggerTest {
     assertEquals(BumpStatus.RUNNING.name(), row(entry).status);
   }
 
+  /**
+   * THE INPUTS RULE (qits-1133). A fold that changes nothing the entity diagram reads — no Java, no
+   * Kotlin, no pom — is carried with no run, though the change is not automation output.
+   */
+  @Test
+  void aFoldThatChangesNoInputOfTheEntityDiagramIsCarried() {
+    commitEntityDiagramFoldA();
+    AutomationFixture.scriptFold(peers, FOLD_B, false);
+    AutomationFixture.scriptEntityDiagramApplies(peers, FOLD_B);
+    int before = triggers();
+
+    AutomationDto entry =
+        entityDiagram(trigger(REQUEST, FOLD_B, FOLD_A, List.of("README.md", "src/app/x.ts")));
+
+    assertEquals(AutomationState.FRESH.name(), entry.state(), entry.detail());
+    assertTrue(entry.detail().contains("carried"), entry.detail());
+    assertEquals(before, triggers(), "no run for a fold that changed none of its inputs");
+  }
+
+  /**
+   * THE CAP FOLLOWS QITS-CI (qits-1133): at most half of its slots. Two slots, so one automation
+   * runs and the second waits.
+   */
+  @Test
+  void theCapIsHalfOfQitsCisSlots() {
+    String second = "6e1f0c3a-2b4d-4e6f-8a9b-0c1d2e3f4a5b";
+    AutomationFixture.scriptRequest(peers, second, "PENDING", FOLD_A);
+    Fixture.scriptForeignBranchAt(
+        peers, AutomationFixture.branch(second), AutomationFixture.BEFORE);
+    Fixture.scriptCiQueue(peers, 0, Fixture.runner("r", 2, true, false));
+
+    MtBump one = row(screenshots(trigger(REQUEST, FOLD_A, null, null)));
+    MtBump two = row(screenshots(trigger(second, FOLD_A, null, null)));
+
+    assertEquals(BumpStatus.RUNNING.name(), one.status);
+    assertEquals(BumpStatus.REQUESTED.name(), two.status, "half of two slots is one");
+  }
+
+  /** NOT_APPLICABLE is kept and listed only for a caller that accepts it. */
+  @Test
+  void notApplicableIsListedOnlyForACallerThatAcceptsIt() {
+    AutomationFixture.scriptFold(peers, FOLD_A, false);
+
+    ReleaseRequestAutomationsDto answer =
+        automations.trigger(
+            REQUEST,
+            new AutomationService.Fold(
+                Fixture.REPOSITORY, FOLD_A, null, null, List.of("main", "work"), null,
+                List.of("NOT_APPLICABLE")));
+
+    assertEquals(
+        AutomationState.NOT_APPLICABLE.name(), screenshots(answer).state(), answer.toString());
+    assertTrue(screenshots(answer).detail().contains("test:browser"), screenshots(answer).detail());
+    assertTrue(store.automations(REQUEST, FOLD_A).isEmpty(), "no bump row for it");
+    assertTrue(automations.automations(REQUEST, FOLD_A).automations().isEmpty(), "older reader");
+    assertEquals(
+        AutomationState.NOT_APPLICABLE.name(),
+        screenshots(automations.automations(REQUEST, FOLD_A, List.of("NOT_APPLICABLE"))).state());
+  }
+
   /** The same fold posted twice is answered from the rows the first one wrote. */
   @Test
   void aRepeatedTriggerForTheSameFoldIsIdempotent() {

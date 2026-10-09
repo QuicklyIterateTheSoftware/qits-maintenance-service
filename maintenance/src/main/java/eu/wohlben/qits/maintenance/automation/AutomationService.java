@@ -59,20 +59,23 @@ import org.jboss.logging.Logger;
  *
  * <h2>Settling a fold</h2>
  *
- * <p>qits-projects posts every fold of every request ({@link #trigger}). For each registered kind,
- * in this order:
+ * <p>qits-projects posts every fold of every request ({@link #trigger}). This is the PRE-RUN
+ * (qits-1133): SOURCE kinds (estate pins, dependency bump) write the build's inputs, DERIVED kinds
+ * (screenshot baselines, entity diagram) write what is generated from them. In this order:
  *
  * <ol>
- *   <li><b>Applicability</b>, from the repository at the fold. NOT_APPLICABLE is left out of the
- *       answer; UNKNOWN is answered and not stored, so the sweep over there asks again.
- *   <li><b>Carry-over — the main terminator.</b> An automation's own commit re-folds the request,
- *       which asks every automation again. When this kind's outcome on the previous fold was FRESH or
- *       COMMITTED and every path that changed since lies under the union of the applicable kinds'
- *       {@code committablePaths}, the new fold is FRESH with no run. It holds even when a generator
- *       is not byte-deterministic, and it rests on one invariant: no automation's output is another
- *       automation's input. An unknown diff never carries.
- *   <li><b>The plan</b>, which may answer FRESH with no run — estate pins ends its loop that way.
- *   <li><b>A row</b>: FRESH recorded, or REQUESTED and queued.
+ *   <li><b>Applicability</b> of every kind, from the repository at the fold. NOT_APPLICABLE is
+ *       stored per (request, fold, kind) and answered with its reason to a caller that accepts the
+ *       word; UNKNOWN is answered and not stored, so the sweep over there asks again.
+ *   <li><b>The runtime disjointness check</b>: two applicable kinds whose paths at this fold overlap
+ *       are both UNKNOWN, with a sentence naming them.
+ *   <li><b>SOURCE kinds</b>: always planned, no carry-over. A FRESH plan costs no run.
+ *   <li><b>DERIVED kinds</b>, only once every applicable SOURCE kind is FRESH at this fold; until
+ *       then WAITING (answered, not stored). Then <b>carry-over — the main terminator</b>: when this
+ *       kind's outcome on the previous fold was FRESH or COMMITTED and every changed path lies under
+ *       the DERIVED kinds' {@code committablePaths}, or none matches this kind's {@code inputPaths},
+ *       the new fold is FRESH with no run. A SOURCE kind's commit is input, so it re-runs them. An
+ *       unknown diff never carries. Then the plan, then a row.
  * </ol>
  *
  * <p>Idempotent per (request, fold): a fold that already has rows is answered from them, so the
@@ -83,9 +86,10 @@ import org.jboss.logging.Logger;
  * <p><b>At most one RUNNING run per (request, kind)</b> — per branch, which for a kind's own branch
  * is the same thing. A newer fold arriving while one runs waits REQUESTED, and only the newest
  * waiting fold is kept: the older become SUPERSEDED. Nothing is cancelled (qits-ci's cancel door is a
- * person's); a stale run is simply discarded when it ends, and its push, if any, re-folds. <b>At most
- * {@value #MAX_RUNNING} automation runs RUNNING estate-wide</b>, a code constant rather than a knob;
- * the rest wait and the ordinary bump sweep dispatches them. Both obey {@code
+ * person's); a stale run is simply discarded when it ends, and its push, if any, re-folds. <b>The
+ * estate-wide cap follows qits-ci's free slots</b> (qits-1133, {@link #cap}): at least one, at most
+ * half of qits-ci's slots, {@value #MAX_RUNNING} when the queue cannot be read; the rest wait and the
+ * ordinary bump sweep dispatches them. Both obey {@code
  * qits.maintenance.bump.enabled}.
  *
  * <h2>The ending</h2>
@@ -124,9 +128,8 @@ public class AutomationService {
   public static final String FOLD_BRANCH_PREFIX = "release/";
 
   /**
-   * How many automation runs may be RUNNING at once across the estate. A code constant on purpose:
-   * qits-ci's slots are few and shared with every release request's QA, and this is the one number
-   * that keeps a burst of folds from taking all of them.
+   * How many automation runs may be RUNNING at once when qits-ci's queue cannot be read. Otherwise
+   * the cap follows its free slots; see {@link #cap}.
    */
   public static final int MAX_RUNNING = 2;
 
@@ -196,10 +199,62 @@ public class AutomationService {
       String previousFoldSha,
       List<String> changedSincePrevious,
       List<String> sourceBranches,
-      String workItem) {}
+      String workItem,
+      List<String> accepts) {
 
-  /** Every registered kind, ordered by id — the order every answer lists them in. */
+    /** A fold from a caller that names no extra states it accepts — the answer before qits-1133. */
+    public Fold(
+        String repository,
+        String foldSha,
+        String previousFoldSha,
+        List<String> changedSincePrevious,
+        List<String> sourceBranches,
+        String workItem) {
+      this(repository, foldSha, previousFoldSha, changedSincePrevious, sourceBranches, workItem,
+          null);
+    }
+  }
+
+  /**
+   * The answered states a caller has to say it understands before it is sent them (qits-1133). An
+   * older qits-projects reads a word it does not know as UNKNOWN, which holds the request, so it is
+   * sent WAITING as UNKNOWN and no NOT_APPLICABLE entry at all.
+   */
+  public static final Set<AutomationState> OPT_IN_STATES =
+      Set.of(AutomationState.WAITING, AutomationState.NOT_APPLICABLE);
+
+  /** The opt-in states a caller named, read leniently: an unknown word is ignored. */
+  public static Set<AutomationState> accepted(List<String> accepts) {
+    Set<AutomationState> out = new LinkedHashSet<>();
+    if (accepts == null) {
+      return out;
+    }
+    for (String word : accepts) {
+      if (word == null) {
+        continue;
+      }
+      for (String part : word.split(",")) {
+        String trimmed = part.trim().toUpperCase(java.util.Locale.ROOT);
+        for (AutomationState state : OPT_IN_STATES) {
+          if (state.name().equals(trimmed)) {
+            out.add(state);
+          }
+        }
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Every registered kind this build has switched on, ordered by id — the order every answer lists
+   * them in. A kind behind a switch that is off is not listed, asked or run.
+   */
   public List<ReleaseRequestAutomation> kinds() {
+    return allKinds().stream().filter(ReleaseRequestAutomation::enabled).toList();
+  }
+
+  /** Every registered kind, switched on or not — what the registry invariants are checked over. */
+  public List<ReleaseRequestAutomation> allKinds() {
     List<ReleaseRequestAutomation> all = new ArrayList<>();
     for (ReleaseRequestAutomation kind : registered) {
       all.add(kind);
@@ -260,54 +315,144 @@ public class AutomationService {
     String name = fold.repository().trim();
     MtRepository row = store.repository(name).orElseThrow(() -> unscanned(name));
     AutomationSubject subject = subject(row, requestId, foldSha, fold.sourceBranches(), item);
+    Set<AutomationState> accepts = accepted(fold.accepts());
 
     // A kind this fold already has rows for is answered from them — and it applied, or it would
-    // have none, so its paths join the union without asking the git host again.
+    // have none, so its paths join the union without asking the git host again. A kind already
+    // found not to apply at this fold is not asked again either.
     Set<String> stored = new LinkedHashSet<>();
     for (MtBump existing : store.automations(requestId, foldSha)) {
       stored.add(existing.automationKind);
     }
+    Map<String, String> skipped = store.notApplicable(requestId, foldSha);
     List<ReleaseRequestAutomation> kinds = kinds();
     Map<String, Applicability> decided = new LinkedHashMap<>();
     for (ReleaseRequestAutomation kind : kinds) {
-      decided.put(
-          kind.kind(),
-          stored.contains(kind.kind()) ? Applicability.applies() : applicability(kind, subject));
+      Applicability applicability;
+      if (stored.contains(kind.kind())) {
+        applicability = Applicability.applies();
+      } else if (skipped.containsKey(kind.kind())) {
+        applicability = Applicability.notApplicable(skipped.get(kind.kind()));
+      } else {
+        applicability = applicability(kind, subject);
+        if (applicability.state() == Applicability.State.NOT_APPLICABLE) {
+          store.recordNotApplicable(
+              name, requestId, foldSha, kind.kind(), applicability.reason(), Instant.now());
+        }
+      }
+      decided.put(kind.kind(), applicability);
     }
 
-    // THE UNION IS OVER THE KINDS THAT APPLY, and that is what lets one kind's commit be carried by
-    // another: the re-fold a screenshot join causes changes only __screenshots__ paths, which lie
-    // under the union, so estate pins is carried on it too rather than asked to plan again.
-    List<String> union = new ArrayList<>();
+    Map<String, List<String>> paths = new LinkedHashMap<>();
     for (ReleaseRequestAutomation kind : kinds) {
       if (decided.get(kind.kind()).applied()) {
-        union.addAll(committablePaths(kind, subject));
+        paths.put(kind.kind(), committablePaths(kind, subject));
       }
     }
-    Boolean automationOnly =
-        previous == null || fold.changedSincePrevious() == null
-            ? null
-            : fold.changedSincePrevious().stream()
-                .allMatch(path -> Pathspecs.matchesAny(union, path));
 
     Map<String, String> unknown = new LinkedHashMap<>();
     for (ReleaseRequestAutomation kind : kinds) {
-      if (stored.contains(kind.kind())) {
-        continue;
+      if (decided.get(kind.kind()).state() == Applicability.State.UNKNOWN) {
+        unknown.put(kind.kind(), decided.get(kind.kind()).reason());
       }
-      Applicability applicability = decided.get(kind.kind());
-      switch (applicability.state()) {
-        case NOT_APPLICABLE -> {}
-        case UNKNOWN -> unknown.put(kind.kind(), applicability.reason());
-        case APPLIES -> {
-          String undecided = settle(kind, subject, previous, automationOnly);
-          if (undecided != null) {
-            unknown.put(kind.kind(), undecided);
+    }
+    // THE RUNTIME DISJOINTNESS CHECK. The registry test checks static paths only; a kind whose paths
+    // are read from the fold (estate pins, dependency bump) can only be checked here. Two kinds that
+    // would commit the same path cannot both be settled: neither is.
+    for (int one = 0; one < kinds.size(); one++) {
+      for (int other = one + 1; other < kinds.size(); other++) {
+        ReleaseRequestAutomation a = kinds.get(one);
+        ReleaseRequestAutomation b = kinds.get(other);
+        if (!paths.containsKey(a.kind()) || !paths.containsKey(b.kind())) {
+          continue;
+        }
+        String shared = Pathspecs.overlap(paths.get(a.kind()), paths.get(b.kind()));
+        if (shared == null) {
+          continue;
+        }
+        String sentence =
+            a.label() + " and " + b.label() + " would both commit " + shared
+                + "; neither is run until one of them stops claiming it";
+        for (ReleaseRequestAutomation clash : List.of(a, b)) {
+          if (!stored.contains(clash.kind())) {
+            unknown.put(clash.kind(), sentence);
           }
         }
       }
     }
-    return answer(requestId, foldSha, unknown);
+
+    // THE UNION IS OVER THE KINDS THAT APPLY. It is what the circuit breaker counts ("only
+    // automation output changed"). Carry-over of a DERIVED kind reads the DERIVED kinds' union only:
+    // a SOURCE kind's commit (a pom, a lockfile) is input of the derived kinds, so it re-runs them.
+    List<String> union = new ArrayList<>();
+    List<String> derivedUnion = new ArrayList<>();
+    for (ReleaseRequestAutomation kind : kinds) {
+      List<String> own = paths.get(kind.kind());
+      if (own == null) {
+        continue;
+      }
+      union.addAll(own);
+      if (kind.stage() == Stage.DERIVED) {
+        derivedUnion.addAll(own);
+      }
+    }
+    List<String> changed =
+        previous == null || fold.changedSincePrevious() == null ? null : fold.changedSincePrevious();
+    Boolean automationOnly =
+        changed == null ? null : changed.stream().allMatch(path -> Pathspecs.matchesAny(union, path));
+
+    // SOURCE KINDS FIRST. They are always planned; a plan with nothing to change is FRESH, no run.
+    for (ReleaseRequestAutomation kind : kinds) {
+      if (kind.stage() != Stage.SOURCE
+          || stored.contains(kind.kind())
+          || unknown.containsKey(kind.kind())
+          || !decided.get(kind.kind()).applied()) {
+        continue;
+      }
+      String undecided = settle(kind, subject, previous, automationOnly, false);
+      if (undecided != null) {
+        unknown.put(kind.kind(), undecided);
+      }
+    }
+
+    // THEN THE DERIVED KINDS, once every SOURCE kind that applies is FRESH at this fold.
+    List<String> waitingFor = new ArrayList<>();
+    for (ReleaseRequestAutomation kind : kinds) {
+      if (kind.stage() != Stage.SOURCE || !decided.get(kind.kind()).applied()) {
+        continue;
+      }
+      AutomationState state =
+          unknown.containsKey(kind.kind())
+              ? AutomationState.UNKNOWN
+              : foldState(requestId, kind.kind(), foldSha);
+      if (state != AutomationState.FRESH) {
+        waitingFor.add(kind.label());
+      }
+    }
+    Map<String, String> waiting = new LinkedHashMap<>();
+    for (ReleaseRequestAutomation kind : kinds) {
+      if (kind.stage() != Stage.DERIVED
+          || stored.contains(kind.kind())
+          || unknown.containsKey(kind.kind())
+          || !decided.get(kind.kind()).applied()) {
+        continue;
+      }
+      if (!waitingFor.isEmpty()) {
+        waiting.put(kind.kind(), "waits for " + String.join(", ", waitingFor));
+        continue;
+      }
+      // Carried when only derived output changed, or when nothing this kind reads changed.
+      Boolean carryable =
+          changed == null
+              ? null
+              : changed.stream().allMatch(path -> Pathspecs.matchesAny(derivedUnion, path))
+                  || changed.stream().noneMatch(path -> Pathspecs.matchesAny(kind.inputPaths(), path));
+      String undecided = settle(kind, subject, previous, carryable, true);
+      if (undecided != null) {
+        unknown.put(kind.kind(), undecided);
+      }
+    }
+    return answer(requestId, foldSha, unknown, waiting, accepts);
   }
 
   /**
@@ -320,9 +465,11 @@ public class AutomationService {
       ReleaseRequestAutomation kind,
       AutomationSubject subject,
       String previous,
-      Boolean automationOnly) {
+      Boolean automationOnly,
+      boolean carry) {
     if (Boolean.TRUE.equals(automationOnly)) {
-      AutomationState before = foldState(subject.requestId(), kind.kind(), previous);
+      AutomationState before =
+          carry ? foldState(subject.requestId(), kind.kind(), previous) : null;
       if (before != null && before.carries()) {
         record(kind, subject, previous, automationOnly, BumpStatus.NOTHING_TO_DO,
             carried(previous, before));
@@ -373,6 +520,16 @@ public class AutomationService {
    * when none is named.
    */
   public ReleaseRequestAutomationsDto automations(String requestId, String foldSha) {
+    return automations(requestId, foldSha, List.of());
+  }
+
+  /**
+   * The same, for a caller that names the opt-in states it accepts (qits-1133). It answers from
+   * what is stored: rows, and the kinds found not to apply. A DERIVED kind with neither, on a fold
+   * where a SOURCE kind is not FRESH yet, reads WAITING.
+   */
+  public ReleaseRequestAutomationsDto automations(
+      String requestId, String foldSha, List<String> accepts) {
     requireRequestId(requestId);
     String fold =
         foldSha == null || foldSha.isBlank()
@@ -381,7 +538,31 @@ public class AutomationService {
     if (fold == null) {
       return new ReleaseRequestAutomationsDto(requestId, null, List.of());
     }
-    return answer(requestId, fold, Map.of());
+    Set<String> stored = new LinkedHashSet<>();
+    for (MtBump row : store.automations(requestId, fold)) {
+      stored.add(row.automationKind);
+    }
+    Map<String, String> skipped = store.notApplicable(requestId, fold);
+    List<String> waitingFor = new ArrayList<>();
+    for (ReleaseRequestAutomation kind : kinds()) {
+      if (kind.stage() == Stage.SOURCE && stored.contains(kind.kind())) {
+        AutomationState state = foldState(requestId, kind.kind(), fold);
+        if (state != AutomationState.FRESH) {
+          waitingFor.add(kind.label());
+        }
+      }
+    }
+    Map<String, String> waiting = new LinkedHashMap<>();
+    if (!waitingFor.isEmpty()) {
+      for (ReleaseRequestAutomation kind : kinds()) {
+        if (kind.stage() == Stage.DERIVED
+            && !stored.contains(kind.kind())
+            && !skipped.containsKey(kind.kind())) {
+          waiting.put(kind.kind(), "waits for " + String.join(", ", waitingFor));
+        }
+      }
+    }
+    return answer(requestId, fold, Map.of(), waiting, accepted(accepts));
   }
 
   // --- the re-run door --------------------------------------------------------------------------
@@ -507,7 +688,9 @@ public class AutomationService {
     // CARRY-OVER, ASKED AGAIN. The trigger asked it too, but the fold this one was opened behind may
     // have had no outcome yet: an own-branch run joins and only then records COMMITTED, and the
     // re-fold its join causes can be posted in between. Asked here, that race costs no CI run.
+    // A SOURCE kind is never carried: its plan is the cheap check.
     if (BumpTrigger.FOLD.name().equals(row.trigger)
+        && (kind == null || kind.stage() != Stage.SOURCE)
         && Boolean.TRUE.equals(row.automationOnly)
         && row.previousFoldSha != null) {
       AutomationState before =
@@ -525,8 +708,10 @@ public class AutomationService {
     if (store.runningAutomation(row.repository, row.automationKind, row.branch).isPresent()) {
       return;
     }
-    if (store.runningAutomationCount() >= MAX_RUNNING) {
-      LOG.debugf("The automation %s waits: %d already run", row.id, MAX_RUNNING);
+    long running = store.runningAutomationCount();
+    int cap = cap(running);
+    if (running >= cap) {
+      LOG.debugf("The automation %s waits: %d already run (cap %d)", row.id, running, cap);
       return;
     }
     Optional<MtRepository> repository = store.repository(row.repository);
@@ -535,11 +720,34 @@ public class AutomationService {
           row.id, BumpStatus.FAILED, null, "the repository left the inventory", Instant.now());
       return;
     }
-    if (target(row, kind) == Target.OWN_BRANCH) {
+    if (target(row, kind) == Target.OWN_BRANCH
+        && kind != null
+        && CiClient.EVENT_NAME.equals(kind.pipeline())) {
+      dispatchOwnBranchBump(row, kind, repository.get());
+    } else if (target(row, kind) == Target.OWN_BRANCH) {
       dispatchOwnBranch(row, kind, repository.get());
     } else {
       dispatchSourceBranch(row, kind, repository.get());
     }
+  }
+
+  /**
+   * How many automation runs may be RUNNING at once, from qits-ci's free slots (qits-1133): every
+   * pre-run waits in front of a QA run now, so the cap follows what qits-ci can take. At least one
+   * (an idle estate always moves), at most half of qits-ci's slots (QA keeps the other half). An
+   * unreadable queue keeps the old constant, {@value #MAX_RUNNING}.
+   *
+   * @param running how many automation runs are RUNNING now; they are inside qits-ci's active count
+   */
+  int cap(long running) {
+    CiClient.QueueState queue = ci.queue();
+    if (!queue.readable()) {
+      return MAX_RUNNING;
+    }
+    int ceiling = Math.max(1, queue.slots() / 2);
+    long free = Math.max(0, queue.slots() - queue.active());
+    long cap = Math.min(ceiling, running + free);
+    return (int) Math.max(1, cap);
   }
 
   /**
@@ -568,9 +776,12 @@ public class AutomationService {
       fail(row, String.join("; ", problems));
       return;
     }
-    store.bumpStartHead(row.id, branchHead(repository, row.branch));
+    String startHead = branchHead(repository, row.branch);
+    store.bumpStartHead(row.id, startHead);
     AutomationSubject subject =
         subject(repository, row.releaseRequestId, row.foldSha, List.of(), row.workItem);
+    Map<String, Object> extras = new LinkedHashMap<>(extras(row));
+    extras.putAll(kind.dispatchExtras(subject, startHead));
     CiClient.TriggerResult result =
         ci.triggerAutomation(
             row.id.toString(),
@@ -582,7 +793,57 @@ public class AutomationService {
             row.branch,
             committablePaths(kind, subject),
             row.workItem,
-            extras(row));
+            extras);
+    dispatched(row, result);
+  }
+
+  /**
+   * An own-branch run on the bump pipeline ({@code MaintenanceBump}) — the dependency bump
+   * (qits-1133). The step rebuilds {@code maintenance/automations/<kind>/<request>} as ONE commit on
+   * main from the row's changes, under {@code --force-with-lease}, and refuses a branch carrying a
+   * commit it did not write (exit {@link eu.wohlben.qits.maintenance.bump.BumpBase#NOT_OURS_EXIT}).
+   * The head is read first, as for every own-branch kind, so the ending can tell a push from none.
+   */
+  private void dispatchOwnBranchBump(
+      MtBump row, ReleaseRequestAutomation kind, MtRepository repository) {
+    if (row.releaseRequestId == null || row.foldSha == null) {
+      fail(row, "an own-branch automation runs on a release request's fold, and this row names none");
+      return;
+    }
+    List<Change> changes = BumpService.changes(row);
+    if (changes.isEmpty()) {
+      store.bumpFinished(
+          row.id,
+          BumpStatus.NOTHING_TO_DO,
+          null,
+          "the plan named no changes to write onto " + row.branch,
+          Instant.now());
+      return;
+    }
+    String baseRef = baseRef(repository);
+    String startHead = branchHead(repository, row.branch);
+    AutomationSubject subject =
+        subject(repository, row.releaseRequestId, row.foldSha, List.of(), row.workItem);
+    Map<String, String> extra = new LinkedHashMap<>();
+    extra.put("kind", row.automationKind);
+    extra.put("requestId", row.releaseRequestId);
+    extra.put("foldSha", row.foldSha);
+    if (row.workItem != null) {
+      extra.put("workItem", row.workItem);
+    }
+    extra.putAll(kind.dispatchExtras(subject, startHead));
+    List<String> problems =
+        BumpPayload.problems(
+            kind.bumpGroup(), row.branch, baseRef, extra.get("replaceHead"), changes);
+    if (!problems.isEmpty()) {
+      fail(row, String.join("; ", problems));
+      return;
+    }
+    store.bumpStartHead(row.id, startHead);
+    CiClient.TriggerResult result =
+        ci.trigger(
+            row.id.toString(), row.repository, kind.bumpGroup(), row.branch, baseRef, changes,
+            extra);
     dispatched(row, result);
   }
 
@@ -697,7 +958,10 @@ public class AutomationService {
       store.bumpFailed(
           row.id,
           ciRunStatus,
-          failedMessage(target == Target.OWN_BRANCH ? label : null, ciRunStatus, failure),
+          notOurs(failure)
+              ? row.branch + " carries a commit qits maintenance did not write, or moved while the"
+                  + " run read it; nothing was pushed. Delete the branch to let it be rebuilt"
+              : failedMessage(target == Target.OWN_BRANCH ? label : null, ciRunStatus, failure),
           failure,
           now);
       LOG.warnf("The %s automation %s of %s ended %s", row.automationKind, row.id, row.repository,
@@ -709,6 +973,13 @@ public class AutomationService {
     }
     // An ending frees a slot, and the newest waiting fold of this request may be behind it.
     queue.submit("dispatch the waiting automations", this::dispatchWaiting);
+  }
+
+  /** The step's "this branch is not ours to rebuild" exit (one commit on its base, qits-1133). */
+  private static boolean notOurs(CiClient.Failure failure) {
+    return failure != null
+        && failure.exitCode() != null
+        && failure.exitCode() == eu.wohlben.qits.maintenance.bump.BumpBase.NOT_OURS_EXIT;
   }
 
   /**
@@ -774,7 +1045,11 @@ public class AutomationService {
                 ReleaseRequestClient.RequestResult.Outcome.REFUSED,
                 ReleaseRequestClient.REFUSED,
                 row.repository + " has no catalog id")
-            : releases.join(repoId, row.releaseRequestId, row.branch);
+            : releases.join(
+                repoId,
+                row.releaseRequestId,
+                row.branch,
+                kind(row.automationKind).map(ReleaseRequestAutomation::joinPriority).orElse(null));
     store.bumpJoined(row.id, joined.outcome().name(), joined.message(), now);
     String base = label.toLowerCase() + " written on " + row.branch + " at " + after;
     switch (joined.outcome()) {
@@ -895,29 +1170,72 @@ public class AutomationService {
 
   // --- answers ------------------------------------------------------------------------------------
 
-  /** Every kind with a row at this fold, plus the undecided ones, in kind order. */
+  /**
+   * Every kind with a row at this fold, plus the undecided and the waiting ones, plus — for a caller
+   * that accepts the word — every kind that does not apply, in kind order.
+   *
+   * <p>WAITING goes to a caller that does not accept it as UNKNOWN with the same sentence: that
+   * caller holds on UNKNOWN and asks again, which is what WAITING asks of it.
+   */
   private ReleaseRequestAutomationsDto answer(
-      String requestId, String foldSha, Map<String, String> unknown) {
+      String requestId,
+      String foldSha,
+      Map<String, String> unknown,
+      Map<String, String> waiting,
+      Set<AutomationState> accepts) {
     Map<String, List<MtBump>> byKind = new TreeMap<>();
     for (MtBump row : store.automations(requestId, foldSha)) {
       byKind.computeIfAbsent(row.automationKind, ignored -> new ArrayList<>()).add(row);
     }
+    Map<String, String> skipped =
+        accepts.contains(AutomationState.NOT_APPLICABLE)
+            ? store.notApplicable(requestId, foldSha)
+            : Map.of();
     Set<String> listed = new java.util.TreeSet<>(byKind.keySet());
     listed.addAll(unknown.keySet());
+    listed.addAll(waiting.keySet());
+    listed.addAll(skipped.keySet());
     List<AutomationDto> entries = new ArrayList<>();
     for (String kind : listed) {
       String label = kind(kind).map(ReleaseRequestAutomation::label).orElse(kind);
       List<MtBump> rows = byKind.get(kind);
-      if (rows == null || rows.isEmpty()) {
-        entries.add(
-            new AutomationDto(
-                kind, label, AutomationState.UNKNOWN.name(), unknown.get(kind), null, List.of(),
-                null, null, Instant.now(), null));
-      } else {
+      if (rows != null && !rows.isEmpty()) {
         entries.add(aggregate(kind, label, rows));
+      } else if (unknown.containsKey(kind)) {
+        entries.add(unanswered(kind, label, AutomationState.UNKNOWN, unknown.get(kind)));
+      } else if (waiting.containsKey(kind)) {
+        AutomationState state =
+            accepts.contains(AutomationState.WAITING)
+                ? AutomationState.WAITING
+                : AutomationState.UNKNOWN;
+        entries.add(unanswered(kind, label, state, waiting.get(kind)));
+      } else {
+        entries.add(notApplicable(kind, label, skipped.get(kind)));
       }
     }
     return new ReleaseRequestAutomationsDto(requestId, foldSha, List.copyOf(entries));
+  }
+
+  /** An entry with no row behind it: UNKNOWN or WAITING, answered now. */
+  private static AutomationDto unanswered(
+      String kind, String label, AutomationState state, String detail) {
+    return new AutomationDto(
+        kind, label, state.name(), detail, null, List.of(), null, null, Instant.now(), null);
+  }
+
+  /** A kind that does not apply: its reason, and nothing else. */
+  private static AutomationDto notApplicable(String kind, String label, String reason) {
+    return new AutomationDto(
+        kind,
+        label,
+        AutomationState.NOT_APPLICABLE.name(),
+        reason,
+        null,
+        List.of(),
+        null,
+        null,
+        null,
+        null);
   }
 
   /**

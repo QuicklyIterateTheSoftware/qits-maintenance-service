@@ -24,7 +24,7 @@ class AutomationRegistryTest {
 
   @Test
   void kindIdsAreUniqueAndWellFormed() {
-    List<ReleaseRequestAutomation> kinds = automations.kinds();
+    List<ReleaseRequestAutomation> kinds = automations.allKinds();
     assertFalse(kinds.isEmpty(), "screenshot-baselines at least");
     Set<String> seen = new HashSet<>();
     for (ReleaseRequestAutomation kind : kinds) {
@@ -38,15 +38,37 @@ class AutomationRegistryTest {
         assertEquals(
             AutomationService.BRANCH_PREFIX + kind.kind() + "/",
             kind.branchPrefix(),
-            "qits-ci lets the core push under maintenance/automations/<kind>/ and nowhere else");
-        assertEquals(CiClient.AUTOMATION_EVENT_NAME, kind.pipeline());
+            "qits-ci lets an automation push under maintenance/automations/<kind>/ and nowhere"
+                + " else");
       }
     }
   }
 
   @Test
   void committablePathsArePairwiseDisjoint() {
-    assertDisjoint(automations.kinds(), null);
+    assertDisjoint(automations.allKinds(), null);
+  }
+
+  /** A kind behind a switch that is off is registered but not offered (qits-1133). */
+  @Test
+  void aSwitchedOffKindIsNotOffered() {
+    assertTrue(
+        automations.allKinds().stream()
+            .anyMatch(kind -> DependencyBumpAutomation.KIND.equals(kind.kind())));
+    assertTrue(
+        automations.kinds().stream()
+            .noneMatch(kind -> DependencyBumpAutomation.KIND.equals(kind.kind())),
+        "the switch is off by default");
+  }
+
+  /** The two SOURCE kinds are SOURCE; everything else is DERIVED. */
+  @Test
+  void theSourceKindsAreEstatePinsAndDependencyBump() {
+    for (ReleaseRequestAutomation kind : automations.allKinds()) {
+      boolean source =
+          List.of(EstatePinsAutomation.KIND, DependencyBumpAutomation.KIND).contains(kind.kind());
+      assertEquals(source ? Stage.SOURCE : Stage.DERIVED, kind.stage(), kind.kind());
+    }
   }
 
   /**
@@ -76,13 +98,6 @@ class AutomationRegistryTest {
 
   /** Paths a pathspec matches: its wildcards filled in a couple of ways. */
   static List<String> witnesses(String pathspec) {
-    String spec = pathspec.startsWith(":(") ? pathspec.substring(pathspec.indexOf(')') + 1) : pathspec;
-    String shallow =
-        spec.replace("**/", "").replace("/**", "/x.png").replace("**", "x").replace("*", "x")
-            .replace("?", "x");
-    String deep =
-        spec.replace("**/", "a/b/").replace("/**", "/c/d.png").replace("**", "y").replace("*", "y")
-            .replace("?", "y");
-    return List.of(shallow, deep);
+    return Pathspecs.witnesses(pathspec);
   }
 }

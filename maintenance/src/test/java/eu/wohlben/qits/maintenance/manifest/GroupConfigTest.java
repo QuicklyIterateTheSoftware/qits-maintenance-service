@@ -237,4 +237,19 @@ class GroupConfigTest {
             .ignored()
             .isEmpty());
   }
+
+  /** {@code hold:} names dependencies the dependency-bump automation leaves alone (qits-1133). */
+  @Test
+  void holdNamesDependenciesTheBumpLeavesAlone() {
+    GroupConfig.Parsed parsed =
+        GroupConfig.parse("hold: [\"@qits/ui-components\", \"eu.wohlben.qits:*\"]\n");
+    assertTrue(parsed.ok(), parsed.error());
+    assertTrue(parsed.holds("@qits/ui-components"));
+    assertTrue(parsed.holds("eu.wohlben.qits:qits-eventstream"));
+    assertFalse(parsed.holds("@qits/other"));
+    assertEquals(GroupSource.DEFAULT, parsed.source(), "hold asks for no grouping");
+    assertTrue(GroupConfig.fallback().held().isEmpty());
+    assertFalse(GroupConfig.parse("hold: nope\n").ok());
+    assertFalse(GroupConfig.parse("hold: [\"\"]\n").ok());
+  }
 }

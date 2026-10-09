@@ -17,9 +17,10 @@ import java.util.Map;
  *
  * <p>Implementations are CDI beans, discovered through {@code Instance<ReleaseRequestAutomation>}.
  * Two invariants hold across every one of them, and a registry test enforces both: kind ids are
- * unique, and {@link #committablePaths()} are pairwise disjoint. The second is half of the invariant
- * carry-over rests on — <b>no automation's output is another automation's input</b>; the other half
- * is each kind's own to document.
+ * unique, and {@link #committablePaths()} are pairwise disjoint. Paths read from the fold are
+ * checked again at run time, per subject. Since qits-1133 a SOURCE kind's output IS a DERIVED kind's
+ * input (a new library changes the screenshots): {@link #stage()} orders them, and carry-over of a
+ * DERIVED kind counts only DERIVED output.
  */
 public interface ReleaseRequestAutomation {
 
@@ -64,6 +65,56 @@ public interface ReleaseRequestAutomation {
 
   /** Where the commit lands. */
   Target target();
+
+  /** When it runs in the pre-run: SOURCE kinds first, DERIVED kinds once every SOURCE is FRESH. */
+  default Stage stage() {
+    return Stage.DERIVED;
+  }
+
+  /**
+   * The paths this kind reads, as pathspecs. A DERIVED kind is carried to a new fold when no path
+   * that changed since the previous fold matches one of them. Default: every path.
+   */
+  default List<String> inputPaths() {
+    return ALL_PATHS;
+  }
+
+  /** Every path, as a pathspec: the default of {@link #inputPaths()}. */
+  List<String> ALL_PATHS = List.of(":(glob)**");
+
+  /**
+   * Whether this build offers the kind. A kind that is switched off is not listed, not asked and
+   * not run. Default: on.
+   */
+  default boolean enabled() {
+    return true;
+  }
+
+  /**
+   * Payload fields known only at dispatch, sent beside the plan's extras.
+   *
+   * @param startHead the head of the kind's branch read just before the run, or null when the branch
+   *     does not exist
+   */
+  default Map<String, String> dispatchExtras(AutomationSubject subject, String startHead) {
+    return Map.of();
+  }
+
+  /**
+   * The payload's {@code group} for an {@link Target#OWN_BRANCH} kind that runs on the bump
+   * pipeline ({@code MaintenanceBump}) rather than the shared core. Default: the kind id.
+   */
+  default String bumpGroup() {
+    return kind();
+  }
+
+  /**
+   * The priority of the source this kind's branch adds when it joins the request ({@code LOWEST},
+   * {@code LOW}, …), or null to let qits-projects choose.
+   */
+  default String joinPriority() {
+    return null;
+  }
 
   /** {@link Target#OWN_BRANCH} only: the branch is this plus the request id. */
   default String branchPrefix() {

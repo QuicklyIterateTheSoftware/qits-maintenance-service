@@ -3,6 +3,7 @@ package eu.wohlben.qits.maintenance.api;
 import eu.wohlben.qits.maintenance.entity.MtArtifact;
 import eu.wohlben.qits.maintenance.entity.MtArtifactComponent;
 import eu.wohlben.qits.maintenance.entity.MtArtifactEdge;
+import eu.wohlben.qits.maintenance.entity.MtAutomationDecision;
 import eu.wohlben.qits.maintenance.entity.MtBranch;
 import eu.wohlben.qits.maintenance.entity.MtBump;
 import eu.wohlben.qits.maintenance.entity.MtGitlinkPin;
@@ -47,6 +48,7 @@ public class InventoryReset {
     MtArtifactComponent.deleteAll();
     MtArtifact.deleteAll();
     MtBump.deleteAll();
+    MtAutomationDecision.deleteAll();
     MtBranch.deleteAll();
     MtScan.deleteAll();
     // The ledger, pins first: mt_release_pin.release_id is a plain uuid rather than a foreign key

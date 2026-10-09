@@ -652,6 +652,10 @@ components:
             type: string
         workItem:
           type: string
+        accepts:
+          type: array
+          items:
+            type: string
     UUID:
       type: string
       format: uuid
@@ -1045,6 +1049,12 @@ paths:
         required: true
         schema:
           type: string
+      - name: accepts
+        in: query
+        schema:
+          type: array
+          items:
+            type: string
       - name: foldSha
         in: query
         schema:

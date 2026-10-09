@@ -216,8 +216,19 @@ public class ReleaseRequestClient {
    * @param branch the branch to add
    */
   public RequestResult join(String repoId, String requestId, String branch) {
+    return join(repoId, requestId, branch, null);
+  }
+
+  /**
+   * The same, with the priority the added source carries ({@code LOWEST} for a dependency bump,
+   * qits-1133). Null leaves it to qits-projects.
+   */
+  public RequestResult join(String repoId, String requestId, String branch, String priority) {
     ObjectNode body = JSON.createObjectNode();
     body.put("branch", branch);
+    if (priority != null && !priority.isBlank()) {
+      body.put("priority", priority);
+    }
     String path =
         REQUESTS_PATH_PREFIX + encode(repoId) + REQUESTS_PATH_SUFFIX + "/" + encode(requestId)
             + "/sources";

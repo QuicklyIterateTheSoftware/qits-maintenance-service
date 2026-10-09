@@ -111,9 +111,28 @@ public final class GroupConfig {
    * @param source whether they came from the file or from the fallback
    * @param ignored the ecosystems this repository is not scanned for at all — empty by default
    * @param error the sentence for the repository row, or null
+   * @param held dependency names (globs allowed) the dependency-bump automation leaves alone —
+   *     {@code hold:}, the escape for a breaking upstream (qits-1133). Empty by default
    */
   public record Parsed(
-      List<Group> groups, GroupSource source, Set<Ecosystem> ignored, String error) {
+      List<Group> groups,
+      GroupSource source,
+      Set<Ecosystem> ignored,
+      String error,
+      List<String> held) {
+
+    public Parsed {
+      held = held == null ? List.of() : List.copyOf(held);
+    }
+
+    public Parsed(List<Group> groups, GroupSource source, Set<Ecosystem> ignored, String error) {
+      this(groups, source, ignored, error, List.of());
+    }
+
+    /** Whether the dependency-bump automation leaves this dependency alone. */
+    public boolean holds(String dependency) {
+      return dependency != null && Globs.matchesAny(held, dependency);
+    }
 
     public boolean ok() {
       return error == null;
@@ -162,7 +181,7 @@ public final class GroupConfig {
       return fallback();
     }
     if (!(document instanceof Map<?, ?> root)) {
-      return invalid(PATH + " must be a mapping with a `groups` or `ignore` key");
+      return invalid(PATH + " must be a mapping with a `groups`, `ignore` or `hold` key");
     }
     Set<Ecosystem> ignored = EnumSet.noneOf(Ecosystem.class);
     Object rawIgnore = root.get("ignore");
@@ -184,11 +203,27 @@ public final class GroupConfig {
         ignored.add(ecosystem.get());
       }
     }
+    // `hold:` NAMES DEPENDENCIES the dependency-bump automation leaves alone (qits-1133): the escape
+    // for an upstream release that breaks this repository. A person adds it on their branch, with
+    // the revert of the bump commit, and the next fold's plan reads it.
+    List<String> held = new ArrayList<>();
+    Object rawHold = root.get("hold");
+    if (rawHold != null) {
+      if (!(rawHold instanceof List<?> names)) {
+        return invalid("`hold` must be a list of dependency names");
+      }
+      for (Object element : names) {
+        if (!(element instanceof String dependency) || dependency.isBlank()) {
+          return invalid("every entry of `hold` must be a non-empty dependency name");
+        }
+        held.add(dependency.trim());
+      }
+    }
     Object rawGroups = root.get("groups");
     if (rawGroups == null) {
       // A file that only says `ignore` did not ask for a grouping, so its source stays DEFAULT:
       // the two questions are separate and the page should not claim it configured branches.
-      return defaults(ignored);
+      return defaults(ignored, held);
     }
     if (!(rawGroups instanceof List<?> list)) {
       return invalid("`groups` must be a list");
@@ -221,7 +256,7 @@ public final class GroupConfig {
       groups.add(Group.glob(name, patterns));
     }
     if (groups.isEmpty()) {
-      return defaults(ignored);
+      return defaults(ignored, held);
     }
     // EVERY PIN BELONGS SOMEWHERE, AND THE TAIL IS THE SPLIT. The configured groups claim what they
     // claim; whatever they do not claim falls to the same two kind groups an unconfigured
@@ -235,12 +270,12 @@ public final class GroupConfig {
         groups.add(tail);
       }
     }
-    return new Parsed(List.copyOf(groups), GroupSource.CONFIG, Set.copyOf(ignored), null);
+    return new Parsed(List.copyOf(groups), GroupSource.CONFIG, Set.copyOf(ignored), null, held);
   }
 
   /** The default grouping, carrying whatever the file's {@code ignore} took off the repository. */
-  private static Parsed defaults(Set<Ecosystem> ignored) {
-    return new Parsed(kindTail(), GroupSource.DEFAULT, Set.copyOf(ignored), null);
+  private static Parsed defaults(Set<Ecosystem> ignored, List<String> held) {
+    return new Parsed(kindTail(), GroupSource.DEFAULT, Set.copyOf(ignored), null, held);
   }
 
   /** The four spellings {@code ignore} accepts, for the sentence a broken file is told. */

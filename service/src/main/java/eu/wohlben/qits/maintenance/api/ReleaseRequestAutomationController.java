@@ -52,6 +52,9 @@ public class ReleaseRequestAutomationController {
    *     previous fold or the diff could not be read. Null never carries an outcome over
    * @param sourceBranches the request's named branches; main and the automations' own are ignored
    * @param workItem the work item a commit subject names, or null
+   * @param accepts the answered states beyond the original seven that the caller understands —
+   *     {@code WAITING}, {@code NOT_APPLICABLE} (qits-1133). Absent: neither is sent; a waiting kind
+   *     reads UNKNOWN and a kind that does not apply is left out, as before
    */
   public record TriggerRequest(
       String repository,
@@ -59,7 +62,8 @@ public class ReleaseRequestAutomationController {
       String previousFoldSha,
       List<String> changedSincePrevious,
       List<String> sourceBranches,
-      String workItem) {}
+      String workItem,
+      List<String> accepts) {}
 
   /**
    * A re-run's body. Both optional.
@@ -75,8 +79,10 @@ public class ReleaseRequestAutomationController {
    * carry-over, the plan, a row or FRESH — and answers where each stands. Idempotent per (request,
    * fold): a repeat answers the stored rows, and only a kind answered UNKNOWN is decided again.
    *
-   * <p>A kind that does not apply is not listed; a repository no kind applies to answers an empty
-   * list. A kind that has to run answers REQUESTED, and its run is dispatched behind the scenes;
+   * <p>A kind that does not apply is listed NOT_APPLICABLE with its reason when the body's {@code
+   * accepts} names that word, and left out otherwise. A DERIVED kind that waits for the SOURCE kinds
+   * answers WAITING (or UNKNOWN, to a caller that does not accept WAITING). A kind that has to run
+   * answers REQUESTED, and its run is dispatched behind the scenes;
    * follow it with the read below.
    *
    * <p>A repository no scan has read yet — a new one's first request — is still a 404, but it queues
@@ -104,13 +110,15 @@ public class ReleaseRequestAutomationController {
             request.previousFoldSha(),
             request.changedSincePrevious(),
             request.sourceBranches(),
-            request.workItem()));
+            request.workItem(),
+            request.accepts()));
   }
 
   /**
    * Where a request's automations stand at a fold — the newest fold anything was asked about when
-   * {@code foldSha} is not given. A kind with no row at that fold is not listed; for qits-projects'
-   * gate an absent kind is a hold and a reason to post the fold again.
+   * {@code foldSha} is not given. {@code accepts} works as on the trigger (repeat it, or separate
+   * with commas). A kind with no row, no WAITING and no NOT_APPLICABLE at that fold is not listed;
+   * for qits-projects' gate an absent kind is a hold and a reason to post the fold again.
    */
   @GET
   @Path("/{requestId}/automations")
@@ -119,8 +127,10 @@ public class ReleaseRequestAutomationController {
   @APIResponse(responseCode = "400", description = "Not a request id, or not a sha")
   @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
   public ReleaseRequestAutomationsDto automations(
-      @PathParam("requestId") String requestId, @QueryParam("foldSha") String foldSha) {
-    return automations.automations(requestId == null ? null : requestId.trim(), foldSha);
+      @PathParam("requestId") String requestId,
+      @QueryParam("foldSha") String foldSha,
+      @QueryParam("accepts") List<String> accepts) {
+    return automations.automations(requestId == null ? null : requestId.trim(), foldSha, accepts);
   }
 
   /**
