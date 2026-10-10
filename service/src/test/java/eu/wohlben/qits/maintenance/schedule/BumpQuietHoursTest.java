@@ -1,16 +1,14 @@
 package eu.wohlben.qits.maintenance.schedule;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.maintenance.api.Fixture;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
 import eu.wohlben.qits.maintenance.bump.BumpDispatcher;
-import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
-import eu.wohlben.qits.maintenance.config.UpstreamSwitch;
 import eu.wohlben.qits.maintenance.model.ScanScope;
 import eu.wohlben.qits.maintenance.peer.FakePeers;
+import eu.wohlben.qits.maintenance.peer.PeerTarget;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import eu.wohlben.qits.maintenance.scan.ScanService;
 import eu.wohlben.qits.maintenance.scan.ScanTrigger;
@@ -30,15 +28,13 @@ import org.junit.jupiter.api.Test;
 /**
  * THE ONE THING THAT STILL SAYS "NOT NOW", AND IT SAYS IT BY NAME.
  *
- * <p>Dispatch arms itself on debt, so the hour no longer decides whether the estate's own releases
- * travel. What an hour may still decide is whether a {@code maintenance/dependencies} branch is
- * welcome to arrive in somebody's working afternoon, and {@code
- * qits.maintenance.bump.dispatch.quiet-hours} is where that is written down — rather than being an
- * implication of a cron, which is how it came to stop everything.
+ * <p>Dispatch is armed by debt, so the hour does not decide whether the estate's own releases
+ * travel. What an hour may still decide is whether a release request full of bumps is welcome to
+ * arrive in somebody's working afternoon, and {@code qits.maintenance.bump.dispatch.quiet-hours} is
+ * where that is written down. Since qits-1133 R5 there is no window and no door to override it.
  *
  * <p><b>The quiet range is computed around the moment the suite starts</b>, an hour either side of
- * it in UTC. A fixed range would be a test that passes twenty-two hours a day, which is the kind of
- * clock dependence the suite turns the scheduler off to avoid.
+ * it in UTC. A fixed range would be a test that passes twenty-two hours a day.
  */
 @QuarkusTest
 @TestProfile(BumpQuietHoursTest.RightNowIsQuiet.class)
@@ -71,67 +67,45 @@ class BumpQuietHoursTest {
 
   @Inject WorkQueue queue;
 
-  @Inject MaintenanceConfig config;
-
-  /** The real bean behind the proxy, put back after every method: a mock lives for the run. */
-  private MaintenanceConfig realConfig;
-
-  @AfterEach
-  void restoreTheConfig() {
-    queue.awaitIdle(Duration.ofSeconds(30));
-    UpstreamSwitch.restore(realConfig);
-  }
-
   @BeforeEach
   void scriptThePeers() {
-    // THE LEGACY GROUP PATH, pinned with the cutover switch OFF (qits-1133 R2): it ships on, which
-    // retires group bumps; off is the emergency position that restores this path until R5.
-    realConfig = UpstreamSwitch.install(config, false);
     queue.awaitIdle(Duration.ofSeconds(30));
     inventory.clear();
     peers.reset();
     Fixture.scriptScan(peers);
     Fixture.scriptBranchAbsent(peers);
-    Fixture.scriptCiAccepts(peers, "run-quiet");
-    Fixture.scriptReleaseRequestAccepted(peers, "rr-quiet");
     Fixture.scriptCiQueueEmpty(peers);
+    peers.answer(
+        PeerTarget.PROJECTS,
+        Fixture.RELEASE_REQUESTS_PATH,
+        FakePeers.Scripted.ok(
+            "{\"requests\":[],\"request\":{\"id\":\"8e1f0c3a-2b4d-4e6f-8a9b-0c1d2e3f4a5b\","
+                + "\"state\":\"PENDING\"}}"));
     scans.request(ScanScope.ALL, null, ScanTrigger.MANUAL);
     queue.awaitIdle(Duration.ofSeconds(60));
-    dispatcher.close("a fresh test");
   }
 
-  private boolean bumped() {
+  @AfterEach
+  void drain() {
     queue.awaitIdle(Duration.ofSeconds(30));
-    return !store.bumps(Fixture.REPOSITORY, 50).isEmpty();
   }
 
   /**
-   * Everything the dispatch needs is true — owed work, an idle queue, nothing in flight — and the
-   * hour is the one thing saying no. <b>It says so as its own outcome</b> rather than as silence:
-   * the whole failure this replaces was a gate that declined and reported nothing.
+   * Everything the dispatch needs is true — owed work, an idle queue, no open request — and the hour
+   * is the one thing saying no. <b>It says so as its own outcome</b> rather than as silence.
    */
   @Test
-  void aQuietHourDispatchesNothingAndSaysWhy() {
+  void aQuietHourOpensNothingAndSaysWhy() {
     BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
     assertEquals("QUIET_HOURS", decision.outcome());
     assertEquals(1, decision.owed(), "the work is owed and reported, it is simply not sent");
-    assertEquals(1, decision.queue().size());
+    assertTrue(decision.summary().contains("quiet-hours"), decision.summary());
 
     assertTrue(dispatcher.tick().isEmpty());
-    assertFalse(bumped());
-    assertTrue(store.bumpWindow().isEmpty(), "and no window was opened to be honoured later");
-  }
-
-  /**
-   * <b>And a person can still say "now".</b> {@code POST /bumps/window} is not quiet-hours gated,
-   * because pressing it is the statement the quiet hours exist to be an exception to. The tick that
-   * follows finds a window already open and never reaches the hour at all.
-   */
-  @Test
-  void theDoorOverridesTheQuietHour() {
-    dispatcher.open(Instant.now());
-
-    assertTrue(!dispatcher.tick().isEmpty(), "the window was opened by hand and it is honoured");
-    assertTrue(bumped());
+    assertTrue(
+        peers.bodiesFor(Fixture.RELEASE_REQUESTS_PATH).stream()
+            .allMatch(java.util.Objects::isNull),
+        "no release request was opened");
+    assertTrue(store.lastDispatchedAt().isEmpty());
   }
 }

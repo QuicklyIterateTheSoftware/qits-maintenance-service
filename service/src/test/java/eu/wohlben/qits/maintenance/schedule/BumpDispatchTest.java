@@ -6,15 +6,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.maintenance.api.Fixture;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
+import eu.wohlben.qits.maintenance.automation.EstatePinsAutomation;
 import eu.wohlben.qits.maintenance.bump.BumpDispatcher;
 import eu.wohlben.qits.maintenance.bump.BumpOrder;
-import eu.wohlben.qits.maintenance.bump.BumpService;
 import eu.wohlben.qits.maintenance.bump.CiClient;
-import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
-import eu.wohlben.qits.maintenance.config.UpstreamSwitch;
+import eu.wohlben.qits.maintenance.bump.ReleaseRequestClient;
+import eu.wohlben.qits.maintenance.entity.MtReleaseRequest;
 import eu.wohlben.qits.maintenance.latest.GitlinkSha;
 import eu.wohlben.qits.maintenance.manifest.GroupConfig;
 import eu.wohlben.qits.maintenance.manifest.ParsedPin;
+import eu.wohlben.qits.maintenance.model.BumpMode;
 import eu.wohlben.qits.maintenance.model.BumpStatus;
 import eu.wohlben.qits.maintenance.model.BumpTrigger;
 import eu.wohlben.qits.maintenance.model.Ecosystem;
@@ -31,22 +32,26 @@ import eu.wohlben.qits.maintenance.scan.ScanTrigger;
 import eu.wohlben.qits.maintenance.work.WorkQueue;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * THE GATE: bumps leave as many at a time as qits-ci has free slots, and none when it has none.
+ * THE GATE: a main-only release request for every repository owed a bump and without one, as many
+ * at a time as qits-ci has free slots, and none when it has none.
  *
  * <p>The subject here is the DISPATCH DECISION rather than the selection — which repository goes
- * first is {@code BumpOrderTest}'s, and it is stated there against a graph rather than against this
- * fixture's one repository. What this pins is the part no unit test can: that the window, the CI
- * queue snapshot, its runners' slots and our REQUESTED bumps are actually wired to the thing that
- * sends.
+ * first is {@code BumpOrderTest}'s, stated against a graph. What this pins is the part no unit test
+ * can: that the CI queue snapshot, its runners' slots, the automation rows still REQUESTED and the
+ * release requests already open are actually wired to the thing that opens a request. Since
+ * qits-1133 R5 that thing is a MAIN-ONLY {@code LOWEST} request, never a {@code maintenance/<group>}
+ * branch, and there is no window to open first.
  *
  * <p><b>Every method drives {@link BumpDispatcher#tick()} by hand.</b> The suite's scheduler is off,
  * so a test that waited for the timer would be indistinguishable from a test that hung.
@@ -66,119 +71,245 @@ class BumpDispatchTest {
 
   @Inject WorkQueue queue;
 
-  @Inject MaintenanceConfig config;
-
-  /** The real bean behind the proxy, put back after every method: a mock lives for the run. */
-  private MaintenanceConfig realConfig;
-
-  @AfterEach
-  void restoreTheConfig() {
-    queue.awaitIdle(Duration.ofSeconds(30));
-    UpstreamSwitch.restore(realConfig);
-  }
-
   @BeforeEach
   void scriptThePeers() {
-    // THE LEGACY GROUP PATH, pinned with the cutover switch OFF (qits-1133 R2): it ships on, which
-    // retires group bumps; off is the emergency position that restores this path until R5.
-    realConfig = UpstreamSwitch.install(config, false);
     queue.awaitIdle(Duration.ofSeconds(30));
     inventory.clear();
     peers.reset();
     Fixture.scriptScan(peers);
-    // Who publishes each internal pin: a bump's changelog ranges need a source repository (qits-893).
     Fixture.seedProducers(store);
     Fixture.scriptBranchAbsent(peers);
-    Fixture.scriptCiAccepts(peers, "run-dispatched");
-    Fixture.scriptReleaseRequestAccepted(peers, "rr-dispatched");
     scans.request(ScanScope.ALL, null, ScanTrigger.MANUAL);
     queue.awaitIdle(Duration.ofSeconds(60));
-    dispatcher.close("a fresh test");
+    answersMainOnly(Fixture.CATALOG_ID, Fixture.REPOSITORY);
   }
 
-  /** The one bump a tick sent, failing when it sent none or several. */
-  private static UUID only(List<UUID> sent) {
-    assertEquals(1, sent.size(), "exactly one bump was expected: " + sent);
-    return sent.get(0);
-  }
-
-  private boolean bumped() {
+  @AfterEach
+  void drain() {
     queue.awaitIdle(Duration.ofSeconds(30));
-    return !store.bumps(Fixture.REPOSITORY, 50).isEmpty();
+  }
+
+  /** The request id qits-projects answers for one repository's main-only ask — stable per name. */
+  private static String requestIdOf(String repository) {
+    return UUID.nameUUIDFromBytes(repository.getBytes(StandardCharsets.UTF_8)).toString();
+  }
+
+  private static String collection(String catalogId) {
+    return ReleaseRequestClient.REQUESTS_PATH_PREFIX
+        + catalogId
+        + ReleaseRequestClient.REQUESTS_PATH_SUFFIX;
   }
 
   /**
-   * <b>THE FIFTH LIVE FAILURE, AND THE WHOLE OF THIS FIX: DEBT ARMS THE DISPATCH, NOT THE HOUR.</b>
-   * On 2026-09-11 {@code @qits/ui-components} was cut at 10:44, fifteen repositories were owed by
-   * 10:45 and at 17:20 none of them had been sent: every gate would have passed, but the first one
-   * could only be opened by a 02:00 cron. The intended primary upgrade path — something becomes
-   * owed, qits-ci goes idle, the bump is dispatched — had never once run on its own.
-   *
-   * <p><b>So this test never calls {@link BumpDispatcher#open}</b>, and it is the exact scenario of
-   * the ticket: no window row, an owed repository, an idle queue. The tick sends, and the window it
-   * opened for itself is there afterwards.
+   * qits-projects for one repository: no request open, and an ask answered with a fresh PENDING
+   * one. One body serves both routes on the collection — the listing reads {@code requests}, the
+   * ask reads {@code request}.
    */
-  @Test
-  void anOwedBumpAndAnIdleQueueDispatchWithNoWindowAndNoCron() {
-    Fixture.scriptCiQueueEmpty(peers);
-    assertTrue(store.bumpWindow().isEmpty(), "no cron has run and nobody pressed the door");
-
-    assertTrue(!dispatcher.tick().isEmpty(), "the debt is the reason, and it is enough");
-    assertTrue(bumped());
-    assertTrue(
-        store.bumpWindow().isPresent(),
-        "and the window is a consequence of the debt rather than of an hour");
+  private void answersMainOnly(String catalogId, String repository) {
+    String id = requestIdOf(repository);
+    peers.answer(
+        PeerTarget.PROJECTS,
+        collection(catalogId),
+        FakePeers.Scripted.ok(
+            "{\"requests\":[],\"request\":{\"id\":\"" + id + "\",\"state\":\"PENDING\"}}"));
+    requestIs(catalogId, id, "PENDING");
   }
 
-  /** Nothing owed is still nothing dispatched, and it opens no window to find that out. */
+  /** What qits-projects says one request is now. */
+  private void requestIs(String catalogId, String requestId, String state) {
+    peers.answer(
+        PeerTarget.PROJECTS,
+        collection(catalogId) + "/" + requestId,
+        FakePeers.Scripted.ok(
+            "{\"request\":{\"id\":\"" + requestId + "\",\"state\":\"" + state + "\"}}"));
+  }
+
+  /**
+   * The release asks POSTed to one repository's collection — the listing's GETs carry no body and
+   * are not asks. (Read through a method: {@code peers} is a client proxy, and a field read on it
+   * would see the proxy's own empty list.)
+   */
+  private long asks(String catalogId) {
+    return peers.bodiesFor(collection(catalogId)).stream()
+        .filter(java.util.Objects::nonNull)
+        .count();
+  }
+
+  private List<String> repositoriesOf(List<UUID> opened) {
+    return opened.stream()
+        .map(id -> store.releaseRequest(id.toString()).orElseThrow().repository)
+        .toList();
+  }
+
+  /** The one request a tick opened, failing when it opened none or several. */
+  private static UUID only(List<UUID> opened) {
+    assertEquals(1, opened.size(), "exactly one request was expected: " + opened);
+    return opened.get(0);
+  }
+
+  // --- what is opened ---------------------------------------------------------------------------
+
+  /**
+   * <b>Debt and a free slot are the whole of the reason.</b> No cron, no window: the owed repository
+   * gets a MAIN-ONLY LOWEST request, remembered with the pending set it was opened for — and no
+   * {@code mt_bump} row and no group branch at all.
+   */
   @Test
-  void nothingIsDispatchedWhenNothingIsOwed() {
+  void anOwedRepositoryAndAnIdleQueueOpenAMainOnlyRequest() {
+    Fixture.scriptCiQueueEmpty(peers);
+
+    UUID id = only(dispatcher.tick());
+
+    assertEquals(requestIdOf(Fixture.REPOSITORY), id.toString());
+    String ask =
+        peers.bodiesFor(Fixture.RELEASE_REQUESTS_PATH).stream()
+            .filter(java.util.Objects::nonNull)
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("no release ask was posted"));
+    assertTrue(ask.contains("\"branch\":\"main\""), ask);
+    assertTrue(ask.contains("\"priority\":\"LOWEST\""), ask);
+    MtReleaseRequest opened = store.releaseRequest(id.toString()).orElseThrow();
+    assertEquals(MtReleaseRequest.MAIN_ONLY, opened.purpose);
+    assertTrue(opened.opened);
+    assertTrue(opened.changes.contains("qits-eventstream"), opened.changes);
+    assertTrue(store.bumps(Fixture.REPOSITORY, 50).isEmpty(), "no bump row, no group branch");
+    assertFalse(peers.called(PeerTarget.CI, CiClient.TRIGGER_PATH), "nothing went to qits-ci");
+  }
+
+  /** Nothing owed is nothing opened. */
+  @Test
+  void nothingIsOpenedWhenNothingIsOwed() {
     Fixture.scriptCiQueueEmpty(peers);
     inventory.clearLatest();
 
+    assertEquals("NOTHING_OWED", dispatcher.explain(Instant.now()).outcome());
     assertTrue(dispatcher.tick().isEmpty());
-    assertFalse(bumped());
-    assertTrue(store.bumpWindow().isEmpty(), "a window with nothing to hand out is not opened");
+    assertEquals(0, asks(Fixture.CATALOG_ID));
+  }
+
+  // --- what holds -------------------------------------------------------------------------------
+
+  /** The request just opened is on its way: the same pending set is held, not asked for again. */
+  @Test
+  void aRequestOnItsWayHoldsItsRepository() {
+    Fixture.scriptCiQueueEmpty(peers);
+    only(dispatcher.tick());
+
+    BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
+    assertEquals("WAITING_ON_RELEASES", decision.outcome());
+    assertEquals(1, decision.held());
+    assertTrue(dispatcher.tick().isEmpty());
+    assertEquals(1, asks(Fixture.CATALOG_ID), "asked once");
+  }
+
+  /** A repository with ANY open request is held: that request's own pre-run carries the bump. */
+  @Test
+  void anOpenRequestOfAnyKindHoldsItsRepository() {
+    Fixture.scriptCiQueueEmpty(peers);
+    peers.answer(
+        PeerTarget.PROJECTS,
+        Fixture.RELEASE_REQUESTS_PATH,
+        FakePeers.Scripted.ok(
+            "{\"requests\":[{\"id\":\"a-persons\",\"state\":\"PENDING\",\"mergedSha\":null}]}"));
+
+    assertTrue(dispatcher.tick().isEmpty());
+    assertEquals(0, asks(Fixture.CATALOG_ID));
+  }
+
+  /** A listing that cannot be read holds, as every unreadable answer here does. */
+  @Test
+  void anUnreadableListingHolds() {
+    Fixture.scriptCiQueueEmpty(peers);
+    peers.answer(
+        PeerTarget.PROJECTS,
+        Fixture.RELEASE_REQUESTS_PATH,
+        FakePeers.Scripted.unreachable("connection refused"));
+
+    assertTrue(dispatcher.tick().isEmpty());
   }
 
   /**
-   * The whole point: a busy qits-ci is not handed another build. <b>And it is asked without a
-   * window row</b>, because debt is what arms this now — the capacity gate is the one that decides
-   * whether the owed work goes, and it is unchanged.
+   * The main-only request was withdrawn by its own pre-run, which found nothing to write: the same
+   * pending set would find nothing again, so it is held.
    */
   @Test
-  void aFullQueueDispatchesNothingAndAFreeSlotDispatchesOne() {
+  void aRequestItsPreRunWithdrewHoldsTheSamePendingSet() {
+    Fixture.scriptCiQueueEmpty(peers);
+    UUID id = only(dispatcher.tick());
+    store.requestWithdrawn(id.toString(), "nothing to bump", Instant.now());
+
+    assertTrue(dispatcher.tick().isEmpty());
+    assertEquals(1, asks(Fixture.CATALOG_ID));
+  }
+
+  /** A PERSON withdrew it: a withdrawn request counts as none, and the repository is asked again. */
+  @Test
+  void aRequestAPersonWithdrewFreesTheRepository() {
+    Fixture.scriptCiQueueEmpty(peers);
+    UUID id = only(dispatcher.tick());
+    requestIs(Fixture.CATALOG_ID, id.toString(), "WITHDRAWN");
+
+    assertEquals(1, dispatcher.tick().size(), "a withdrawn request is no request");
+    assertEquals(2, asks(Fixture.CATALOG_ID));
+  }
+
+  /** A newer upstream release is a different pending set, and a different request. */
+  @Test
+  void aPendingSetThatMovedIsAskedForAgain() {
+    Fixture.scriptCiQueueEmpty(peers);
+    only(dispatcher.tick());
+    store.recordLatestIfNewer(
+        Ecosystem.MAVEN, "eu.wohlben.qits:qits-eventstream", "2029.101.1", "test", Instant.now());
+
+    assertEquals(1, dispatcher.tick().size(), "a new upstream release is a new bump");
+    assertEquals(2, asks(Fixture.CATALOG_ID));
+  }
+
+  /**
+   * A repository that cannot be asked for — no catalog id to address qits-projects with — is
+   * refused once and set aside, still reported, rather than picked again every tick.
+   */
+  @Test
+  void aRepositoryThatCannotBeAskedForIsRefusedAndSetAside() {
+    inventory.clear();
+    String repository = "qits-refused-" + UUID.randomUUID();
+    scanned(repository, null, internalPin("eu.wohlben.qits:qits-refused"));
+    store.recordLatestIfNewer(
+        Ecosystem.MAVEN, "eu.wohlben.qits:qits-refused", "2026.913.1", "test", Instant.now());
+    Fixture.scriptCiQueueEmpty(peers);
+
+    assertTrue(dispatcher.tick().isEmpty());
+    BumpDispatcher.Assessment after = dispatcher.assess();
+    assertTrue(after.candidates().isEmpty());
+    assertEquals(List.of(repository), after.refused());
+  }
+
+  // --- the capacity gate ----------------------------------------------------------------------
+
+  /** A busy qits-ci is not handed another build, and a free slot is what it was waiting for. */
+  @Test
+  void aFullQueueOpensNothingAndAFreeSlotOpensOne() {
     Fixture.scriptCiQueue(peers, 2);
 
     assertTrue(dispatcher.tick().isEmpty(), "two runs are active on two slots");
-    assertFalse(bumped());
+    assertEquals(0, asks(Fixture.CATALOG_ID));
 
-    // A slot frees, and the same tick that declined now sends.
     Fixture.scriptCiQueueEmpty(peers);
-    assertTrue(!dispatcher.tick().isEmpty(), "a free slot is what it was waiting for");
-    assertTrue(bumped());
+    assertEquals(1, dispatcher.tick().size());
   }
 
-  /**
-   * <b>UNREADABLE IS BUSY.</b> A gate that read "I could not ask" as "nothing is going" would fire
-   * the whole night's bumps at the one moment qits-ci is least able to say so — which is worse than
-   * the stampede it replaced, because it would be aimed at a service already in trouble.
-   */
+  /** <b>UNREADABLE IS BUSY.</b> Nothing is opened blind. */
   @Test
   void aQueueThatCannotBeReadIsTreatedAsBusy() {
     peers.answer(
         PeerTarget.CI, CiClient.QUEUE_PATH, FakePeers.Scripted.unreachable("connection refused"));
-    dispatcher.open(Instant.now());
 
     assertEquals("CI_UNREADABLE", dispatcher.explain(Instant.now()).outcome());
     assertTrue(dispatcher.tick().isEmpty());
-    assertFalse(bumped(), "nothing is dispatched blind");
+    assertEquals(0, asks(Fixture.CATALOG_ID));
   }
 
-  /**
-   * A snapshot that answered but is missing a half is not an empty queue either — a qits-ci that
-   * stopped reporting its runners has not stopped running anything.
-   */
+  /** A snapshot missing its runners is unreadable, not empty. */
   @Test
   void aSnapshotMissingItsRunnersIsUnreadableNotEmpty() {
     peers.answer(
@@ -190,710 +321,62 @@ class BumpDispatchTest {
     assertEquals("CI_UNREADABLE", decision.outcome());
     assertTrue(decision.summary().contains("runners"), decision.summary());
     assertTrue(dispatcher.tick().isEmpty());
-    assertFalse(bumped());
   }
 
   /**
-   * <b>A REQUESTED BUMP OF OURS CONSUMES A SLOT.</b> It is a build this service asked for that
-   * qits-ci has not accepted yet, so it is in no listing qits-ci answers — counting only qits-ci's
-   * runs would hand the same free slot out twice. One slot, nothing in qits-ci, one bump of ours
-   * still REQUESTED: nothing is free.
+   * <b>AN AUTOMATION ROW OF OURS STILL REQUESTED CONSUMES A SLOT.</b> It is a build this service
+   * asked for that qits-ci has not accepted yet, so it is in no listing qits-ci answers. Once qits-ci
+   * accepts it, it is counted there and not again here.
    */
   @Test
-  void aRequestedBumpOfOursConsumesASlot() {
-    owes("qits-other-service", "eu.wohlben.qits:qits-other");
+  void aRequestedAutomationRowConsumesASlot() {
     UUID requested =
-        store.openBump(
-            "qits-other-service",
-            GroupConfig.DEFAULT_GROUP,
-            "maintenance/" + GroupConfig.DEFAULT_GROUP,
-            "dev",
-            BumpTrigger.MANUAL,
-            List.of(),
+        store.openAutomation(
+            new MaintenanceStore.AutomationOpening(
+                "qits-other-service",
+                EstatePinsAutomation.KIND,
+                null,
+                null,
+                null,
+                null,
+                "workspace/ws-7",
+                null,
+                "dev",
+                BumpTrigger.MANUAL,
+                List.of(),
+                Map.of(),
+                BumpStatus.REQUESTED,
+                null),
+            true,
             Instant.now());
     Fixture.scriptCiQueueEmpty(peers);
-    dispatcher.open(Instant.now());
 
     BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
     assertEquals("CI_BUSY", decision.outcome());
     assertEquals(1, decision.slots());
     assertEquals(0, decision.free());
-    assertEquals(0, decision.ciActive());
     assertEquals(1, decision.inFlight());
     assertTrue(
         decision.summary().contains("1 slot(s), 0 active run(s) and 1 bump(s) waiting to reach it"),
         decision.summary());
     assertTrue(dispatcher.tick().isEmpty());
-    assertFalse(bumped(), "the one slot is spoken for");
 
-    // qits-ci accepts it: the bump is RUNNING and its run is in qits-ci's listing now. Counted
-    // there and NOT again here — two slots, one taken, one free.
     store.bumpDispatched(requested, "e-other", List.of("run-other"));
     Fixture.scriptCiQueue(peers, 1, Fixture.runner("qits-ci", 2, true, false));
-    assertEquals(1, dispatcher.explain(Instant.now()).free(), "a RUNNING bump is not counted twice");
+    assertEquals(1, dispatcher.explain(Instant.now()).free(), "a RUNNING row is not counted twice");
     assertEquals(1, dispatcher.tick().size());
-    assertTrue(bumped());
   }
 
-  /** The ordinary ending: the window shuts itself the moment nothing is owed. */
+  /** QITS-882: every READY repository goes in one tick when qits-ci has the slots. */
   @Test
-  void theWindowClosesItselfWhenEverythingOwedHasBeenAskedFor() {
-    Fixture.scriptCiQueueEmpty(peers);
-    dispatcher.open(Instant.now());
-    assertTrue(dispatcher.windowOpen(Instant.now()));
-
-    UUID id = only(dispatcher.tick());
-    queue.awaitIdle(Duration.ofSeconds(30));
-    // The bump has to END before the window can: while one of ours is still going the window stays
-    // open, so it does not shut on the night's last bump while it runs. Ended here rather than
-    // driven through qits-ci, because what this test is about is the window and not the run.
-    store.bumpFinished(id, BumpStatus.NOTHING_TO_DO, "SUCCESS", "ended by the test", Instant.now());
-    inventory.clearLatest();
-
-    assertTrue(dispatcher.tick().isEmpty());
-    assertFalse(dispatcher.windowOpen(Instant.now()), "nothing is owed, so the night is over");
-  }
-
-  /** …and while that last bump is still going, an empty owed list does not close the window. */
-  @Test
-  void theWindowStaysOpenWhileTheLastBumpIsStillGoing() {
-    Fixture.scriptCiQueueEmpty(peers);
-    dispatcher.open(Instant.now());
-
-    only(dispatcher.tick());
-    queue.awaitIdle(Duration.ofSeconds(30));
-    inventory.clearLatest();
-
-    assertEquals("NOTHING_OWED", dispatcher.explain(Instant.now()).outcome());
-    assertTrue(dispatcher.tick().isEmpty());
-    assertTrue(dispatcher.windowOpen(Instant.now()), "one of ours is still running");
-  }
-
-  /**
-   * <b>THE LIVE FAILURE, END TO END.</b> At 05:52 one repository was dispatched, came back
-   * SUCCEEDED with a release request open, and was dispatched again thirty seconds later — then
-   * again, and again, every one of those a CI run that could only answer NOTHING_TO_DO. Pending is
-   * read off the pins on <i>main</i>, and main does not move until that release lands, so the
-   * repository is genuinely still owed; what it is not, is sendable.
-   *
-   * <p>The two assertions are one fact each and both matter: no second bump, and <b>the window is
-   * still open</b>. Held has to keep counting as owed, or a night whose chain is waiting on releases
-   * would declare itself finished and lose everything behind it.
-   */
-  @Test
-  void aBumpWhoseBranchIsWaitingOnItsReleaseIsNotDispatchedAgain() {
-    Fixture.scriptCiQueueEmpty(peers);
-    dispatcher.open(Instant.now());
-
-    UUID id = only(dispatcher.tick());
-    queue.awaitIdle(Duration.ofSeconds(30));
-    store.bumpFinished(
-        id, BumpStatus.SUCCEEDED, "SUCCESS", "the branch is pushed and its release is open", Instant.now());
-
-    assertTrue(dispatcher.tick().isEmpty(), "the same changes have already been asked for");
-    assertEquals(1, store.bumps(Fixture.REPOSITORY, 50).size(), "and no second row was written");
-    assertTrue(
-        dispatcher.windowOpen(Instant.now()),
-        "held is still owed: the window must not close on a chain that is only half sent");
-  }
-
-  /**
-   * The same hold for the other ending that leaves the pins where they were. NOTHING_TO_DO is what
-   * the re-dispatch loop kept producing, and a run that found nothing to write is the strongest
-   * possible evidence that sending it once more would find nothing either.
-   */
-  @Test
-  void aBumpThatFoundNothingToDoAlsoHoldsItsRepositoryBack() {
-    Fixture.scriptCiQueueEmpty(peers);
-    dispatcher.open(Instant.now());
-
-    UUID id = only(dispatcher.tick());
-    queue.awaitIdle(Duration.ofSeconds(30));
-    store.bumpFinished(
-        id, BumpStatus.NOTHING_TO_DO, "SUCCESS", "the versions were already there", Instant.now());
-
-    assertTrue(dispatcher.tick().isEmpty());
-    assertEquals(1, store.bumps(Fixture.REPOSITORY, 50).size());
-  }
-
-  /**
-   * <b>A FAILURE HOLDS NOTHING.</b> There is no branch waiting on a release — the run went red, or
-   * qits-ci recorded no run at all — so the work is owed in the plainest sense and the next tick
-   * inside the window is exactly the retry.
-   */
-  @Test
-  void aFailedBumpIsRetriedRatherThanHeld() {
-    Fixture.scriptCiQueueEmpty(peers);
-    dispatcher.open(Instant.now());
-
-    UUID id = only(dispatcher.tick());
-    queue.awaitIdle(Duration.ofSeconds(30));
-    store.bumpFinished(id, BumpStatus.FAILED, "FAILED", "the run went red", Instant.now());
-
-    assertTrue(!dispatcher.tick().isEmpty(), "a failure must stay retryable");
-    assertEquals(2, store.bumps(Fixture.REPOSITORY, 50).size());
-  }
-
-  /**
-   * <b>THE SECOND LIVE FAILURE: THE NIGHT MUST SURVIVE THIS SERVICE'S OWN REDEPLOY.</b> On
-   * 2026-09-10 nineteen bumps went out one at a time from 06:32, and one of them was the bump of
-   * {@code qits-maintenance-platform-service} itself. It succeeded at 08:01, its release deployed at
-   * 08:11, the container was replaced — and with the window held in a field, the night ended there:
-   * eleven repositories owed, four hours of window left, and no cron until 02:00.
-   *
-   * <p><b>So this test never calls {@link BumpDispatcher#open}.</b> The window is written to the
-   * store as a previous process left it, and the dispatcher — which is what a restarted one is —
-   * picks the night up from the row.
-   */
-  @Test
-  void aWindowOpenedBeforeARestartIsResumedFromTheStore() {
-    Fixture.scriptCiQueueEmpty(peers);
-    Instant now = Instant.now();
-    store.openBumpWindow(now.minus(Duration.ofHours(2)), now.plus(Duration.ofHours(4)));
-
-    assertTrue(dispatcher.windowOpen(now), "the row is the window; the field was only a cache");
-    assertTrue(!dispatcher.tick().isEmpty(), "the night carries on where the last process left it");
-    assertTrue(bumped());
-  }
-
-  /**
-   * <b>AN EXPIRY IS A RESET, NOT A GUILLOTINE.</b> An expired row is closed — it is never read as a
-   * window that is still running — and then the same tick asks the only question that decides
-   * anything now: is something owed. It is, so a fresh window opens and the chain carries on, which
-   * is the half the old behaviour got wrong: what a window did not reach by its sixth hour was
-   * silently dropped until the next night, and one {@code @qits/ui-components} release is roughly
-   * twenty-eight dispatches deep.
-   */
-  @Test
-  void anExpiredWindowIsReplacedRatherThanDroppingTheWorkItDidNotReach() {
-    Fixture.scriptCiQueueEmpty(peers);
-    Instant now = Instant.now();
-    Instant stale = now.minus(Duration.ofHours(1));
-    store.openBumpWindow(now.minus(Duration.ofHours(7)), stale);
-
-    assertFalse(dispatcher.windowOpen(now), "the row is over and is not treated as open");
-    assertTrue(!dispatcher.tick().isEmpty(), "the work is still owed, so it still goes");
-    assertTrue(bumped());
-    assertTrue(
-        store.bumpWindow().orElseThrow().isAfter(stale),
-        "and the expired row was replaced rather than re-read every tick");
-  }
-
-  /**
-   * <b>THE FOURTH LIVE FAILURE: A HOLD THAT WAITS FOR A RELEASE THAT IS NOT COMING.</b> On
-   * 2026-09-10 the night's twentieth bump pushed its branch at 07:05 and its release request was
-   * REJECTED nine minutes later — the repository's gating build does not compile. Four hours on, the
-   * window was still open, qits-ci was idle, that one repository was the only thing owed, nothing
-   * had been dispatched since 10:54, and no line anywhere said why. A dead release and a release in
-   * flight were the same state, and a dead one holds for ever.
-   *
-   * <p>Three assertions, one fact each: it is not dispatched again (the branch already carries the
-   * change, so a fresh bump could only answer NOTHING_TO_DO), it is <b>not a candidate at all</b> —
-   * so it stops holding its consumers back — and the window therefore <b>closes</b>, because a night
-   * must not stay open for work that cannot be done.
-   */
-  @Test
-  void aBumpWhoseReleaseWasRejectedStopsBeingWaitedOnAndSaysSo() {
-    Fixture.scriptCiQueueEmpty(peers);
-    dispatcher.open(Instant.now());
-
-    UUID id = only(dispatcher.tick());
-    queue.awaitIdle(Duration.ofSeconds(30));
-    store.bumpFinished(id, BumpStatus.SUCCEEDED, "SUCCESS", "pushed", Instant.now());
-    store.bumpReleaseAsked(id, "rr-rejected", "the release request rr-rejected is PENDING");
-    Fixture.scriptReleaseRequestState(
-        peers, "rr-rejected", "REJECTED", "Gating run 3248b7f4 finished FAILED");
-
-    BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
-    assertEquals("ALL_STALLED", decision.outcome());
-    assertEquals(0, decision.owed(), "a release that has stopped is not work this gate can do");
-    assertEquals(1, decision.stalled().size());
-    assertEquals(Fixture.REPOSITORY, decision.stalled().get(0).repository());
-    assertEquals("REJECTED", decision.stalled().get(0).state());
-    assertTrue(
-        decision.stalled().get(0).reason().contains("3248b7f4"),
-        "and it carries qits-projects' own sentence, which is the failing gating run");
-
-    assertTrue(dispatcher.tick().isEmpty());
-    assertEquals(1, store.bumps(Fixture.REPOSITORY, 50).size(), "no second, pointless CI run");
-    assertFalse(
-        dispatcher.windowOpen(Instant.now()),
-        "and the night ends rather than standing open on a build that needs a person");
-    assertEquals(
-        "rr-rejected",
-        store.bump(id).orElseThrow().releaseRequestId,
-        "a rejection is re-armed by qits-projects, so the request is kept — only WITHDRAWN is"
-            + " forgotten");
-  }
-
-  /**
-   * <b>A CONFLICT WITH AN UNMERGED RELEASE IS REBUILT, ONCE</b> (qits-1081). The branch was cut from
-   * main; a release of the repository was cut afterwards and has not reached main; qits-projects
-   * folds that tag into every request, so the branch conflicts with it in every fold, for good. A
-   * person cannot fix that by pushing, because the branch is what is wrong — so the clock sends the
-   * candidate again, cut from the tag, with the branch's head as {@code replaceHead}.
-   *
-   * <p>And only once for that tag: the rebuild's own row records the base it was cut from, and a
-   * rebuild that did not clear the conflict stays STALLED, saying so, instead of being re-sent
-   * every fifteen seconds.
-   */
-  @Test
-  void aConflictWithAnUnmergedReleaseIsRebuiltOnItOnce() {
-    UUID first = conflictedOverAnUnmergedRelease();
-    Fixture.scriptContains(peers, Fixture.TAG_SHA, Fixture.BUMPED_SHA, false);
-
-    BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
-    assertTrue(decision.stalled().isEmpty(), "a conflict the base can clear is not a stall");
-    assertEquals("DISPATCH", decision.outcome(), decision.summary());
-
-    UUID rebuild = only(dispatcher.tick());
-    queue.awaitIdle(Duration.ofSeconds(30));
-    assertTrue(!rebuild.equals(first));
-    List<String> triggers = peers.bodiesFor(CiClient.TRIGGER_PATH);
-    String payload = triggers.get(triggers.size() - 1);
-    assertTrue(
-        payload.contains("\"baseRef\":\"refs/tags/" + Fixture.TAG_VERSION + "\""),
-        "cut from the newest unmerged release, chosen numerically: " + payload);
-    assertTrue(
-        payload.contains("\"replaceHead\":\"" + Fixture.BUMPED_SHA + "\""),
-        "and the branch that lacks it is rebuilt over its head: " + payload);
-    var row = store.bump(rebuild).orElseThrow();
-    assertEquals("refs/tags/" + Fixture.TAG_VERSION, row.baseRef);
-    assertEquals(Fixture.BUMPED_SHA, row.replaceHead);
-
-    // The rebuild pushed and the request is STILL conflicted: whatever it conflicts with, it is not
-    // the tag. Once per tag means the next tick leaves it stalled.
-    store.bumpFinished(rebuild, BumpStatus.SUCCEEDED, "SUCCESS", "rebuilt", Instant.now());
-    store.bumpReleaseAsked(rebuild, "rr-conflicted", "the release request rr-conflicted is PENDING");
-    BumpDispatcher.Decision after = dispatcher.explain(Instant.now());
-    assertEquals(1, after.stalled().size(), after.summary());
-    assertEquals("CONFLICTED", after.stalled().get(0).state());
-    String reason = after.stalled().get(0).reason();
-    assertTrue(reason.contains("already cut from refs/tags/" + Fixture.TAG_VERSION), reason);
-    assertTrue(dispatcher.tick().isEmpty(), "never a second rebuild on the same tag");
-    assertEquals(2, store.bumps(Fixture.REPOSITORY, 50).size());
-  }
-
-  /**
-   * <b>A branch that already carries the release conflicts with something else</b>, and rebuilding
-   * it on the tag would change nothing — so it stays STALLED exactly as a conflict always did.
-   */
-  @Test
-  void aConflictOnABranchThatCarriesTheReleaseStaysStalled() {
-    conflictedOverAnUnmergedRelease();
-    Fixture.scriptContains(peers, Fixture.TAG_SHA, Fixture.BUMPED_SHA, true);
-
-    BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
-    assertEquals("ALL_STALLED", decision.outcome(), decision.summary());
-    assertEquals("CONFLICTED", decision.stalled().get(0).state());
-    assertTrue(dispatcher.tick().isEmpty());
-    assertEquals(1, store.bumps(Fixture.REPOSITORY, 50).size(), "nothing is re-sent");
-  }
-
-  /**
-   * One bump cut from main, pushed to {@link Fixture#BUMPED_SHA}, whose release request is
-   * CONFLICTED — and then a release of the repository that main does not contain.
-   */
-  private UUID conflictedOverAnUnmergedRelease() {
-    Fixture.scriptCiQueueEmpty(peers);
-    dispatcher.open(Instant.now());
-    UUID id = only(dispatcher.tick());
-    queue.awaitIdle(Duration.ofSeconds(30));
-    assertEquals("main", store.bump(id).orElseThrow().baseRef, "no release was unmerged yet");
-    assertEquals(null, store.bump(id).orElseThrow().replaceHead);
-
-    store.bumpFinished(id, BumpStatus.SUCCEEDED, "SUCCESS", "pushed", Instant.now());
-    store.bumpReleaseAsked(id, "rr-conflicted", "the release request rr-conflicted is PENDING");
-    Fixture.scriptReleaseRequestState(
-        peers, "rr-conflicted", "CONFLICTED", "Dockerfile: ARG BASE conflicts with 2026.1007.171656");
-    Fixture.scriptBranchAt(peers, Fixture.BUMPED_SHA);
-    Fixture.scriptUnmergedRelease(peers);
-    Fixture.scriptContains(peers, Fixture.TAG_SHA, Fixture.HEAD_SHA, false);
-    return id;
-  }
-
-  /**
-   * <b>WITHDRAWN COUNTS AS NO REQUEST AT ALL</b> (owner decision 2026-10-04, qits-886). It used to
-   * stall like a rejection, but qits-projects re-arms nothing it withdrew, and nothing here could
-   * put the request id back to null — so the sweep never re-asked, and qits-maintenance-frontend sat
-   * one commit ahead of main with no request open and the window door calling it stalled. Now the
-   * id is cleared, the observation with it, and the candidate is HELD for the sweep's fresh ask —
-   * not re-dispatched, since its branch already carries the change.
-   */
-  @Test
-  void aWithdrawnReleaseRequestIsForgottenAndHeldForAFreshAsk() {
-    Fixture.scriptCiQueueEmpty(peers);
-    dispatcher.open(Instant.now());
-
-    UUID id = only(dispatcher.tick());
-    queue.awaitIdle(Duration.ofSeconds(30));
-    store.bumpFinished(id, BumpStatus.SUCCEEDED, "SUCCESS", "pushed", Instant.now());
-    store.bumpReleaseAsked(id, "rr-withdrawn", "the release request rr-withdrawn is PENDING");
-    Fixture.scriptReleaseRequestState(peers, "rr-withdrawn", "WITHDRAWN", "withdrawn by a person");
-
-    BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
-    assertTrue(decision.stalled().isEmpty(), "a withdrawal is not a stall");
-    assertEquals(1, decision.owed());
-    assertEquals(1, decision.held());
-
-    var row = store.bump(id).orElseThrow();
-    assertEquals(null, row.releaseRequestId, "the request is forgotten, so the sweep asks again");
-    assertEquals(
-        null, row.releaseState, "and no WITHDRAWN is left beside a null id to read as stopped");
-    assertTrue(row.message.contains("withdrawn"), row.message);
-    assertTrue(
-        store.bumpsOwedARelease().stream().anyMatch(owed -> owed.id.equals(id)),
-        "the row is back on the release sweep's listing");
-
-    assertTrue(dispatcher.tick().isEmpty());
-    assertEquals(1, store.bumps(Fixture.REPOSITORY, 50).size(), "no second, pointless CI run");
-    assertTrue(dispatcher.windowOpen(Instant.now()), "a fresh request is still coming");
-  }
-
-  /**
-   * <b>FINALIZED SHIPPED</b>, and reading it as stalled listed qits-events-service as waiting on a
-   * release that stopped on the morning it had released (2026-10-04). It holds like RELEASED: the
-   * next scan of main empties the pending set.
-   */
-  @Test
-  void aFinalizedReleaseHoldsRatherThanStalls() {
-    assertAShippedReleaseHolds("rr-finalized", "FINALIZED");
-  }
-
-  /**
-   * <b>OBSOLETE SHIPPED TOO</b>: qits-projects marks a request OBSOLETE only once it is RELEASED and
-   * before it finalized, so a version was cut.
-   */
-  @Test
-  void anObsoleteReleaseHoldsRatherThanStalls() {
-    assertAShippedReleaseHolds("rr-obsolete", "OBSOLETE");
-  }
-
-  private void assertAShippedReleaseHolds(String requestId, String state) {
-    Fixture.scriptCiQueueEmpty(peers);
-    dispatcher.open(Instant.now());
-
-    UUID id = only(dispatcher.tick());
-    queue.awaitIdle(Duration.ofSeconds(30));
-    store.bumpFinished(id, BumpStatus.SUCCEEDED, "SUCCESS", "pushed", Instant.now());
-    store.bumpReleaseAsked(id, requestId, "the release request " + requestId + " is PENDING");
-    Fixture.scriptReleaseRequestState(peers, requestId, state, null);
-
-    BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
-    assertTrue(decision.stalled().isEmpty(), state + " shipped and is not a stall");
-    assertEquals(1, decision.owed());
-    assertEquals(1, decision.held());
-    assertTrue(dispatcher.tick().isEmpty());
-    assertEquals(1, store.bumps(Fixture.REPOSITORY, 50).size());
-    assertTrue(dispatcher.windowOpen(Instant.now()));
-    assertEquals(requestId, store.bump(id).orElseThrow().releaseRequestId, "nothing to re-ask");
-    assertEquals(state, store.bump(id).orElseThrow().releaseState);
-  }
-
-  /**
-   * <b>The ordinary case is unchanged, and that is the half worth pinning.</b> A release that is
-   * still PENDING is exactly what a hold is for: not dispatched, still owed, window still open.
-   */
-  @Test
-  void aReleaseStillOnItsWayHoldsExactlyAsItDidBefore() {
-    Fixture.scriptCiQueueEmpty(peers);
-    dispatcher.open(Instant.now());
-
-    UUID id = only(dispatcher.tick());
-    queue.awaitIdle(Duration.ofSeconds(30));
-    store.bumpFinished(id, BumpStatus.SUCCEEDED, "SUCCESS", "pushed", Instant.now());
-    store.bumpReleaseAsked(id, "rr-open", "the release request rr-open is PENDING");
-    Fixture.scriptReleaseRequestState(peers, "rr-open", "PENDING", null);
-
-    assertTrue(dispatcher.tick().isEmpty());
-    assertEquals(1, store.bumps(Fixture.REPOSITORY, 50).size());
-    assertTrue(dispatcher.windowOpen(Instant.now()), "something is still coming");
-    assertEquals(
-        "PENDING",
-        store.bump(id).orElseThrow().releaseState,
-        "and what was read is on the row, so a bump standing for hours explains itself");
-  }
-
-  /**
-   * <b>UNREADABLE IS NOT STALLED</b>, the same ruling the CI queue gets one gate down: a peer that
-   * could not be asked is evidence about nothing. Reading it as "the release has stopped" would drop
-   * a repository out of the night — and let its consumers build against the old pin — because
-   * qits-projects restarted.
-   */
-  @Test
-  void aReleaseRequestThatCannotBeReadIsHeldRatherThanStalled() {
-    Fixture.scriptCiQueueEmpty(peers);
-    dispatcher.open(Instant.now());
-
-    UUID id = only(dispatcher.tick());
-    queue.awaitIdle(Duration.ofSeconds(30));
-    store.bumpFinished(id, BumpStatus.SUCCEEDED, "SUCCESS", "pushed", Instant.now());
-    store.bumpReleaseAsked(id, "rr-silent", "the release request rr-silent is PENDING");
-    Fixture.scriptReleaseRequestStateUnreachable(peers, "rr-silent");
-
-    BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
-    assertEquals(1, decision.owed());
-    assertEquals(1, decision.held());
-    assertTrue(decision.stalled().isEmpty());
-    assertTrue(dispatcher.tick().isEmpty());
-    assertTrue(dispatcher.windowOpen(Instant.now()));
-  }
-
-  /**
-   * <b>A stall is not a verdict.</b> qits-projects re-arms REJECTED back to PENDING on the next
-   * merged sha — a push to the branch, a sibling's release, a pending tag reaching main — so the
-   * answer is asked again on every tick and a request that came back to life is held again with
-   * nothing to unwind. Recording the rejection would have kept the repository out of every night
-   * after the thing that rejected it was fixed.
-   */
-  @Test
-  void aRejectionThatIsReArmedIsWaitedOnAgain() {
-    Fixture.scriptCiQueueEmpty(peers);
-    dispatcher.open(Instant.now());
-
-    UUID id = only(dispatcher.tick());
-    queue.awaitIdle(Duration.ofSeconds(30));
-    store.bumpFinished(id, BumpStatus.SUCCEEDED, "SUCCESS", "pushed", Instant.now());
-    store.bumpReleaseAsked(id, "rr-rearmed", "the release request rr-rearmed is PENDING");
-    Fixture.scriptReleaseRequestState(peers, "rr-rearmed", "REJECTED", "a red gate");
-    assertEquals(1, dispatcher.explain(Instant.now()).stalled().size());
-
-    // Somebody pushes the fix; the fold re-arms.
-    Fixture.scriptReleaseRequestState(peers, "rr-rearmed", "PENDING", null);
-    BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
-    assertTrue(decision.stalled().isEmpty());
-    assertEquals(1, decision.held(), "held again, with no state of ours to undo");
-  }
-
-  /**
-   * <b>"FIFTEEN OWED, NOTHING SENT" AND "THE SCHEDULER IS DEAD" MUST NOT LOOK THE SAME.</b> The
-   * bump listing holds only bumps that were dispatched and the window door used to 404 with no
-   * window open, so between two dispatches this service said nothing at all about the work it was
-   * holding. The owed set is answered in dispatch order with each entry's reason — here, from
-   * behind a busy queue and with no window row anywhere.
-   */
-  @Test
-  void theOwedSetIsReportedWithItsReasonsWhileNothingIsBeingDispatched() {
-    Fixture.scriptCiQueue(peers, 2);
-
-    BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
-    assertEquals("CI_BUSY", decision.outcome());
-    assertEquals(1, decision.owed());
-    assertEquals(1, decision.queue().size());
-    assertEquals(Fixture.REPOSITORY, decision.queue().get(0).repository());
-    assertEquals("READY", decision.queue().get(0).reason());
-    assertTrue(store.bumpWindow().isEmpty(), "and reading changed nothing");
-  }
-
-  /** The same answer at the door, which is where an operator asks it — 200, not a 404. */
-  @Test
-  void theWindowDoorAnswersTheOwedSetWithNoWindowOpen() {
-    Fixture.scriptCiQueue(peers, 2);
-
-    io.restassured.RestAssured.given()
-        .get("/maintenance/api/bumps/window")
-        .then()
-        .statusCode(200)
-        .body("open", org.hamcrest.Matchers.equalTo(false))
-        .body("openedAt", org.hamcrest.Matchers.nullValue())
-        .body("outcome", org.hamcrest.Matchers.equalTo("CI_BUSY"))
-        .body("slots", org.hamcrest.Matchers.equalTo(2))
-        .body("free", org.hamcrest.Matchers.equalTo(0))
-        .body("ciActive", org.hamcrest.Matchers.equalTo(2))
-        .body("picks", org.hamcrest.Matchers.empty())
-        .body("owed", org.hamcrest.Matchers.equalTo(1))
-        .body("queue[0].repository", org.hamcrest.Matchers.equalTo(Fixture.REPOSITORY))
-        .body("queue[0].reason", org.hamcrest.Matchers.equalTo("READY"));
-  }
-
-  /**
-   * <b>THE SIXTH LIVE FAILURE: THE ALPHABET WAS THE TIEBREAK, AND IT STARVED THE SAME REPOSITORIES
-   * EVERY NIGHT.</b> {@code assess} walked {@code MaintenanceStore.repositories()}, which sorts by
-   * name, and {@code BumpOrder} takes the first free candidate in the order it was handed — so among
-   * repositories that are equally ready the arbiter was the first letter of the name. One bump went
-   * at a time then and each is held until its own release lands, so an estate-wide fan-out drained
-   * at roughly one repository every five to fifteen minutes and the end of the alphabet was the end
-   * of every night. Measured 2026-09-13: {@code qits-projects-daemon} and {@code qits-workspace-daemon}
-   * consume the identical two jars from one {@code qits-coding-agents} release; the first was bumped
-   * at 19:53 and the second at 21:28, nine repositories later, for no reason but its name.
-   *
-   * <p>So the two repositories here are equally ready and deliberately named so that the alphabet
-   * would answer wrongly: {@code qits-zzz-daemon} was last reached by the clock a fortnight ago and
-   * {@code qits-aaa-daemon} an hour ago, and it is the starved one that goes.
-   */
-  @Test
-  void theCandidateTheClockReachedLongestAgoGoesFirstEvenWhenItsNameSortsLast() {
-    inventory.clear();
-    owes("qits-aaa-daemon", "eu.wohlben.qits:qits-agents-early");
-    owes("qits-zzz-daemon", "eu.wohlben.qits:qits-agents-late");
-    lastReachedByTheClock("qits-aaa-daemon", Instant.now().minus(Duration.ofHours(1)));
-    lastReachedByTheClock("qits-zzz-daemon", Instant.now().minus(Duration.ofDays(14)));
-
-    List<String> order =
-        dispatcher.assess().candidates().stream().map(BumpOrder.Candidate::repository).toList();
-    assertEquals(
-        List.of("qits-zzz-daemon", "qits-aaa-daemon"),
-        order,
-        "equally ready, so the one waiting longest goes — not the one earliest in the alphabet");
-  }
-
-  /**
-   * <b>AND THE TOPOLOGY STILL OVERRULES IT, which is the half that must not have moved.</b> The
-   * recency tiebreak decides only among candidates that are equally ready; an upstream that is
-   * itself owed a bump goes before its consumer whatever the clock last did to either, because the
-   * consumer's {@code to} is not worth writing until that upstream's release exists. Here the
-   * consumer is both earlier in the alphabet and starved — a fortnight since its last night against
-   * the upstream's hour — and it still waits, blocked by the submodule it carries.
-   */
-  @Test
-  void anOwedUpstreamStillGoesBeforeItsConsumerHoweverLongTheConsumerHasWaited() {
-    inventory.clear();
-    owes("qits-zzz-lib", "eu.wohlben.qits:qits-agents-lib");
-    owesItsSubmodule("qits-aaa-consumer", "qits-zzz-lib");
-    lastReachedByTheClock("qits-zzz-lib", Instant.now().minus(Duration.ofHours(1)));
-    lastReachedByTheClock("qits-aaa-consumer", Instant.now().minus(Duration.ofDays(14)));
-    Fixture.scriptCiQueueEmpty(peers);
-
-    assertEquals(
-        "qits-aaa-consumer",
-        dispatcher.assess().candidates().get(0).repository(),
-        "the starved one IS first in the order handed to BumpOrder — recency put it there");
-
-    BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
-    assertEquals(
-        "qits-zzz-lib",
-        decision.pick().candidate().repository(),
-        "and it is still not the pick: the thing it waits on has to be released first");
-    assertTrue(
-        decision.queue().stream()
-            .anyMatch(
-                owed ->
-                    "qits-aaa-consumer".equals(owed.repository())
-                        && "BLOCKED".equals(owed.reason())
-                        && owed.detail().contains("qits-zzz-lib")),
-        "and the consumer says what it is waiting for");
-  }
-
-  /**
-   * A repository with one INTERNAL maven pin a release has moved past — the plainest possible
-   * candidate, built through the store rather than through a scan because what these two tests are
-   * about is the ORDER of several repositories and the fixture describes exactly one.
-   */
-  private void owes(String repository, String dependency) {
-    scanned(
-        repository,
-        ParsedPin.of(
-            Ecosystem.MAVEN, "pom.xml", dependency, "2026.901.1", null, "dependency:" + dependency));
-    store.recordLatestIfNewer(Ecosystem.MAVEN, dependency, "2026.913.1", "test", Instant.now());
-  }
-
-  /**
-   * …and one whose pending change is the SUBMODULE it carries, which is the edge {@link BumpOrder}
-   * reads by name rather than through the artifact ledger: a gitlink's {@code name} IS the
-   * repository it pins.
-   */
-  private void owesItsSubmodule(String repository, String submodule) {
-    scanned(
-        repository,
-        ParsedPin.of(
-            Ecosystem.GITLINK,
-            ".gitmodules",
-            submodule,
-            "1111111111111111111111111111111111111111",
-            null,
-            "gitlink:webui"));
-    // The pin is a commit and the verdict is a DIFFERENCE, so the latest row has to carry the sha
-    // its release was cut from — a version alone leaves nothing to compare and nothing pending.
-    store.recordLatestIfNewer(
-        Ecosystem.GITLINK,
-        submodule,
-        "2026.913.1",
-        GitlinkSha.of("2222222222222222222222222222222222222222"),
-        Instant.now());
-  }
-
-  private void scanned(String repository, ParsedPin pin) {
-    store.replaceInventory(
-        repository,
-        Fixture.PROJECT,
-        "catalog-" + repository,
-        null,
-        "main",
-        RepositoryStatus.OK,
-        "sha-" + repository,
-        null,
-        List.of(pin),
-        List.of(GroupConfig.Group.ofKind(GroupConfig.DEFAULT_GROUP, PinKind.INTERNAL)),
-        GroupSource.DEFAULT,
-        candidate -> PinKind.INTERNAL,
-        Instant.now());
-  }
-
-  /**
-   * One night's scheduled bump of this repository, ended.
-   *
-   * <p><b>It carries no changes on purpose.</b> The row is history — what the tiebreak reads — and a
-   * row whose changes matched the pending set would HOLD the repository instead, which is a
-   * different rule and not the one under test here.
-   */
-  private void lastReachedByTheClock(String repository, Instant at) {
-    UUID id =
-        store.openBump(
-            repository,
-            GroupConfig.DEFAULT_GROUP,
-            "maintenance/" + GroupConfig.DEFAULT_GROUP,
-            "dev",
-            BumpTrigger.SCHEDULED,
-            List.of(),
-            at);
-    store.bumpFinished(id, BumpStatus.SUCCEEDED, "SUCCESS", "a night that has landed", at);
-  }
-
-  /**
-   * <b>THE HOLD IS ON THE CHANGES, NOT ON THE REPOSITORY.</b> An upstream released while the first
-   * branch was waiting, so the pending set is no longer the set that was sent — that is a different
-   * bump, and refusing it would sit on a genuinely new version until the window expired.
-   */
-  @Test
-  void aPendingSetThatMovedSinceTheLastBumpGoesAgain() {
-    Fixture.scriptCiQueueEmpty(peers);
-    dispatcher.open(Instant.now());
-
-    UUID id = only(dispatcher.tick());
-    queue.awaitIdle(Duration.ofSeconds(30));
-    store.bumpFinished(id, BumpStatus.SUCCEEDED, "SUCCESS", "pushed", Instant.now());
-    assertTrue(dispatcher.tick().isEmpty(), "held, until something moves");
-
-    // One of the dependencies it just asked for releases again. Nothing else about the repository
-    // changes: the same group, the same branch, one different `to`.
-    Change moved =
-        BumpService.changes(store.bump(id).orElseThrow()).stream()
-            .filter(change -> Ecosystem.MAVEN.wireName().equals(change.ecosystem()))
-            .findFirst()
-            .orElseThrow(() -> new AssertionError("the internal group carries a maven change"));
-    store.recordLatestIfNewer(
-        Ecosystem.MAVEN, moved.name(), "2029.101.1", "test", Instant.now());
-
-    assertTrue(!dispatcher.tick().isEmpty(), "a new upstream release is a new bump");
-    assertEquals(2, store.bumps(Fixture.REPOSITORY, 50).size());
-  }
-
-  /**
-   * <b>QITS-882: THE FREE SLOTS ARE FILLED IN ONE TICK.</b> On 2026-10-03 the window door answered
-   * CI_BUSY, "1 active run, 1 may be", with two READY repositories owed — while qits-ci had the
-   * runners {@code qits-ci} (2 slots, 1 held) and {@code workstation} (6 slots) connected: eight
-   * slots, seven free. The same estate here: 2 + 6 slots, one active run, three READY candidates —
-   * all three go on one tick, least-recently-bumped first.
-   */
-  @Test
-  void everyReadyBumpGoesInOneTickWhenQitsCiHasTheSlots() {
+  void everyReadyRepositoryGoesInOneTickWhenQitsCiHasTheSlots() {
     inventory.clear();
     owes("qits-aaa-service", "eu.wohlben.qits:qits-a");
     owes("qits-bbb-service", "eu.wohlben.qits:qits-b");
     owes("qits-ccc-service", "eu.wohlben.qits:qits-c");
-    lastReachedByTheClock("qits-aaa-service", Instant.now().minus(Duration.ofHours(1)));
-    lastReachedByTheClock("qits-bbb-service", Instant.now().minus(Duration.ofDays(2)));
-    lastReachedByTheClock("qits-ccc-service", Instant.now().minus(Duration.ofDays(1)));
+    lastReached("qits-aaa-service", Instant.now().minus(Duration.ofHours(1)));
+    lastReached("qits-bbb-service", Instant.now().minus(Duration.ofDays(2)));
+    lastReached("qits-ccc-service", Instant.now().minus(Duration.ofDays(1)));
     Fixture.scriptCiQueue(
         peers,
         1,
@@ -905,31 +388,17 @@ class BumpDispatchTest {
     assertEquals(8, decision.slots());
     assertEquals(1, decision.ciActive());
     assertEquals(7, decision.free());
-    assertEquals(
-        List.of("qits-bbb-service", "qits-ccc-service", "qits-aaa-service"),
-        decision.picks().stream().map(pick -> pick.candidate().repository()).toList(),
-        "every READY one, the longest-waiting first");
-    io.restassured.RestAssured.given()
-        .get("/maintenance/api/bumps/window")
-        .then()
-        .statusCode(200)
-        .body("next", org.hamcrest.Matchers.equalTo("qits-bbb-service"))
-        .body(
-            "picks",
-            org.hamcrest.Matchers.contains(
-                "qits-bbb-service", "qits-ccc-service", "qits-aaa-service"));
 
     List<UUID> sent = dispatcher.tick();
-    assertEquals(3, sent.size(), "three slots' worth in one tick, not one per idle queue");
     assertEquals(
         List.of("qits-bbb-service", "qits-ccc-service", "qits-aaa-service"),
-        sent.stream().map(id -> store.bump(id).orElseThrow().repository).toList(),
-        "sent in the order they were picked");
+        repositoriesOf(sent),
+        "every READY one in one tick, the longest-waiting first");
   }
 
-  /** Three free slots and five READY: exactly three go, and the other two wait for the next tick. */
+  /** Three free slots and five READY: exactly three go, and the other two wait. */
   @Test
-  void threeFreeSlotsSendExactlyThreeOfFive() {
+  void threeFreeSlotsOpenExactlyThreeOfFive() {
     inventory.clear();
     for (String name : List.of("qits-r1", "qits-r2", "qits-r3", "qits-r4", "qits-r5")) {
       owes(name, "eu.wohlben.qits:" + name);
@@ -937,33 +406,14 @@ class BumpDispatchTest {
     Fixture.scriptCiQueue(peers, 1, Fixture.runner("qits-ci", 4, true, false));
 
     assertEquals(3, dispatcher.explain(Instant.now()).free());
-    List<UUID> sent = dispatcher.tick();
-    assertEquals(3, sent.size());
-    assertEquals(
-        List.of("qits-r1", "qits-r2", "qits-r3"),
-        sent.stream().map(id -> store.bump(id).orElseThrow().repository).toList());
-    assertTrue(store.bumps("qits-r4", 10).isEmpty());
-    assertTrue(store.bumps("qits-r5", 10).isEmpty());
+    assertEquals(List.of("qits-r1", "qits-r2", "qits-r3"), repositoriesOf(dispatcher.tick()));
+    assertEquals(0, asks("catalog-qits-r4"));
+    assertEquals(0, asks("catalog-qits-r5"));
   }
 
-  /** Free slots do not let a consumer go beside its owed upstream: only the upstream goes. */
+  /** Every slot taken: CI_BUSY, saying how it counted, and nothing opened. */
   @Test
-  void anOwedUpstreamAndItsConsumerSendOnlyTheUpstreamWhateverTheSlots() {
-    inventory.clear();
-    owes("qits-zzz-lib", "eu.wohlben.qits:qits-agents-lib");
-    owesItsSubmodule("qits-aaa-consumer", "qits-zzz-lib");
-    Fixture.scriptCiQueue(peers, 0, Fixture.runner("workstation", 6, true, false));
-
-    List<UUID> sent = dispatcher.tick();
-    assertEquals(
-        List.of("qits-zzz-lib"),
-        sent.stream().map(id -> store.bump(id).orElseThrow().repository).toList());
-    assertTrue(store.bumps("qits-aaa-consumer", 10).isEmpty(), "it waits on the upstream's release");
-  }
-
-  /** Every slot taken: CI_BUSY, saying how it counted, and nothing sent. */
-  @Test
-  void everySlotTakenIsBusyAndSendsNothing() {
+  void everySlotTakenIsBusyAndOpensNothing() {
     Fixture.scriptCiQueue(
         peers,
         8,
@@ -972,19 +422,13 @@ class BumpDispatchTest {
 
     BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
     assertEquals("CI_BUSY", decision.outcome());
-    assertEquals(8, decision.slots());
-    assertEquals(0, decision.free());
     assertEquals(
         "qits-ci has 8 slot(s), 8 active run(s) and 0 bump(s) waiting to reach it; nothing is free",
         decision.summary());
     assertTrue(dispatcher.tick().isEmpty());
-    assertFalse(bumped());
   }
 
-  /**
-   * qits-ci's own rule: a runner that is not connected claims nothing, a quarantined one takes
-   * nothing but its health check. Neither one's slots count.
-   */
+  /** A runner that is not connected, or quarantined, offers no slot. */
   @Test
   void disconnectedAndQuarantinedRunnersOfferNoSlots() {
     Fixture.scriptCiQueue(
@@ -1001,23 +445,137 @@ class BumpDispatchTest {
     assertEquals(1, dispatcher.tick().size());
   }
 
-  /** No runner at all that could claim a run is NO_SLOTS — not busy, and nothing is sent. */
+  /** No runner at all that could claim a run is NO_SLOTS — not busy — and nothing is opened. */
   @Test
   void noUsableRunnerIsNoSlots() {
     Fixture.scriptCiQueue(
         peers, 0, Fixture.runner("gone", 4, false, false), Fixture.runner("sick", 2, true, true));
 
-    BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
-    assertEquals("NO_SLOTS", decision.outcome());
-    assertEquals(0, decision.slots());
+    assertEquals("NO_SLOTS", dispatcher.explain(Instant.now()).outcome());
     assertTrue(dispatcher.tick().isEmpty());
-    assertFalse(bumped());
+  }
 
-    Fixture.scriptCiQueue(peers, 0);
-    peers.answer(
-        PeerTarget.CI,
-        CiClient.QUEUE_PATH,
-        FakePeers.Scripted.ok("{\"running\":[],\"queued\":[],\"runners\":[]}"));
-    assertEquals("NO_SLOTS", dispatcher.explain(Instant.now()).outcome(), "and none declared");
+  // --- the order ----------------------------------------------------------------------------------
+
+  /**
+   * <b>THE ALPHABET IS NOT THE TIEBREAK.</b> Two equally ready repositories, named so that the
+   * alphabet would answer wrongly: the one the dispatcher reached a fortnight ago goes before the one
+   * it reached an hour ago (measured 2026-09-13, when the alphabet starved the same repositories
+   * every night).
+   */
+  @Test
+  void theRepositoryReachedLongestAgoGoesFirstEvenWhenItsNameSortsLast() {
+    inventory.clear();
+    owes("qits-aaa-daemon", "eu.wohlben.qits:qits-agents-early");
+    owes("qits-zzz-daemon", "eu.wohlben.qits:qits-agents-late");
+    lastReached("qits-aaa-daemon", Instant.now().minus(Duration.ofHours(1)));
+    lastReached("qits-zzz-daemon", Instant.now().minus(Duration.ofDays(14)));
+
+    List<String> order =
+        dispatcher.assess().candidates().stream().map(BumpOrder.Candidate::repository).toList();
+    assertEquals(List.of("qits-zzz-daemon", "qits-aaa-daemon"), order);
+  }
+
+  /**
+   * <b>AND THE TOPOLOGY STILL OVERRULES IT.</b> An upstream that is itself owed goes before its
+   * consumer whatever the clock last did to either, and free slots do not let the consumer go
+   * beside it.
+   */
+  @Test
+  void anOwedUpstreamGoesBeforeItsConsumerWhateverTheSlotsAndTheWait() {
+    inventory.clear();
+    owes("qits-zzz-lib", "eu.wohlben.qits:qits-agents-lib");
+    owesItsSubmodule("qits-aaa-consumer", "qits-zzz-lib");
+    lastReached("qits-zzz-lib", Instant.now().minus(Duration.ofHours(1)));
+    lastReached("qits-aaa-consumer", Instant.now().minus(Duration.ofDays(14)));
+    Fixture.scriptCiQueue(peers, 0, Fixture.runner("workstation", 6, true, false));
+
+    assertEquals(
+        "qits-aaa-consumer",
+        dispatcher.assess().candidates().get(0).repository(),
+        "the starved one IS first in the order handed to BumpOrder");
+    assertEquals(List.of("qits-zzz-lib"), repositoriesOf(dispatcher.tick()));
+    assertEquals(0, asks("catalog-qits-aaa-consumer"), "it waits on the upstream's release");
+  }
+
+  /** A legacy group row does not count as the dispatcher reaching a repository. */
+  @Test
+  void onlyMainOnlyRequestsCountAsTheDispatcherReachingARepository() {
+    lastReached(Fixture.REPOSITORY, Instant.now().minus(Duration.ofDays(1)));
+    store.recordOpenedRequest(
+        "a-group-ask", Fixture.REPOSITORY, "maintenance/dependencies",
+        MtReleaseRequest.GROUP_BUMP, null, Instant.now());
+
+    Instant reached = store.lastDispatchedAt().get(Fixture.REPOSITORY);
+    assertTrue(reached.isBefore(Instant.now().minus(Duration.ofHours(1))), reached.toString());
+    assertFalse(store.lastDispatchedAt().containsKey("never-" + UUID.randomUUID()));
+    assertTrue(
+        store.bumps(Fixture.REPOSITORY, 50).stream()
+            .noneMatch(row -> BumpMode.GROUP.name().equals(row.mode)));
+  }
+
+  // --- fixtures -----------------------------------------------------------------------------------
+
+  /** A repository with one INTERNAL maven pin a release has moved past, and qits-projects scripted. */
+  private void owes(String repository, String dependency) {
+    scanned(repository, "catalog-" + repository, internalPin(dependency));
+    store.recordLatestIfNewer(Ecosystem.MAVEN, dependency, "2026.913.1", "test", Instant.now());
+  }
+
+  private static ParsedPin internalPin(String dependency) {
+    return ParsedPin.of(
+        Ecosystem.MAVEN, "pom.xml", dependency, "2026.901.1", null, "dependency:" + dependency);
+  }
+
+  /** …and one whose pending change is the SUBMODULE it carries — the edge BumpOrder reads by name. */
+  private void owesItsSubmodule(String repository, String submodule) {
+    scanned(
+        repository,
+        "catalog-" + repository,
+        ParsedPin.of(
+            Ecosystem.GITLINK,
+            ".gitmodules",
+            submodule,
+            "1111111111111111111111111111111111111111",
+            null,
+            "gitlink:webui"));
+    store.recordLatestIfNewer(
+        Ecosystem.GITLINK,
+        submodule,
+        "2026.913.1",
+        GitlinkSha.of("2222222222222222222222222222222222222222"),
+        Instant.now());
+  }
+
+  private void scanned(String repository, String catalogId, ParsedPin pin) {
+    store.replaceInventory(
+        repository,
+        Fixture.PROJECT,
+        catalogId,
+        null,
+        "main",
+        RepositoryStatus.OK,
+        "sha-" + repository,
+        null,
+        List.of(pin),
+        List.of(GroupConfig.Group.ofKind(GroupConfig.DEFAULT_GROUP, PinKind.INTERNAL)),
+        GroupSource.DEFAULT,
+        candidate -> PinKind.INTERNAL,
+        Instant.now());
+    if (catalogId != null) {
+      answersMainOnly(catalogId, repository);
+    }
+  }
+
+  /**
+   * A main-only request the dispatcher opened for this repository at that time, already gone.
+   *
+   * <p><b>It carries no changes on purpose</b>: it is history — what the tiebreak reads — and a row
+   * whose changes matched the pending set would HOLD the repository instead, a different rule.
+   */
+  private void lastReached(String repository, Instant at) {
+    String id = "reached-" + repository + "-" + at.toEpochMilli();
+    store.recordOpenedRequest(
+        id, repository, "main", MtReleaseRequest.MAIN_ONLY, List.<Change>of(), at);
   }
 }

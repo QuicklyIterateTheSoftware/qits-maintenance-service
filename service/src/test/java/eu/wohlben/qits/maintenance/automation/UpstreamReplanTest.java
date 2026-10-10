@@ -13,8 +13,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import eu.wohlben.qits.maintenance.api.Fixture;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
 import eu.wohlben.qits.maintenance.bump.BumpDispatcher;
-import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
-import eu.wohlben.qits.maintenance.config.UpstreamSwitch;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto.AutomationDto;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto;
 import eu.wohlben.qits.maintenance.entity.MtBump;
@@ -30,8 +28,6 @@ import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import eu.wohlben.qits.maintenance.scan.ScanService;
 import eu.wohlben.qits.maintenance.scan.ScanTrigger;
 import eu.wohlben.qits.maintenance.work.WorkQueue;
-import io.quarkus.arc.ClientProxy;
-import io.quarkus.test.junit.QuarkusMock;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.junit.TestProfile;
 import jakarta.inject.Inject;
@@ -46,9 +42,9 @@ import org.junit.jupiter.api.Test;
 /**
  * <b>Upstream publication</b> (qits-1133): the "latest moved" hook re-planning an open request's
  * dependency bump, the starvation guard, the main-only LOWEST request the dispatcher opens where no
- * request is open, and its withdrawal when its pre-run finds nothing — all behind {@code
- * qits.maintenance.pre-run.upstream.enabled}, which ships on since the cutover (R2); every method
- * still switches it explicitly, so the off arm is pinned too.
+ * request is open, and its withdrawal when its pre-run finds nothing. Always on since qits-1133 R5
+ * removed {@code qits.maintenance.pre-run.upstream.enabled}; the one switch left is the {@code
+ * dependency-bump} kind's own, whose off arm {@code DependencyBumpSwitchedOffTest} pins.
  */
 @QuarkusTest
 @TestProfile(DependencyBumpOn.class)
@@ -75,13 +71,8 @@ class UpstreamReplanTest {
 
   @Inject WorkQueue queue;
 
-  @Inject MaintenanceConfig config;
-
-  private MaintenanceConfig realConfig;
-
   @BeforeEach
   void scriptThePeers() {
-    realConfig = ClientProxy.unwrap(config);
     queue.awaitIdle(Duration.ofSeconds(30));
     inventory.clear();
     peers.reset();
@@ -99,18 +90,11 @@ class UpstreamReplanTest {
         AutomationFixture.BEFORE);
     scans.request(ScanScope.ALL, null, ScanTrigger.MANUAL);
     queue.awaitIdle(Duration.ofSeconds(60));
-    dispatcher.close("a fresh test");
   }
 
-  /** The real config back, whatever the method switched: a mock lives for the whole run. */
   @AfterEach
-  void restoreTheConfig() {
+  void drain() {
     queue.awaitIdle(Duration.ofSeconds(30));
-    QuarkusMock.installMockForType(realConfig, MaintenanceConfig.class);
-  }
-
-  private void switchOn() {
-    QuarkusMock.installMockForType(new UpstreamSwitch(realConfig), MaintenanceConfig.class);
   }
 
   /** The repository's open-request listing: one request in this state with this CI gate. */
@@ -135,23 +119,6 @@ class UpstreamReplanTest {
     queue.awaitIdle(Duration.ofSeconds(30));
   }
 
-  // --- the switch -------------------------------------------------------------------------------
-
-  /** Off — the shipped default — the hook asks nobody anything and opens nothing. */
-  @Test
-  void withTheSwitchOffNothingIsReplanned() {
-    // Shipped ON since the cutover (qits-1133 R2); off is the emergency position.
-    UpstreamSwitch.install(config, false);
-    listing("PENDING", "PENDING");
-
-    latestMoved();
-    upstream.replanConsumers(Ecosystem.MAVEN, EVENTSTREAM);
-
-    assertFalse(
-        peers.called(PeerTarget.PROJECTS, Fixture.RELEASE_REQUESTS_PATH), "no listing was read");
-    assertTrue(bumpRows(REQUEST).isEmpty());
-  }
-
   // --- an open request ----------------------------------------------------------------------
 
   /**
@@ -160,7 +127,6 @@ class UpstreamReplanTest {
    */
   @Test
   void anOpenRequestHasItsBumpReplannedOnItsFold() {
-    switchOn();
     listing("PENDING", "PENDING");
 
     latestMoved();
@@ -177,7 +143,6 @@ class UpstreamReplanTest {
   /** A READY request has its verdict; an upstream release does not restart it (Q2). */
   @Test
   void aReadyRequestIsLeftAlone() {
-    switchOn();
     listing("READY", "PASSED");
 
     latestMoved();
@@ -188,7 +153,6 @@ class UpstreamReplanTest {
   /** A fold that already carries the upstream release opens nothing and counts nothing. */
   @Test
   void aFreshPlanOpensNothing() {
-    switchOn();
     AutomationFixture.scriptManifests(peers, FOLD_A, CURRENT_POM, null);
     listing("PENDING", "PENDING");
 
@@ -204,7 +168,6 @@ class UpstreamReplanTest {
    */
   @Test
   void threeRestartsWithoutAVerdictStopTheReplanning() {
-    switchOn();
     for (int restart = 0; restart < UpstreamReplan.STARVATION_RESTARTS; restart++) {
       store.recordUpstreamRestart(REQUEST, Fixture.REPOSITORY, Instant.now());
     }
@@ -228,7 +191,6 @@ class UpstreamReplanTest {
    */
   @Test
   void theDispatcherOpensAMainOnlyLowestRequestInsteadOfAGroupBranch() {
-    switchOn();
     Fixture.scriptCiQueueEmpty(peers);
     // One body for both routes on the collection: the listing reads `requests` (none open), the ask
     // reads `request`.
@@ -306,11 +268,10 @@ class UpstreamReplanTest {
 
   /**
    * A main-only request whose pre-run DOES find a bump is the request that carries it — the one
-   * origin, with the switch on, that plans external upgrades too.
+   * origin that plans external upgrades too.
    */
   @Test
   void aMainOnlyRequestWithABumpToWriteIsKept() {
-    switchOn();
     store.recordOpenedRequest(
         MAIN_REQUEST, Fixture.REPOSITORY, "main", MtReleaseRequest.MAIN_ONLY, List.of(),
         Instant.now());
@@ -335,7 +296,7 @@ class UpstreamReplanTest {
             .stream()
             .map(eu.wohlben.qits.maintenance.pending.Change::name)
             .toList(),
-        "a main-only request with the switch on carries external upgrades too");
+        "a main-only request carries external upgrades too");
     assertTrue(
         store.releaseRequest(MAIN_REQUEST).orElseThrow().withdrawnAt == null, "and is kept");
   }

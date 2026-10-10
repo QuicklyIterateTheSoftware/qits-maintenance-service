@@ -83,7 +83,10 @@ public final class StoryCatalog {
   /** The EXTERNAL half: everybody else's upgrades, on a branch of their own. */
   public static final String EXTERNAL_GROUP = "external";
 
-  /** The group {@link #REPOSITORY}'s own configuration declares, ahead of the fallback pair. */
+  /**
+   * The group {@link #REPOSITORY}'s own configuration still declares under the retired {@code
+   * groups:} key — ignored since qits-1133 R5, which is what the scan stories pin.
+   */
   public static final String ANGULAR_GROUP = "angular";
 
   /** The branch {@link #DEFAULT_GROUP} is bumped on, as the git host route encodes it. */
@@ -136,10 +139,8 @@ public final class StoryCatalog {
 
   // --- an unmerged release, for the base a bump is cut from (qits-1081) -------------------------
 
-  /** The branch {@link #ANGULAR_GROUP} is bumped on. */
-  public static final String ANGULAR_BRANCH = "maintenance/" + ANGULAR_GROUP;
 
-  /** Where {@link #ANGULAR_BRANCH} stands before the rebuild — cut from main, long ago. */
+  /** Where the retired angular branch stood before a rebuild — cut from main, long ago. */
   public static final String ANGULAR_BRANCH_SHA = "dd44ee55ff6677889900aabbccddeeff00112233";
 
   /** …and where it stands once the step rebuilt it on the tag. */
@@ -369,7 +370,10 @@ public final class StoryCatalog {
       FROM qits/build-images/maven-base:2026.813.1
       """;
 
-  /** The grouping file. {@code angular} is declared, {@code dependencies} is appended after it. */
+  /**
+   * The repository's own file, still declaring {@code angular} under the retired {@code groups:}
+   * key: ignored with a WARN since qits-1133 R5, and the repository still scans OK.
+   */
   private static final String MAINTENANCE_YML =
       """
       groups:

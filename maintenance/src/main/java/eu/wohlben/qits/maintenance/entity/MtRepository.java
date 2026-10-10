@@ -94,4 +94,9 @@ public class MtRepository extends PanacheEntityBase {
   /** Why the status is not OK, for the UI to show. Null when it is. */
   @Column(columnDefinition = "text")
   public String message;
+
+  /** {@link #mainBranch}, or {@code main} for a row that carries none. */
+  public String mainBranchOrDefault() {
+    return mainBranch == null || mainBranch.isBlank() ? "main" : mainBranch;
+  }
 }

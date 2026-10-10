@@ -1,6 +1,5 @@
 package eu.wohlben.qits.maintenance.api;
 
-import eu.wohlben.qits.maintenance.bump.BumpService;
 import eu.wohlben.qits.maintenance.control.Adoption;
 import eu.wohlben.qits.maintenance.control.ArtifactGraph;
 import eu.wohlben.qits.maintenance.control.Inventory;
@@ -8,36 +7,31 @@ import eu.wohlben.qits.maintenance.dto.DownstreamDto;
 import eu.wohlben.qits.maintenance.dto.RepositoryDependentsDto;
 import eu.wohlben.qits.maintenance.dto.RepositoryDetailDto;
 import eu.wohlben.qits.maintenance.dto.RepositoryDto;
-import eu.wohlben.qits.maintenance.model.BumpTrigger;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
-import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
 import java.util.List;
 import java.util.UUID;
 import org.eclipse.microprofile.openapi.annotations.Operation;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
 
 /**
- * The inventory: repositories, their pins, and the button that turns one group's pending changes
- * into a branch.
+ * The inventory: repositories, their pins, and what is pending on them. Read-only since qits-1133
+ * R5 retired the group door ({@code POST /{name}/groups/{group}/bumps}): pending pins are written by
+ * the {@code dependency-bump} release-request automation.
  *
  * <p>Served under {@code /maintenance/api/repositories} — the {@code /maintenance/api} prefix is
  * {@code quarkus.rest.path}, not spelled here, so this class carries only its own noun.
  *
  * <p><b>Every route accepts the same three roles</b>, {@code qits:admin} (a person, through the
  * gateway's forward-auth headers), {@code qits:system} (a machine, through a bearer validated
- * against qits-idp) and {@code qits:agent} (a commissioned agent). A bump is asked for by
- * an operator in a browser and could as well be asked for by a machine or by the agent doing the
- * work; a machine-only guard would lock the operator out of the button this service exists to
- * offer, and an operator-only one would make an agent beg for a press that chooses nothing. There
- * is no anonymous route here. {@code qits:admin-agent} is admitted too (qits-628 follow-up): an
+ * against qits-idp) and {@code qits:agent} (a commissioned agent). There is no anonymous route
+ * here. {@code qits:admin-agent} is admitted too (qits-628 follow-up): an
  * ADMIN workspace's coding agent carries it alongside {@code qits:agent}, and for now it may use
  * everything {@code qits:admin} may use.
  */
@@ -48,15 +42,13 @@ public class RepositoryController {
 
   @Inject Inventory inventory;
 
-  @Inject BumpService bumps;
-
   /** What this repository's RELEASES contain, and who contains them. See {@link ArtifactGraph}. */
   @Inject ArtifactGraph graph;
 
   /** Who is downstream of it, traced to the end. See {@link Adoption}. */
   @Inject Adoption adoption;
 
-  /** What a 202 answers with — the id to poll. */
+  /** What a 202 answers with — the id to poll. Shared with the automation run door. */
   public record AcceptedResponse(UUID id) {}
 
   @GET
@@ -142,51 +134,5 @@ public class RepositoryController {
   @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
   public DownstreamDto downstream(@PathParam("name") String name) {
     return adoption.downstream(name);
-  }
-
-  /**
-   * Asks for one group's pending changes to be put on its branch, and does NOT wait.
-   *
-   * <p><b>202 with the id.</b> A bump is a CI run in somebody else's pipeline — a clone, an edit, a
-   * push — and an HTTP request is the wrong place to hold that. The id is what {@code GET
-   * /bumps/{id}} takes.
-   *
-   * <p><b>409 while a bump of that (repository, group) is active</b>, and again when bumping is
-   * switched off. Two runs writing one branch would make the second a non-ff rejection at best.
-   *
-   * <p><b>A group with nothing pending still answers 202</b> and the row ends NOTHING_TO_DO. The
-   * inventory can be seconds out of date, so refusing here would be refusing on the strength of a
-   * cache — and the honest answer is a row that says what the run found.
-   *
-   * <p><b>410 Gone since the cutover (qits-1133 R2)</b> — with {@code
-   * qits.maintenance.pre-run.upstream.enabled} on, the shipped default, nothing writes a {@code
-   * maintenance/<group>} branch, and the answer points at the {@code dependency-bump} release-request
-   * automation instead. The door itself is removed in R5; the switch turned off restores it.
-   *
-   * <p><b>An agent presses it too, and that is not a loosening.</b> The caller names a group and
-   * nothing else: what lands on the branch is whatever is already pending there, every change
-   * resolving a version somebody has already released — so what this door grants is <i>when</i>, not
-   * <i>what</i>, and the 409s above are still the whole of what keeps two runs off one branch.
-   */
-  @POST
-  @jakarta.ws.rs.Path("/{name}/groups/{group}/bumps")
-  @Operation(
-      operationId = "requestGroupBump",
-      summary = "Put this group's pending changes on its maintenance branch")
-  @APIResponse(responseCode = "202", description = "Requested; poll GET /bumps/{id}")
-  @APIResponse(responseCode = "404", description = "No such repository, or no such group")
-  @APIResponse(responseCode = "409", description = "One is already active, or bumping is disabled")
-  @APIResponse(
-      responseCode = "410",
-      description =
-          "Group bumps are retired (qits-1133): the dependency-bump release-request automation"
-              + " writes pending pins now")
-  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
-  public Response bump(@PathParam("name") String name, @PathParam("group") String group) {
-    UUID id = bumps.request(name, group, BumpTrigger.MANUAL);
-    return Response.status(Response.Status.ACCEPTED)
-        .entity(new AcceptedResponse(id))
-        .type(MediaType.APPLICATION_JSON)
-        .build();
   }
 }

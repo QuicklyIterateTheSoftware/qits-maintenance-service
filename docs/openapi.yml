@@ -180,51 +180,6 @@ components:
             $ref: "#/components/schemas/Change"
         failure:
           $ref: "#/components/schemas/FailureDto"
-    BumpWindowDto:
-      type: object
-      properties:
-        openedAt:
-          $ref: "#/components/schemas/Instant"
-        closesAt:
-          $ref: "#/components/schemas/Instant"
-        open:
-          type: boolean
-        outcome:
-          type: string
-        summary:
-          type: string
-        inFlight:
-          type: integer
-          format: int32
-        slots:
-          type: integer
-          format: int32
-        free:
-          type: integer
-          format: int32
-        ciActive:
-          type: integer
-          format: int32
-        owed:
-          type: integer
-          format: int32
-        held:
-          type: integer
-          format: int32
-        stalled:
-          type: array
-          items:
-            $ref: "#/components/schemas/StalledBumpDto"
-        queue:
-          type: array
-          items:
-            $ref: "#/components/schemas/OwedBumpDto"
-        next:
-          type: string
-        picks:
-          type: array
-          items:
-            type: string
     Change:
       type: object
       properties:
@@ -387,20 +342,6 @@ components:
       format: date-time
       examples:
       - 2022-03-10T16:15:50Z
-    OwedBumpDto:
-      type: object
-      properties:
-        repository:
-          type: string
-        group:
-          type: string
-        changes:
-          type: integer
-          format: int32
-        reason:
-          type: string
-        detail:
-          type: string
     PackageDto:
       type: object
       properties:
@@ -587,19 +528,6 @@ components:
           $ref: "#/components/schemas/Instant"
         message:
           type: string
-    StalledBumpDto:
-      type: object
-      properties:
-        repository:
-          type: string
-        group:
-          type: string
-        releaseRequestId:
-          type: string
-        state:
-          type: string
-        reason:
-          type: string
     StartScanRequest:
       type: object
       properties:
@@ -665,12 +593,12 @@ components:
   securitySchemes:
     SecurityScheme:
       type: openIdConnect
+      openIdConnectUrl: http://dev-qits-idp:8080/idp/.well-known/openid-configuration
       description: Authentication
 paths:
   /maintenance/api/adoption/by-release:
     get:
       summary: How far one released repository and version got
-      operationId: getAdoptionByRelease
       parameters:
       - name: repository
         in: query
@@ -704,7 +632,6 @@ paths:
   /maintenance/api/artifacts:
     get:
       summary: "Every artifact this platform publishes, with its reach"
-      operationId: listArtifacts
       responses:
         "200":
           description: The artifacts
@@ -729,7 +656,6 @@ paths:
   /maintenance/api/artifacts/ingest:
     post:
       summary: Read one released artifact's sbom now
-      operationId: ingestArtifactSbom
       requestBody:
         content:
           application/json:
@@ -818,69 +744,6 @@ paths:
         - qits:admin-agent
         - qits:system
         - qits:agent
-  /maintenance/api/bumps/window:
-    get:
-      summary: The bump dispatch window and everything owed a bump
-      operationId: getBumpWindow
-      responses:
-        "200":
-          description: "The window, or the reason there is none"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/BumpWindowDto"
-        "401":
-          description: Not Authorized
-        "403":
-          description: Not Allowed
-      tags:
-      - Bump Controller
-      security:
-      - SecurityScheme:
-        - qits:admin
-        - qits:admin-agent
-        - qits:system
-        - qits:agent
-    post:
-      summary: Open a bump dispatch window now
-      operationId: openBumpWindow
-      responses:
-        "200":
-          description: The window that is now open
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/BumpWindowDto"
-        "401":
-          description: Not Authorized
-        "403":
-          description: Not Allowed
-      tags:
-      - Bump Controller
-      security:
-      - SecurityScheme:
-        - qits:admin
-        - qits:admin-agent
-        - qits:system
-        - qits:agent
-    delete:
-      summary: Close the bump dispatch window
-      operationId: closeBumpWindow
-      responses:
-        "204":
-          description: There is no window now
-        "401":
-          description: Not Authorized
-        "403":
-          description: Not Allowed
-      tags:
-      - Bump Controller
-      security:
-      - SecurityScheme:
-        - qits:admin
-        - qits:admin-agent
-        - qits:system
-        - qits:agent
   /maintenance/api/bumps/{id}:
     get:
       summary: One bump with the changes it sent
@@ -915,7 +778,6 @@ paths:
   /maintenance/api/dependencies:
     get:
       summary: "Dependencies matching a glob, with every pin of each"
-      operationId: listDependencies
       parameters:
       - name: kind
         in: query
@@ -952,7 +814,6 @@ paths:
   /maintenance/api/dependencies/dependents:
     get:
       summary: Every released artifact of ours that embeds this dependency
-      operationId: listDependencyDependents
       parameters:
       - name: all
         in: query
@@ -991,7 +852,6 @@ paths:
   /maintenance/api/pins:
     get:
       summary: Every internal artifact version the platform's manifests still pin
-      operationId: listDependencyPins
       responses:
         "200":
           description: "The pins, with the inventory's freshness"
@@ -1016,7 +876,6 @@ paths:
   /maintenance/api/release-requests/{requestId}/automations:
     post:
       summary: Settle a release request's automations at one fold
-      operationId: triggerReleaseRequestAutomations
       parameters:
       - name: requestId
         in: path
@@ -1054,7 +913,6 @@ paths:
         - qits:agent
     get:
       summary: A release request's automations at one fold
-      operationId: listReleaseRequestAutomations
       parameters:
       - name: requestId
         in: path
@@ -1089,7 +947,6 @@ paths:
   /maintenance/api/release-requests/{requestId}/automations/{kind}/runs:
     post:
       summary: Re-run one automation on a release request's current fold
-      operationId: runReleaseRequestAutomation
       parameters:
       - name: kind
         in: path
@@ -1132,7 +989,6 @@ paths:
   /maintenance/api/repositories:
     get:
       summary: "Every repository in the inventory, with its groups and what is pending"
-      operationId: listRepositories
       responses:
         "200":
           description: The repositories
@@ -1157,7 +1013,6 @@ paths:
   /maintenance/api/repositories/{name}:
     get:
       summary: One repository with every pin it holds
-      operationId: getRepository
       parameters:
       - name: name
         in: path
@@ -1188,7 +1043,6 @@ paths:
   /maintenance/api/repositories/{name}/dependents:
     get:
       summary: Who embeds the artifacts this repository publishes
-      operationId: listRepositoryDependents
       parameters:
       - name: name
         in: path
@@ -1217,7 +1071,6 @@ paths:
   /maintenance/api/repositories/{name}/downstream:
     get:
       summary: "Everything downstream of this repository, ordered upstream first"
-      operationId: getRepositoryDownstream
       parameters:
       - name: name
         in: path
@@ -1243,47 +1096,9 @@ paths:
         - qits:admin-agent
         - qits:system
         - qits:agent
-  /maintenance/api/repositories/{name}/groups/{group}/bumps:
-    post:
-      summary: Put this group's pending changes on its maintenance branch
-      operationId: requestGroupBump
-      parameters:
-      - name: group
-        in: path
-        required: true
-        schema:
-          type: string
-      - name: name
-        in: path
-        required: true
-        schema:
-          type: string
-      responses:
-        "202":
-          description: "Requested; poll GET /bumps/{id}"
-        "404":
-          description: "No such repository, or no such group"
-        "409":
-          description: "One is already active, or bumping is disabled"
-        "410":
-          description: "Group bumps are retired (qits-1133): the dependency-bump release-request\
-            \ automation writes pending pins now"
-        "401":
-          description: Not Authorized
-        "403":
-          description: Not Allowed
-      tags:
-      - Repository Controller
-      security:
-      - SecurityScheme:
-        - qits:admin
-        - qits:admin-agent
-        - qits:system
-        - qits:agent
   /maintenance/api/sbom-check:
     get:
       summary: The last SBOM check's report
-      operationId: getSbomCheckReport
       responses:
         "200":
           description: The report
@@ -1308,7 +1123,6 @@ paths:
   /maintenance/api/sbom-check/runs:
     post:
       summary: Run the SBOM check now
-      operationId: runSbomCheck
       responses:
         "202":
           description: Ran; the body is the report it stored
@@ -1328,7 +1142,6 @@ paths:
   /maintenance/api/scans:
     post:
       summary: Re-scan the manifests and refresh the latest versions
-      operationId: requestScan
       requestBody:
         content:
           application/json:
@@ -1354,7 +1167,6 @@ paths:
   /maintenance/api/scans/{id}:
     get:
       summary: One scan and its status
-      operationId: getScan
       parameters:
       - name: id
         in: path

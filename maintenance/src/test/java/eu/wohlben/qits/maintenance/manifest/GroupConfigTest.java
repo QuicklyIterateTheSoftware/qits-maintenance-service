@@ -2,7 +2,6 @@ package eu.wohlben.qits.maintenance.manifest;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.maintenance.model.Ecosystem;
@@ -12,13 +11,11 @@ import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
-/** A repository's own grouping, and what happens when it is not one. */
+/** A repository's own {@code maintenance.yml}, and what happens when it is not one. */
 class GroupConfigTest {
 
   @Test
   void noFileIsTheInternalExternalSplit() {
-    // NOT one catch-all any more. The platform's own releases and everybody else's are found by
-    // different schedules and reviewed by different eyes, so they are two branches.
     GroupConfig.Parsed parsed = GroupConfig.fallback();
     assertTrue(parsed.ok());
     assertEquals(GroupSource.DEFAULT, parsed.source());
@@ -34,15 +31,20 @@ class GroupConfigTest {
   }
 
   @Test
-  void theInternalHalfKeepsTheBranchNameItAlreadyHad() {
-    // `maintenance/dependencies` is a branch the release door cleans and three repositories name.
-    // The split changed what it carries, deliberately not what it is called.
+  void theInternalHalfKeepsTheNameItAlreadyHad() {
     assertEquals("dependencies", GroupConfig.DEFAULT_GROUP);
     assertEquals("external", GroupConfig.EXTERNAL_GROUP);
   }
 
+  // --- groups: retired (qits-1133 R5) -------------------------------------------------------------
+
+  /**
+   * <b>A {@code groups:} KEY IS IGNORED, NOT REFUSED.</b> The group branches are retired, so a group
+   * a file declares decides nothing — and a file written for the old service must not turn its
+   * repository into a CONFIG_ERROR, which would hide every pin it has.
+   */
   @Test
-  void declarationOrderIsKeptBecauseFirstMatchWins() {
+  void aRetiredGroupsKeyIsIgnoredAndTheSplitStands() {
     GroupConfig.Parsed parsed =
         GroupConfig.parse(
             """
@@ -52,56 +54,26 @@ class GroupConfigTest {
               - name: quarkus
                 deps: ["io.quarkus:*", "io.quarkus.platform:*"]
             """);
-    assertTrue(parsed.ok());
-    assertEquals(GroupSource.CONFIG, parsed.source());
-    assertEquals(
-        List.of("angular", "quarkus", GroupConfig.DEFAULT_GROUP, GroupConfig.EXTERNAL_GROUP),
-        parsed.groups().stream().map(GroupConfig.Group::name).toList());
-    assertEquals(List.of("@angular/*", "@qits/angular"), parsed.groups().get(0).patterns());
-    // A configured group claims by its globs and carries no kind at all.
-    assertNull(parsed.groups().get(0).kind());
-  }
-
-  @Test
-  void theKindPairIsAppendedLastSoNoConfiguredGroupLosesAPin() {
-    GroupConfig.Parsed parsed =
-        GroupConfig.parse("groups:\n  - name: angular\n    deps: [\"@angular/*\"]\n");
-    assertEquals(3, parsed.groups().size());
+    assertTrue(parsed.ok(), parsed.error());
+    assertEquals(GroupSource.DEFAULT, parsed.source());
     assertEquals(
         List.of(GroupConfig.DEFAULT_GROUP, GroupConfig.EXTERNAL_GROUP),
-        parsed.groups().subList(1, 3).stream().map(GroupConfig.Group::name).toList());
+        parsed.groups().stream().map(GroupConfig.Group::name).toList());
     assertEquals(
         List.of(PinKind.INTERNAL, PinKind.EXTERNAL),
-        parsed.groups().subList(1, 3).stream().map(GroupConfig.Group::kind).toList());
+        parsed.groups().stream().map(GroupConfig.Group::kind).toList());
   }
 
+  /** Ignored whatever it says — a group that used to be refused is no reason to refuse the file. */
   @Test
-  void aRepositoryThatDeclaresTheInternalHalfItselfKeepsItsOwnPatterns() {
-    // The name is that repository's now, globs and all — and only the half it did NOT take is
-    // appended, because two rows may not share a (repository, name).
-    GroupConfig.Parsed parsed =
-        GroupConfig.parse("groups:\n  - name: dependencies\n    deps: [\"io.quarkus:*\"]\n");
-    assertEquals(
-        List.of("dependencies", GroupConfig.EXTERNAL_GROUP),
-        parsed.groups().stream().map(GroupConfig.Group::name).toList());
-    assertEquals(List.of("io.quarkus:*"), parsed.groups().get(0).patterns());
-    assertNull(parsed.groups().get(0).kind());
-    assertEquals(PinKind.EXTERNAL, parsed.groups().get(1).kind());
-  }
-
-  @Test
-  void aRepositoryThatDeclaresBothNamesGetsNoTailAtAll() {
-    GroupConfig.Parsed parsed =
+  void aGroupsKeyThatUsedToBeInvalidIsIgnoredToo() {
+    assertTrue(GroupConfig.parse("groups:\n  - name: has/slash\n    deps: [\"*\"]\n").ok());
+    assertTrue(GroupConfig.parse("groups:\n  - name: angular\n    deps: []\n").ok());
+    assertTrue(GroupConfig.parse("groups: not-a-list\n").ok());
+    assertTrue(
         GroupConfig.parse(
-            """
-            groups:
-              - name: dependencies
-                deps: ["eu.wohlben.qits:*"]
-              - name: external
-                deps: ["*"]
-            """);
-    assertEquals(2, parsed.groups().size());
-    assertTrue(parsed.groups().stream().allMatch(group -> group.kind() == null));
+                "groups:\n  - name: a\n    deps: [\"x\"]\n  - name: a\n    deps: [\"y\"]\n")
+            .ok());
   }
 
   @Test
@@ -112,29 +84,9 @@ class GroupConfigTest {
 
   @Test
   void brokenYamlIsAConfigErrorWithASentence() {
-    GroupConfig.Parsed parsed = GroupConfig.parse("groups: [ - unbalanced\n");
+    GroupConfig.Parsed parsed = GroupConfig.parse("ignore: [ - unbalanced\n");
     assertFalse(parsed.ok());
     assertTrue(parsed.error().contains(GroupConfig.PATH));
-  }
-
-  @Test
-  void aGroupNameThatCouldNotBeABranchIsRefused() {
-    assertFalse(GroupConfig.parse("groups:\n  - name: has/slash\n    deps: [\"*\"]\n").ok());
-    assertFalse(GroupConfig.parse("groups:\n  - name: \"\"\n    deps: [\"*\"]\n").ok());
-  }
-
-  @Test
-  void aGroupWithNoDepsClaimsNothingAndIsRefused() {
-    assertFalse(GroupConfig.parse("groups:\n  - name: angular\n    deps: []\n").ok());
-    assertFalse(GroupConfig.parse("groups:\n  - name: angular\n").ok());
-  }
-
-  @Test
-  void oneNameTwiceIsRefusedRatherThanSilentlyMerged() {
-    assertFalse(
-        GroupConfig.parse(
-                "groups:\n  - name: a\n    deps: [\"x\"]\n  - name: a\n    deps: [\"y\"]\n")
-            .ok());
   }
 
   // --- ignore: a whole ecosystem taken off the repository -------------------------------------
@@ -188,44 +140,19 @@ class GroupConfigTest {
     assertFalse(GroupConfig.parse("ignore: [{name: gitlink}]\n").ok());
   }
 
-  /** The two keys are independent questions and one file may answer both. */
+  /** `ignore` still applies beside a retired `groups` key, in whichever order they are written. */
   @Test
-  void ignoreAndGroupsTravelInOneFile() {
-    GroupConfig.Parsed parsed =
-        GroupConfig.parse(
-            """
-            ignore: [gitlink]
-            groups:
-              - name: angular
-                deps: ["@angular/*"]
-            """);
-
-    assertTrue(parsed.ok());
-    assertEquals(Set.of(Ecosystem.GITLINK), parsed.ignored());
-    assertEquals(GroupSource.CONFIG, parsed.source());
-    assertEquals(
-        List.of("angular", GroupConfig.DEFAULT_GROUP, GroupConfig.EXTERNAL_GROUP),
-        parsed.groups().stream().map(GroupConfig.Group::name).toList());
-    // The order the keys are written in is not the meaning: only the groups' own order is.
-    assertEquals(
-        parsed.groups().stream().map(GroupConfig.Group::name).toList(),
-        GroupConfig.parse(
-                """
-                groups:
-                  - name: angular
-                    deps: ["@angular/*"]
-                ignore: [gitlink]
-                """)
-            .groups()
-            .stream()
-            .map(GroupConfig.Group::name)
-            .toList());
-  }
-
-  /** A broken `groups` is still a broken file, whatever `ignore` said beside it. */
-  @Test
-  void aFileWithAGoodIgnoreAndABadGroupIsInvalid() {
-    assertFalse(GroupConfig.parse("ignore: [gitlink]\ngroups:\n  - name: has/slash\n    deps: [\"*\"]\n").ok());
+  void ignoreStillAppliesBesideARetiredGroupsKey() {
+    for (String yaml :
+        List.of(
+            "ignore: [gitlink]\ngroups:\n  - name: angular\n    deps: [\"@angular/*\"]\n",
+            "groups:\n  - name: has/slash\n    deps: [\"*\"]\nignore: [gitlink]\n")) {
+      GroupConfig.Parsed parsed = GroupConfig.parse(yaml);
+      assertTrue(parsed.ok(), parsed.error());
+      assertEquals(Set.of(Ecosystem.GITLINK), parsed.ignored());
+      assertEquals(GroupSource.DEFAULT, parsed.source());
+      assertEquals(2, parsed.groups().size());
+    }
   }
 
   @Test
@@ -260,7 +187,7 @@ class GroupConfigTest {
   }
 
   @Test
-  void aHoldSitsBesideGroupsAndIgnore() {
+  void aHoldSitsBesideIgnoreAndARetiredGroupsKey() {
     GroupConfig.Parsed parsed =
         GroupConfig.parse(
             """
@@ -271,9 +198,10 @@ class GroupConfigTest {
                 deps: ["@angular/*"]
             """);
     assertTrue(parsed.ok(), parsed.error());
-    assertEquals(GroupSource.CONFIG, parsed.source());
+    assertEquals(GroupSource.DEFAULT, parsed.source());
     assertTrue(parsed.holds("eu.wohlben.qits:qits-eventstream"));
-    assertEquals(3, parsed.groups().size());
+    assertEquals(Set.of(Ecosystem.DOCKER), parsed.ignored());
+    assertEquals(2, parsed.groups().size());
   }
 
   @Test

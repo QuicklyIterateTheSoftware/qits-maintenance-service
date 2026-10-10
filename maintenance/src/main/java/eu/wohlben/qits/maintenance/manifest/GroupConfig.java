@@ -5,43 +5,37 @@ import eu.wohlben.qits.maintenance.model.GroupSource;
 import eu.wohlben.qits.maintenance.model.PinKind;
 import java.util.ArrayList;
 import java.util.EnumSet;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import org.jboss.logging.Logger;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
 
 /**
- * A repository's own grouping: which pins travel together on which branch.
+ * A repository's own {@code .config/qits/maintenance.yml}: which ecosystems it is not scanned for
+ * ({@code ignore:}) and which dependencies no bump moves ({@code hold:}) — and the two built-in
+ * groups every repository's pins are split into.
  *
- * <p><b>The fallback is the INTERNAL/EXTERNAL split.</b> A repository that carries no
- * {@code .config/qits/maintenance.yml} — which is every repository on the platform today — gets two
- * groups rather than one catch-all: {@code dependencies} claims every INTERNAL pin and
- * {@code external} claims every EXTERNAL one, so the platform's own releases travel on
- * {@code maintenance/dependencies} and everybody else's on {@code maintenance/external}. The two
- * halves move on different schedules and are reviewed by different eyes; one branch carrying both
- * made a nightly internal bump wait behind somebody's opinion about a framework major.
+ * <p><b>The groups are the INTERNAL/EXTERNAL split, and nothing else any more.</b> {@code
+ * dependencies} claims every INTERNAL pin and {@code external} every EXTERNAL one; the dispatcher
+ * reads the first to decide what a repository is owed, and the repository page shows both. They
+ * used to name the {@code maintenance/<group>} branch a group's bump travelled on, and a repository
+ * could declare FINER groups of its own under {@code groups:} — globs on dependency names, each its
+ * own branch. qits-1133 retired those branches (R2) and the group code with them (R5): a
+ * repository's pins are written by the {@code dependency-bump} release-request automation inside the
+ * request they belong to, so a group no longer decides anything a file could configure. <b>A {@code
+ * groups:} key is IGNORED with a WARN, never a parse failure</b> — a file written for the old
+ * service must not turn its repository into a CONFIG_ERROR, which would hide every pin it has.
  *
- * <p><b>A kind group claims by KIND; the glob mechanism remains.</b> {@link Group#kind()} set means
- * the group takes every actionable pin of that kind and its patterns are empty; {@link Group#kind()}
- * null means the globs decide, exactly as before. The glob mechanism is not deprecated by the split
- * — it is how a repository asks for a FINER grouping than the two built-in halves, and a configured
- * group is always tried before the pair.
- *
- * <p><b>The file is {@code .config/qits/maintenance.yml} and it is optional.</b> The kind pair is
- * appended after whatever it declares, so a configured repository's unclaimed pins still split by
- * kind rather than falling off the end.
+ * <p><b>The file is optional.</b> An absent or empty one is the default: nothing ignored, nothing
+ * held.
  *
  * <p><b>An invalid file is a CONFIG_ERROR on the repository row and nothing is bumped for it.</b>
- * The alternative — falling back to the default grouping — would put changes on a branch the author
- * explicitly configured against, quietly, and the mistake would only surface as a surprising
- * commit.
- *
- * <p><b>Declaration order is part of the meaning.</b> A pin matching two groups belongs to the
- * first, so the order survives into {@code mt_group.ordinal} and out again.
+ * The alternative — falling back to the default — would bump the very ecosystem or dependency the
+ * author wrote down to protect, quietly.
  *
  * <p><b>The same file also carries {@code ignore:}, which takes a whole ECOSYSTEM off the
  * repository.</b> Grouping decides which branch a pin's bump travels on; {@code ignore} decides
@@ -64,30 +58,29 @@ import org.yaml.snakeyaml.constructor.SafeConstructor;
  * real, is read, is shown and may be behind — and is not to be moved. It is the escape hatch for a
  * breaking upstream: the {@code dependency-bump} automation plans every other pin at the fold and
  * leaves a held one where it is. Each entry is a dependency name in its own ecosystem's spelling,
- * with the same globs a group's {@code deps} take ({@code @angular/*}).
+ * globs allowed ({@code @angular/*}).
  *
- * <p><b>An unknown ecosystem name is invalid, exactly like a bad group.</b> This file is this
+ * <p><b>An unknown ecosystem name is invalid.</b> This file is this
  * service's OWN configuration surface, unlike {@code .gitmodules}, so strictness is right here: a
  * typo silently ignored would read as a working opt-out and bump the very ecosystem the author
  * meant to protect.
  */
 public final class GroupConfig {
 
+  private static final Logger LOG = Logger.getLogger(GroupConfig.class);
+
   /** The path a scan reads it from, in every repository. */
   public static final String PATH = ".config/qits/maintenance.yml";
 
   /**
-   * The INTERNAL half of the fallback. The name is unchanged from when it was the one catch-all
-   * group: {@code maintenance/dependencies} is a branch a release already deletes and three
-   * repositories already name, and renaming it would have been a cutover nobody asked for.
+   * The INTERNAL half of the split — what the dispatcher reads a repository's debt from. The name is
+   * the retired {@code maintenance/dependencies} branch's, kept because {@code mt_group} rows and the
+   * repository page already spell it.
    */
   public static final String DEFAULT_GROUP = "dependencies";
 
-  /** The EXTERNAL half of the fallback, on {@code maintenance/external}. */
+  /** The EXTERNAL half of the split. */
   public static final String EXTERNAL_GROUP = "external";
-
-  /** A group's name reaches a branch name and a shell, so it is held to what a ref may carry. */
-  private static final java.util.regex.Pattern NAME = java.util.regex.Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,63}");
 
   private GroupConfig() {}
 
@@ -100,7 +93,7 @@ public final class GroupConfig {
    */
   public record Group(String name, List<String> patterns, PinKind kind) {
 
-    /** A group that claims what its globs match — what a repository's own file declares. */
+    /** A group that claims what its globs match. No file declares one since qits-1133 R5. */
     public static Group glob(String name, List<String> patterns) {
       return new Group(name, List.copyOf(patterns), null);
     }
@@ -114,8 +107,8 @@ public final class GroupConfig {
   /**
    * The parse of one file, or the reason it is not usable.
    *
-   * @param groups the groups in declaration order
-   * @param source whether they came from the file or from the fallback
+   * @param groups the groups, in the order they claim — the kind pair
+   * @param source DEFAULT, or CONFIG for a file that did not parse
    * @param ignored the ecosystems this repository is not scanned for at all — empty by default
    * @param held the dependencies no bump moves, as names or globs — empty by default
    * @param error the sentence for the repository row, or null
@@ -188,7 +181,7 @@ public final class GroupConfig {
       return fallback();
     }
     if (!(document instanceof Map<?, ?> root)) {
-      return invalid(PATH + " must be a mapping with a `groups`, `ignore` or `hold` key");
+      return invalid(PATH + " must be a mapping with an `ignore` or `hold` key");
     }
     Set<Ecosystem> ignored = EnumSet.noneOf(Ecosystem.class);
     Object rawIgnore = root.get("ignore");
@@ -225,59 +218,17 @@ public final class GroupConfig {
         held.add(dependency.trim());
       }
     }
-    Object rawGroups = root.get("groups");
-    if (rawGroups == null) {
-      // A file that only says `ignore` did not ask for a grouping, so its source stays DEFAULT:
-      // the two questions are separate and the page should not claim it configured branches.
-      return defaults(ignored, held);
+    if (root.containsKey("groups")) {
+      // RETIRED, NOT REFUSED (qits-1133 R5). A file written for the group branches must not turn its
+      // repository into a CONFIG_ERROR: that would hide every pin it has over a key that no longer
+      // means anything. Said once per parse, which is once per scan of that repository.
+      LOG.warnf(
+          "%s declares `groups`, which is ignored: maintenance/<group> branches are retired"
+              + " (qits-1133) and every pin is bumped in its release request's pre-run. `ignore`"
+              + " and `hold` still apply.",
+          PATH);
     }
-    if (!(rawGroups instanceof List<?> list)) {
-      return invalid("`groups` must be a list");
-    }
-    List<Group> groups = new ArrayList<>();
-    Set<String> seen = new LinkedHashSet<>();
-    for (Object element : list) {
-      if (!(element instanceof Map<?, ?> entry)) {
-        return invalid("every entry of `groups` must be a mapping with `name` and `deps`");
-      }
-      Object rawName = entry.get("name");
-      if (!(rawName instanceof String name) || !NAME.matcher(name).matches()) {
-        return invalid(
-            "a group `name` must match " + NAME.pattern() + " — it becomes a branch name");
-      }
-      if (!seen.add(name)) {
-        return invalid("the group `" + name + "` is declared twice");
-      }
-      Object rawDeps = entry.get("deps");
-      if (!(rawDeps instanceof List<?> deps) || deps.isEmpty()) {
-        return invalid("the group `" + name + "` must carry a non-empty `deps` list");
-      }
-      List<String> patterns = new ArrayList<>();
-      for (Object dep : deps) {
-        if (!(dep instanceof String pattern) || pattern.isBlank()) {
-          return invalid("every entry of `" + name + "`'s `deps` must be a non-empty string");
-        }
-        patterns.add(pattern.trim());
-      }
-      groups.add(Group.glob(name, patterns));
-    }
-    if (groups.isEmpty()) {
-      return defaults(ignored, held);
-    }
-    // EVERY PIN BELONGS SOMEWHERE, AND THE TAIL IS THE SPLIT. The configured groups claim what they
-    // claim; whatever they do not claim falls to the same two kind groups an unconfigured
-    // repository gets, appended last so neither ever takes a pin a configured group wanted.
-    //
-    // A repository that declares a group under one of the two built-in names keeps its own — the
-    // name is then that repository's, globs and all, and the half it took is not appended a second
-    // time. Both are checked: `dependencies` and `external` are ordinary names a file may use.
-    for (Group tail : kindTail()) {
-      if (!seen.contains(tail.name())) {
-        groups.add(tail);
-      }
-    }
-    return new Parsed(
-        List.copyOf(groups), GroupSource.CONFIG, Set.copyOf(ignored), List.copyOf(held), null);
+    return defaults(ignored, held);
   }
 
   /**

@@ -1,7 +1,6 @@
 package eu.wohlben.qits.maintenance.automation;
 
 import eu.wohlben.qits.maintenance.bump.ReleaseRequestClient;
-import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
 import eu.wohlben.qits.maintenance.entity.MtPin;
 import eu.wohlben.qits.maintenance.entity.MtRepository;
 import eu.wohlben.qits.maintenance.model.BumpTrigger;
@@ -25,9 +24,10 @@ import org.jboss.logging.Logger;
  * release request has its {@code dependency-bump} re-planned on the request's current fold, so the
  * upgrade lands in the release that is already on its way instead of on a branch of its own.
  *
- * <p><b>Behind {@code qits.maintenance.pre-run.upstream.enabled}, which ships true since the R2
- * cutover.</b> Off — the emergency position — this is a no-op and nothing about the bump path
- * moves.
+ * <p><b>Always on since R5</b>, which removed {@code qits.maintenance.pre-run.upstream.enabled}
+ * with the group path it used to fall back to. The one switch left is the {@code dependency-bump}
+ * kind's own ({@value DependencyBumpAutomation#SWITCH}): off, there is nothing to re-plan and this
+ * is a no-op.
  *
  * <h2>What it does per consumer</h2>
  *
@@ -41,7 +41,7 @@ import org.jboss.logging.Logger;
  *       gate PASSED or FAILED at the current fold, or the request no longer PENDING — it is left
  *       alone until it has one. A verdict resets the count.
  *   <li><b>No open request</b>: nothing here. The dispatcher's next tick finds the repository owed
- *       and, with the switch on, opens a main-only LOWEST request whose pre-run writes the bump —
+ *       and opens a main-only LOWEST request whose pre-run writes the bump —
  *       behind the same capacity gate and chain order every bump has always waited behind.
  * </ul>
  *
@@ -57,7 +57,7 @@ public class UpstreamReplan {
   /** Upstream restarts a request may have without a QA verdict before it is left alone. */
   public static final int STARVATION_RESTARTS = 3;
 
-  @Inject MaintenanceConfig config;
+  @Inject DependencyBumpAutomation dependencyBump;
 
   @Inject MaintenanceStore store;
 
@@ -67,9 +67,9 @@ public class UpstreamReplan {
 
   @Inject WorkQueue queue;
 
-  /** {@code mt_latest} advanced for one dependency. A no-op while the switch is off. */
+  /** {@code mt_latest} advanced for one dependency. A no-op while dependency-bump is off. */
   public void latestMoved(Ecosystem ecosystem, String name) {
-    if (!config.preRunUpstreamEnabled() || ecosystem == null || name == null) {
+    if (!dependencyBump.enabled() || ecosystem == null || name == null) {
       return;
     }
     queue.submit(
@@ -79,7 +79,7 @@ public class UpstreamReplan {
 
   /** Every consumer of one dependency, each open request of each re-planned. */
   public void replanConsumers(Ecosystem ecosystem, String name) {
-    if (!config.preRunUpstreamEnabled()) {
+    if (!dependencyBump.enabled()) {
       return;
     }
     Set<String> consumers = new TreeSet<>();

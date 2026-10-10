@@ -1,7 +1,6 @@
 package eu.wohlben.qits.maintenance.bump;
 
 import eu.wohlben.qits.maintenance.automation.AutomationService;
-import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
 import eu.wohlben.qits.maintenance.entity.MtBranch;
 import eu.wohlben.qits.maintenance.entity.MtRepository;
 import eu.wohlben.qits.maintenance.githost.GitHostRefs;
@@ -23,10 +22,11 @@ import org.jboss.logging.Logger;
  * <b>The cutover sweep (qits-1133 R2): every {@code maintenance/<group>} branch still standing is
  * retired.</b>
  *
- * <p>With {@code qits.maintenance.pre-run.upstream.enabled} on nothing writes a group branch any
- * more — the {@code dependency-bump} release-request automation writes a repository's pending pins
- * at the fold of the request they belong to. What the old path left behind is swept here, once per
- * branch:
+ * <p>Nothing writes a group branch any more — R2 switched the path off and R5 removed it; the {@code
+ * dependency-bump} release-request automation writes a repository's pending pins at the fold of the
+ * request they belong to. What the old path left behind is swept here, once per branch, and the
+ * sweep is kept after R5 because it is idempotent and cheap: a branch somebody pushes under the old
+ * name by hand is still cleaned up.
  *
  * <ol>
  *   <li><b>A bump-only request standing on it is WITHDRAWN</b>, with a reason naming qits-1133. A
@@ -49,15 +49,13 @@ import org.jboss.logging.Logger;
  * retired without a word to anybody. A second pass after a clean first one withdraws nothing,
  * deletes nothing and writes nothing.
  *
- * <p><b>It waits rather than guesses.</b> A branch with a REQUESTED or RUNNING group bump is left
- * for the pass after that run ends (its ending asks for no release — see {@code BumpService}); a
- * branch a RELEASED request names is mid-pipeline and that release's landing deletes it; and an
- * unreadable listing, an unreadable request or a withdrawal qits-projects did not take keeps the
- * branch until the next pass, because deleting under a bump-only request first would re-fold it
- * into a main-only one nobody asked for. Every action is logged.
+ * <p><b>It waits rather than guesses.</b> A branch a RELEASED request names is mid-pipeline and that
+ * release's landing deletes it; and an unreadable listing, an unreadable request or a withdrawal
+ * qits-projects did not take keeps the branch until the next pass, because deleting under a
+ * bump-only request first would re-fold it into a main-only one nobody asked for. Every action is
+ * logged.
  *
- * <p>On the worker, with the automation-branch sweep: a few minutes after boot, then hourly. Off —
- * the emergency position of the switch — it does nothing at all.
+ * <p>On the worker, with the automation-branch sweep: a few minutes after boot, then hourly.
  */
 @ApplicationScoped
 public class LegacyGroupBranchSweep {
@@ -76,8 +74,6 @@ public class LegacyGroupBranchSweep {
   private static final String RELEASED = "RELEASED";
 
   @Inject MaintenanceStore store;
-
-  @Inject MaintenanceConfig config;
 
   @Inject GitHostRefs refs;
 
@@ -104,14 +100,11 @@ public class LegacyGroupBranchSweep {
     }
   }
 
-  /** One pass over every repository the catalog gave an id; nothing at all with the switch off. */
+  /** One pass over every repository the catalog gave an id. */
   public Result sweep() {
     Result result =
         new Result(new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>(),
             new ArrayList<>());
-    if (!config.preRunUpstreamEnabled()) {
-      return result;
-    }
     for (MtRepository repository : store.repositories()) {
       if (repository.catalogId == null || repository.catalogId.isBlank()) {
         continue;
@@ -143,11 +136,9 @@ public class LegacyGroupBranchSweep {
     Instant now = Instant.now();
 
     // A ROW WHOSE BRANCH IS GONE is retired without a word to anybody — the release that landed it
-    // deleted it, or a person did. Not while a run is still writing it.
+    // deleted it, or a person did.
     for (MtBranch row : store.branches(repository.name)) {
-      if (BranchState.RETIRED.name().equals(row.state)
-          || standing.contains(row.branch)
-          || store.activeBump(repository.name, row.groupName).isPresent()) {
+      if (BranchState.RETIRED.name().equals(row.state) || standing.contains(row.branch)) {
         continue;
       }
       if (store.retireBranch(
@@ -165,11 +156,6 @@ public class LegacyGroupBranchSweep {
     for (String branch : standing.stream().sorted().toList()) {
       String group = groupOf(branch);
       String where = repository.name + " " + branch;
-      if (store.activeBump(repository.name, group).isPresent()) {
-        LOG.infof("Left %s for the next pass: a group bump is still running on it", where);
-        result.waiting().add(where + ": a group bump is still running on it");
-        continue;
-      }
       if (requests == null) {
         requests = requests(repository);
       }
@@ -212,7 +198,7 @@ public class LegacyGroupBranchSweep {
    */
   private String settleRequests(
       MtRepository repository, String branch, Requests requests, Result result) {
-    String main = BumpBase.mainBranch(repository);
+    String main = repository.mainBranchOrDefault();
     for (Map.Entry<String, Request> entry : requests.byId().entrySet()) {
       Request request = entry.getValue();
       if (!request.branches().contains(branch)) {

@@ -83,10 +83,9 @@ import org.junit.jupiter.api.TestMethodOrder;
  *       answerable without one — and the peers this catalogue stands up are <b>up and
  *       answering</b>, which makes that a stronger claim than it was when they were dead ports:
  *       the listing did not ask them, rather than not being able to;
- *   <li>and it cannot write. The two calls that can are {@code POST /scans}, which starts a run
- *       that reads every repository on the platform, and {@code POST
- *       /repositories/{name}/groups/{group}/bumps}, which asks qits-ci to push a branch into
- *       somebody else's tree. Both have stories of their own further down the catalogue.
+ *   <li>and it cannot write. The calls that can are {@code POST /scans}, which starts a run that
+ *       reads every repository on the platform, and the release-request automation doors, which
+ *       ask qits-ci to write a commit onto a request's branch.
  * </ul>
  *
  * <p><b>THERE IS NO CEILING TO SHOW ON THE ACCEPTED SIDE, and that is this repository's shape

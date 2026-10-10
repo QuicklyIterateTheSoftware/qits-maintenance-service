@@ -42,9 +42,10 @@ package eu.wohlben.qits.maintenance.model;
 public enum BumpMode {
 
   /**
-   * The branch is this service's: {@code maintenance/<group>}, named from the group, tracked by an
-   * {@code mt_branch} row, deleted by the release that lands it, and released by the ask this
-   * service makes when the run comes back green.
+   * <b>Read only since qits-1133 R5</b>: the retired group bump. The branch was this service's,
+   * {@code maintenance/<group>}, tracked by an {@code mt_branch} row and released by the ask this
+   * service made when the run came back green. Nothing writes the word any more; V22 closed every
+   * row that was still going, and the rest are history the bump listing still shows.
    */
   GROUP,
 
@@ -92,11 +93,6 @@ public enum BumpMode {
    * and asks for no release, because the request it belongs to is already open.
    */
   AUTOMATION;
-
-  /** Whether a row in this mode owns the branch it writes — which is the whole of the difference. */
-  public boolean ownsTheBranch() {
-    return this == GROUP;
-  }
 
   /** The mode a column holds, defaulting to {@link #GROUP} for a row written before it existed. */
   public static BumpMode of(String stored) {
