@@ -140,8 +140,11 @@ class AutomationTriggerTest {
     assertTrue(
         answer.automations().stream().noneMatch(AutomationFixture::screenshots),
         "screenshots do not apply: " + answer);
-    // The dependency bump ships switched off (qits-1133), so no kind is listed at all.
-    assertEquals(0, answer.automations().size(), answer.toString());
+    // The dependency bump ships ON since the cutover (qits-1133 R2) and is the one kind listed:
+    // FRESH, because every pin at the fold already names its latest.
+    assertEquals(1, answer.automations().size(), answer.toString());
+    assertEquals(DependencyBumpAutomation.KIND, answer.automations().getFirst().kind());
+    assertEquals(AutomationState.FRESH.name(), answer.automations().getFirst().state());
     assertTrue(screenshotRows(FOLD_A).isEmpty(), "and nothing was stored for screenshots");
     assertEquals(0, triggers(), "and no run was asked for");
   }
@@ -451,39 +454,5 @@ class AutomationTriggerTest {
     AutomationDto entry = screenshots(trigger(REQUEST, FOLD_A, null, null));
     assertEquals(AutomationState.REQUESTED.name(), entry.state(), entry.detail());
     assertEquals(1, scansOf(Fixture.REPOSITORY).size(), "and a known repository queues no scan");
-  }
-
-  /**
-   * A dependency-bump row opened before the switch went off (qits-1133) is not run: it ends FRESH
-   * (NOTHING_TO_DO), so it holds no request, and nothing is sent to qits-ci.
-   */
-  @Test
-  void aRowOfASwitchedOffKindEndsFreshWithoutARun() {
-    UUID id =
-        store.openAutomation(
-            new MaintenanceStore.AutomationOpening(
-                Fixture.REPOSITORY,
-                DependencyBumpAutomation.KIND,
-                REQUEST,
-                FOLD_A,
-                null,
-                false,
-                "maintenance/automations/dependency-bump/" + REQUEST,
-                null,
-                "test",
-                BumpTrigger.FOLD,
-                List.of(),
-                java.util.Map.of(),
-                BumpStatus.REQUESTED,
-                null),
-            false,
-            java.time.Instant.now());
-
-    automations.dispatch(id);
-
-    MtBump row = store.bump(id).orElseThrow();
-    assertEquals(BumpStatus.NOTHING_TO_DO.name(), row.status, row.message);
-    assertTrue(row.message.contains("switched off"), row.message);
-    assertEquals(0, triggers(), "and no run was asked for");
   }
 }

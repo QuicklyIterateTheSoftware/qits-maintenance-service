@@ -216,6 +216,19 @@ is the sha the tree holds now.
 
 ## The bump
 
+> **Retired by the cutover (qits-1133 R2).** With `qits.maintenance.pre-run.upstream.enabled` on —
+> the shipped default — nothing writes a `maintenance/<group>` branch: the group door answers **410
+> Gone**, `BumpService.request` refuses every caller (the ungated 02:00 loop and the dispatcher
+> included), a group row left REQUESTED is closed unsent, and a group run already going ends without
+> a release ask. A repository's pending pins are written by the `dependency-bump` release-request
+> automation instead — at the fold of an open request, or of the main-only `LOWEST` request the
+> dispatcher opens. `bump/LegacyGroupBranchSweep` (5 minutes after boot, then hourly, beside the
+> automation-branch sweep) retires what was left standing: it withdraws every bump-only request on a
+> group branch (reason naming qits-1133), leaves a person's request open, deletes the branch and
+> marks its `mt_branch` row `RETIRED`, a state nothing rewrites. The one MaintenanceBump trigger left
+> is `estate-pins` onto a request's own source branches (label `targeted`). Everything below
+> describes the path the switch turned OFF restores, until R5 removes it.
+
 **Two callers ask for one: a person, and the clock.** `POST
 /repositories/{name}/groups/{group}/bumps` is the button, on any group. The clock owes the INTERNAL
 group (`dependencies`) of every OK repository that has something pending there and no bump already
@@ -739,6 +752,8 @@ GET  /scans/{id}                                  → {id, scope, repository, tr
                                                      startedAt, finishedAt, message}
 POST /repositories/{name}/groups/{group}/bumps    → 202 {id}    404 unknown repo or group
                                                                 409 one is active, or bumping is off
+                                                                410 group bumps are retired (qits-1133,
+                                                                    the cutover switch on — the default)
 GET  /bumps?repository=&limit=20                  → [the bump below]
 GET  /bumps/{id}                                  → {id, repository, group, branch, environment,
                                                      trigger, status, ciEventId, ciRunId, ciRunIds,
@@ -972,8 +987,8 @@ environment without a rebuild.
 | `qits.maintenance.bump.dispatch.quiet-hours` | *(empty)* | hours a branch is unwelcome in: `HH:MM-HH:MM[,…]` in `time-zone`, end exclusive, midnight-wrapping allowed. Suppresses the debt-driven opening only; `POST /bumps/window` overrides it |
 | `qits.maintenance.bump.internal.window` | `6h` | how long one window lasts before it is closed, logged and re-opened if work is still owed. It closes early the moment nothing is owed, and it is also how long a refusal stands |
 | `qits.maintenance.environment` | `dev` | which environment's CI is recorded on a bump row |
-| `qits.maintenance.automations.dependency-bump.enabled` | `false` | **the `dependency-bump` automation (qits-1133).** Off until the cutover: the kind is not listed, planned or started, and a row it opened before ends FRESH. The upstream switch below needs it on to do anything |
-| `qits.maintenance.pre-run.upstream.enabled` | `false` | **the upstream half of the pre-run (qits-1133).** On: a moved `mt_latest` re-plans the `dependency-bump` of every open, not-READY request of its consumers (three restarts without a QA verdict and a request is left alone until it has one), and the dispatcher opens a main-only `LOWEST` request instead of a `maintenance/<group>` branch, withdrawn again when its pre-run finds nothing. Only such a main-only request has the `dependency-bump` automation plan EXTERNAL upgrades; every other request, and every request while the switch is off, gets INTERNAL pins only. Off: group dispatch exactly as before |
+| `qits.maintenance.automations.dependency-bump.enabled` | `true` | **the `dependency-bump` automation (qits-1133), ON since the R2 cutover.** Off (emergency only): the kind is not listed, planned or started, and a row it opened before ends FRESH. The upstream switch below needs it on to do anything — with the upstream switch on and this one off, group bumps are retired and nothing writes the pins |
+| `qits.maintenance.pre-run.upstream.enabled` | `true` | **the upstream half of the pre-run (qits-1133), ON since the R2 cutover; the key stays so an emergency can set it false by environment.** On, nothing writes a `maintenance/<group>` branch (see "The bump") and the legacy sweep retires the ones left. On: a moved `mt_latest` re-plans the `dependency-bump` of every open, not-READY request of its consumers (three restarts without a QA verdict and a request is left alone until it has one), and the dispatcher opens a main-only `LOWEST` request instead of a `maintenance/<group>` branch, withdrawn again when its pre-run finds nothing. Only such a main-only request has the `dependency-bump` automation plan EXTERNAL upgrades; every other request, and every request while the switch is off, gets INTERNAL pins only. Off: group dispatch exactly as before |
 
 **The registry keys carry a PATH as well as a host**, because a registry is mounted under a prefix
 and the prefix names the repository row it serves. Moving a row is then a deployment's decision.

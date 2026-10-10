@@ -1021,7 +1021,9 @@ public class BumpDispatcher {
       }
       // A BRANCH SOMEBODY WROTE BY HAND IS LEFT ALONE. The step refuses to rebuild it, so
       // dispatching would only be a red run per tick; it is reported until the branch is deleted.
-      if (bases.stale(row, group)) {
+      // Not after the cutover (qits-1133 R2): no group bump is dispatched at all, and the legacy
+      // sweep deletes the branch.
+      if (!config.preRunUpstreamEnabled() && bases.stale(row, group)) {
         stalled.add(
             new Stalled(
                 row.name, group, null, BranchState.STALE.name(),
@@ -1029,10 +1031,11 @@ public class BumpDispatcher {
                     + " carries a commit qits maintenance did not write; delete it to resume"));
         continue;
       }
-      Hold hold = hold(row, group, changes);
-      if (config.preRunUpstreamEnabled() && hold == Hold.FREE) {
-        hold = upstreamHold(row, changes);
-      }
+      // AFTER THE CUTOVER THE GROUP BRANCH IS NOTHING TO WAIT FOR (qits-1133 R2): the group hold
+      // reads the newest maintenance/<group> bump and its request, which the legacy sweep withdraws
+      // and deletes — a hold on it would keep a repository from its main-only request for ever.
+      Hold hold =
+          config.preRunUpstreamEnabled() ? upstreamHold(row, changes) : hold(row, group, changes);
       if (hold.stalled() != null) {
         stalled.add(hold.stalled());
         continue;

@@ -8,6 +8,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import eu.wohlben.qits.maintenance.api.Fixture;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
+import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
+import eu.wohlben.qits.maintenance.config.UpstreamSwitch;
 import eu.wohlben.qits.maintenance.entity.MtBump;
 import eu.wohlben.qits.maintenance.model.BumpStatus;
 import eu.wohlben.qits.maintenance.model.BumpTrigger;
@@ -23,6 +25,7 @@ import jakarta.inject.Inject;
 import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -54,8 +57,22 @@ class BumpChangelogTest {
 
   @Inject WorkQueue queue;
 
+  @Inject MaintenanceConfig config;
+
+  /** The real bean behind the proxy, put back after every method: a mock lives for the run. */
+  private MaintenanceConfig realConfig;
+
+  @AfterEach
+  void restoreTheConfig() {
+    queue.awaitIdle(Duration.ofSeconds(30));
+    UpstreamSwitch.restore(realConfig);
+  }
+
   @BeforeEach
   void scriptThePeers() {
+    // THE LEGACY GROUP PATH, pinned with the cutover switch OFF (qits-1133 R2): it ships on, which
+    // retires group bumps; off is the emergency position that restores this path until R5.
+    realConfig = UpstreamSwitch.install(config, false);
     queue.awaitIdle(Duration.ofSeconds(30));
     inventory.clear();
     peers.reset();

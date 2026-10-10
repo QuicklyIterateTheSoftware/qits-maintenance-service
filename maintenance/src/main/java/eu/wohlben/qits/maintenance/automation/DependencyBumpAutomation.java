@@ -82,8 +82,9 @@ public class DependencyBumpAutomation implements ReleaseRequestAutomation {
   public static final String KIND = "dependency-bump";
 
   /**
-   * The switch, off until the cutover (MT-5): off, the kind is not listed, planned or started, and
-   * the group bumps carry on as before.
+   * The switch, ON since the cutover (MT-5, qits-1133 R2), when group bumps were retired and this
+   * kind became the only writer of a pin. Off — an emergency, together with the upstream switch —
+   * the kind is not listed, planned or started.
    */
   public static final String SWITCH = "qits.maintenance.automations.dependency-bump.enabled";
 
@@ -103,7 +104,7 @@ public class DependencyBumpAutomation implements ReleaseRequestAutomation {
 
   @Inject ManifestScanner scanner;
 
-  @ConfigProperty(name = SWITCH, defaultValue = "false")
+  @ConfigProperty(name = SWITCH, defaultValue = "true")
   boolean enabled;
 
   @Override
