@@ -17,9 +17,11 @@ import java.util.Map;
  *
  * <p>Implementations are CDI beans, discovered through {@code Instance<ReleaseRequestAutomation>}.
  * Two invariants hold across every one of them, and a registry test enforces both: kind ids are
- * unique, and {@link #committablePaths()} are pairwise disjoint. The second is half of the invariant
- * carry-over rests on — <b>no automation's output is another automation's input</b>; the other half
- * is each kind's own to document.
+ * unique, and {@link #committablePaths()} are pairwise disjoint across ALL kinds. The second is half
+ * of the invariant carry-over rests on — <b>no automation's output is another automation's input
+ * within its {@link Stage}</b> (qits-1133); the other half is each kind's own to document, and a kind
+ * that declares {@link #inputPaths()} lets the registry test hold that half too. A DERIVED kind may
+ * read SOURCE output: the stage ordering, not carry-over, is what keeps those two apart.
  */
 public interface ReleaseRequestAutomation {
 
@@ -64,6 +66,28 @@ public interface ReleaseRequestAutomation {
 
   /** Where the commit lands. */
   Target target();
+
+  /**
+   * Which half of the pre-run this kind belongs to (qits-1133): SOURCE kinds write build inputs and
+   * are always planned; DERIVED kinds are planned only once every applicable SOURCE kind is FRESH at
+   * the fold, and answer WAITING until then. See {@link Stage}.
+   */
+  Stage stage();
+
+  /**
+   * The pathspecs this kind's plan and run READ, or null for "everything" — the default, which
+   * leaves the kind to the union rule of carry-over. A kind that declares them gets the precise
+   * rule instead: a fold whose changed paths touch none of them, after a FRESH or COMMITTED fold,
+   * carries over; one that touches any of them is planned again, whoever wrote it.
+   */
+  default List<String> inputPaths() {
+    return null;
+  }
+
+  /** {@link #inputPaths()} for ONE subject; a kind whose inputs are read from the fold overrides it. */
+  default List<String> inputPaths(AutomationSubject subject) {
+    return inputPaths();
+  }
 
   /** {@link Target#OWN_BRANCH} only: the branch is this plus the request id. */
   default String branchPrefix() {

@@ -13,6 +13,13 @@ import java.util.List;
  * absent, UNKNOWN or anything else holds. A kind that does not apply to the repository is simply not
  * listed — a repository no kind applies to answers an empty list and releases as it always did.
  *
+ * <p><b>Two words are sent only to a trigger that asks for them</b> (qits-1133): a trigger body
+ * carrying {@code "accepts": ["WAITING", "NOT_APPLICABLE"]} is answered a WAITING entry for a DERIVED
+ * kind held behind its SOURCE kinds and a NOT_APPLICABLE entry, with its {@code reason}, for every
+ * kind that does not apply. Without the flag the answer is the old one: no NOT_APPLICABLE entry, and
+ * a waiting kind reads REQUESTED — "not run yet", which an older reader holds on and asks again
+ * about, exactly what it should do — so the two services can be released in either order.
+ *
  * @param requestId the release request
  * @param foldSha the fold the entries are for; null on a read of a request nothing was ever asked
  *     about
@@ -42,6 +49,8 @@ public record ReleaseRequestAutomationsDto(
    * @param updatedAt when the deciding row last changed
    * @param failure why the deciding row's run went red (qits-1116); null unless it is FAILED with a
    *     failing step recorded
+   * @param reason why a NOT_APPLICABLE kind does not apply, or why a WAITING one waits (qits-1133);
+   *     the same sentence as {@code detail}, and null in every other state
    */
   public record AutomationDto(
       String kind,
@@ -53,5 +62,6 @@ public record ReleaseRequestAutomationsDto(
       String branch,
       String resultSha,
       Instant updatedAt,
-      FailureDto failure) {}
+      FailureDto failure,
+      String reason) {}
 }

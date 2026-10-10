@@ -216,8 +216,24 @@ public class ReleaseRequestClient {
    * @param branch the branch to add
    */
   public RequestResult join(String repoId, String requestId, String branch) {
+    return join(repoId, requestId, branch, null);
+  }
+
+  /**
+   * The same join, stating the branch's priority (qits-1133). A release request's effective
+   * priority is the max over its named branches, so an automation's own branch joined at {@code
+   * LOWEST} never raises a request nobody asked to hurry — while one joined with none would be
+   * recorded at qits-projects' {@code MEDIUM} default, and lift a main-only LOWEST request this
+   * service opened to MEDIUM the moment its own bump joined it.
+   *
+   * @param priority {@code LOWEST} … {@code HIGH}, or null to send none
+   */
+  public RequestResult join(String repoId, String requestId, String branch, String priority) {
     ObjectNode body = JSON.createObjectNode();
     body.put("branch", branch);
+    if (priority != null) {
+      body.put("priority", priority);
+    }
     String path =
         REQUESTS_PATH_PREFIX + encode(repoId) + REQUESTS_PATH_SUFFIX + "/" + encode(requestId)
             + "/sources";
@@ -239,6 +255,151 @@ public class ReleaseRequestClient {
         null,
         "qits-projects did not take the join of " + branch + " ("
             + (status == null ? answer.failure() : "HTTP " + status) + ")");
+  }
+
+  /** The priority every automation join and every main-only request is sent with. */
+  public static final String LOWEST = "LOWEST";
+
+  /**
+   * Opens the MAIN-ONLY release request the upstream hook asks for (qits-1133): no branch of this
+   * service's own, just the repository's main branch at {@code LOWEST}, so the request's pre-run is
+   * what writes the bump. The same route and the same four answers as {@link #requestRelease}; a
+   * qits-projects that does not accept main as a request's only source yet answers a 4xx, which is
+   * REFUSED and is the dispatcher's to report.
+   */
+  public RequestResult requestMainOnly(String repoId, String mainBranch, String summary) {
+    return requestRelease(repoId, mainBranch, summary);
+  }
+
+  /**
+   * Withdraws a request this service opened (qits-1133): an upstream request whose pre-run found
+   * nothing to bump has nothing to release. {@code POST …/release-requests/{id}/withdraw} with a
+   * {@code reason}. A 409 is a request already RELEASED or WITHDRAWN — there is nothing left to
+   * withdraw, which is CONVERGED rather than refused.
+   */
+  public RequestResult withdraw(String repoId, String requestId, String reason) {
+    ObjectNode body = JSON.createObjectNode();
+    if (reason != null) {
+      body.put("reason", cap(reason));
+    }
+    String path =
+        REQUESTS_PATH_PREFIX + encode(repoId) + REQUESTS_PATH_SUFFIX + "/" + encode(requestId)
+            + "/withdraw";
+    PeerAnswer answer = peers.post(PeerTarget.PROJECTS, path, body.toString()).answer();
+    if (answer.ok()) {
+      return new RequestResult(
+          RequestResult.Outcome.REQUESTED, requestId, "withdrew release request " + requestId);
+    }
+    Integer status = answer.httpStatus();
+    if (status != null && status == 409) {
+      return new RequestResult(
+          RequestResult.Outcome.CONVERGED,
+          requestId,
+          "release request " + requestId + " was already settled: " + brief(answer.body()));
+    }
+    if (status != null && status >= 400 && status < 500 && status != 401 && status != 403) {
+      return new RequestResult(
+          RequestResult.Outcome.REFUSED,
+          REFUSED,
+          "withdrawing release request " + requestId + " was refused: HTTP " + status + " "
+              + brief(answer.body()));
+    }
+    return new RequestResult(
+        RequestResult.Outcome.RETRY,
+        null,
+        "qits-projects did not take the withdrawal of " + requestId + " ("
+            + (status == null ? answer.failure() : "HTTP " + status) + ")");
+  }
+
+  /**
+   * One request off a repository's listing, as much of it as the upstream hook reads.
+   *
+   * @param id the request
+   * @param state its state word
+   * @param mergedSha its current fold, or null
+   * @param ciGate the state of its {@code CI} gate at that fold — {@code PENDING}, {@code PASSED},
+   *     {@code FAILED}, {@code UNKNOWN} — or null where it lists none
+   */
+  public record Listed(String id, String state, String mergedSha, String ciGate) {
+
+    /** Whether the request still takes a branch: open, and not past its release. */
+    public boolean open() {
+      return OPEN_STATES.contains(state);
+    }
+
+    /**
+     * Whether the request has a QA VERDICT — its CI gate PASSED or FAILED at the current fold, or it
+     * left PENDING altogether. What resets the upstream starvation guard.
+     */
+    public boolean verdict() {
+      return "PASSED".equals(ciGate) || "FAILED".equals(ciGate) || !"PENDING".equals(state);
+    }
+  }
+
+  /** The states in which a request still takes a branch. */
+  private static final Set<String> OPEN_STATES =
+      Set.of("PENDING", "READY", "REJECTED", "FAILED", "CONFLICTED");
+
+  /**
+   * What a repository's listing said.
+   *
+   * @param requests the OPEN requests, newest first; empty when there is none or it was unread
+   * @param error why it could not be read, or null
+   */
+  public record Listing(List<Listed> requests, String error) {
+
+    public Listing {
+      requests = requests == null ? List.of() : List.copyOf(requests);
+    }
+
+    public boolean readable() {
+      return error == null;
+    }
+  }
+
+  /**
+   * A repository's OPEN release requests (qits-1133) — {@code GET …/release-requests}, whose default
+   * answer is the open ones plus the last ten released; the released are filtered out here. Read by
+   * the upstream hook, which re-plans the bump of each open one that is not READY, and by the
+   * dispatcher, which opens no main-only request beside one that is open.
+   */
+  public Listing openRequests(String repoId) {
+    String path = REQUESTS_PATH_PREFIX + encode(repoId) + REQUESTS_PATH_SUFFIX;
+    PeerAnswer answer = peers.get(PeerTarget.PROJECTS, path).answer();
+    if (!answer.ok()) {
+      return new Listing(
+          List.of(), "the release requests of " + repoId + " could not be read: " + answer.failure());
+    }
+    JsonNode body = answer.json();
+    if (body == null || !body.hasNonNull("requests") || !body.get("requests").isArray()) {
+      return new Listing(
+          List.of(), "the release requests of " + repoId + " answered no requests array");
+    }
+    List<Listed> open = new ArrayList<>();
+    for (JsonNode request : body.get("requests")) {
+      String id = text(request, "id");
+      Listed listed =
+          new Listed(id, text(request, "state"), text(request, "mergedSha"), ciGate(request));
+      if (id != null && listed.open()) {
+        open.add(listed);
+      }
+    }
+    return new Listing(open, null);
+  }
+
+  /** The {@code CI} gate's state off {@code gates}, or off {@code qualityGates} where that is all. */
+  private static String ciGate(JsonNode request) {
+    for (String field : List.of("gates", "qualityGates")) {
+      if (request == null || !request.hasNonNull(field) || !request.get(field).isArray()) {
+        continue;
+      }
+      for (JsonNode gate : request.get(field)) {
+        if ("CI".equals(text(gate, "kind"))) {
+          return text(gate, "state");
+        }
+      }
+    }
+    return null;
   }
 
   /**

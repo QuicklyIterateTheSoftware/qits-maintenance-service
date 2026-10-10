@@ -25,7 +25,18 @@ public enum AutomationState {
   /** Applicability or the plan could not be decided. Answered, never stored. */
   UNKNOWN,
   /** The request moved to another fold before this ended. */
-  SUPERSEDED;
+  SUPERSEDED,
+  /**
+   * A DERIVED kind whose SOURCE kinds are not all FRESH at this fold yet (qits-1133): nothing is
+   * planned and nothing is stored, and the next ask after the sources settle decides it. On the wire
+   * only to a trigger that says it {@code accepts} the word; anyone else reads it as REQUESTED.
+   */
+  WAITING,
+  /**
+   * The kind does not apply to the repository at this fold. Answered, never stored, and on the wire
+   * only to a trigger that {@code accepts} it — anyone else is not told about the kind at all.
+   */
+  NOT_APPLICABLE;
 
   /** The state one row reads as. */
   public static AutomationState of(String status) {

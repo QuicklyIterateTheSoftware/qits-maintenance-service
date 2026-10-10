@@ -237,4 +237,50 @@ class GroupConfigTest {
             .ignored()
             .isEmpty());
   }
+
+  // --- hold (qits-1133) -----------------------------------------------------------------------
+
+  @Test
+  void nothingIsHeldByDefault() {
+    assertTrue(GroupConfig.fallback().held().isEmpty());
+    assertFalse(GroupConfig.fallback().holds("@angular/core"));
+    assertTrue(GroupConfig.parse("ignore: [gitlink]\n").held().isEmpty());
+  }
+
+  @Test
+  void aHoldNamesDependenciesAndTakesTheGroupGlobs() {
+    GroupConfig.Parsed parsed =
+        GroupConfig.parse("hold:\n  - \"@angular/*\"\n  - io.quarkus.platform:quarkus-bom\n");
+    assertTrue(parsed.ok(), parsed.error());
+    assertEquals(List.of("@angular/*", "io.quarkus.platform:quarkus-bom"), parsed.held());
+    assertTrue(parsed.holds("@angular/core"));
+    assertTrue(parsed.holds("io.quarkus.platform:quarkus-bom"));
+    assertFalse(parsed.holds("@qits/ui-components"));
+    assertEquals(GroupSource.DEFAULT, parsed.source(), "a hold asks for no grouping");
+  }
+
+  @Test
+  void aHoldSitsBesideGroupsAndIgnore() {
+    GroupConfig.Parsed parsed =
+        GroupConfig.parse(
+            """
+            ignore: [docker]
+            hold: ["eu.wohlben.qits:qits-eventstream"]
+            groups:
+              - name: angular
+                deps: ["@angular/*"]
+            """);
+    assertTrue(parsed.ok(), parsed.error());
+    assertEquals(GroupSource.CONFIG, parsed.source());
+    assertTrue(parsed.holds("eu.wohlben.qits:qits-eventstream"));
+    assertEquals(3, parsed.groups().size());
+  }
+
+  @Test
+  void aHoldThatDoesNotParseRefusesTheFile() {
+    // A hold skipped is a dependency bumped that somebody wrote down to protect.
+    assertFalse(GroupConfig.parse("hold: angular\n").ok());
+    assertFalse(GroupConfig.parse("hold: [\"\"]\n").ok());
+    assertFalse(GroupConfig.parse("hold: [{name: x}]\n").ok());
+  }
 }

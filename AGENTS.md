@@ -249,6 +249,26 @@ run, and that is the estate loop's terminator. The sentinel the commit subject r
 discriminator, so a repository that really does declare a group spelled `targeted` collides with
 nothing.
 
+**THE PRE-RUN HAS TWO STAGES (qits-1133), AND `dependency-bump` IS THE FOURTH KIND.** Every kind
+says its `Stage`: SOURCE (`estate-pins`, `dependency-bump` — build inputs) is settled first, DERIVED
+(`screenshot-baselines`, `entity-diagram` — built from those inputs) is neither planned nor stored
+until every applicable SOURCE kind is FRESH at the fold, and answers WAITING until then. Carry-over is
+per stage: a DERIVED kind's union is its own stage's paths, so a SOURCE commit (a pom the bump moved)
+re-runs it, and a kind that declares `inputPaths()` (`entity-diagram`: `**/*.java`, `**/pom.xml`;
+`dependency-bump`: its manifests, `.gitmodules`, `maintenance.yml`) carries exactly when the fold
+touched none of them. `committablePaths` stay pairwise disjoint across ALL kinds; "no output is
+another's input" holds within a stage and from DERIVED to SOURCE (`AutomationRegistryTest`), and a
+RUN plan naming another applicable kind's path is refused FAILED at run time (`AutomationService.clash`).
+`dependency-bump` plans AT THE FOLD through `ManifestScanner.pinsAt` and the pending rule, minus
+`ignore:` and the new `hold:`, never a wrapper's gitlinks (estate-pins' own), INTERNAL pins only in a
+request a person opened and EXTERNAL too in one this service opened (`mt_release_request.opened`,
+V21). Its payload carries `changes` in the `MaintenanceBump` entry shape and `commitPaths`, the
+files they touch; every own-branch join is sent at `LOWEST`. WAITING and NOT_APPLICABLE reach the
+wire only when the trigger body `accepts` them; otherwise the answer is the pre-1133 one. The
+upstream hook (`automation/UpstreamReplan`) and the dispatcher's main-only LOWEST requests are
+behind `qits.maintenance.pre-run.upstream.enabled`, which ships false; off, group dispatch is
+untouched.
+
 **AN OWN-BRANCH AUTOMATION'S BRANCH IS DELETED BY THIS SERVICE ONCE ITS REQUEST IS CLOSED** — the
 one ref this service writes itself, confined to `maintenance/automations/`. A request that releases
 deletes its named sources; one that ends any other way (WITHDRAWN, OBSOLETE, FINALIZED without the

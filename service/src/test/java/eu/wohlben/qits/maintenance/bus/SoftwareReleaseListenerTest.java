@@ -135,9 +135,21 @@ class SoftwareReleaseListenerTest {
     }
   }
 
+
+  /** The upstream hook, recording what it was told instead of queueing a re-plan (qits-1133). */
+  static final class RecordingUpstream extends eu.wohlben.qits.maintenance.automation.UpstreamReplan {
+    final List<String> moved = new java.util.ArrayList<>();
+
+    @Override
+    public void latestMoved(eu.wohlben.qits.maintenance.model.Ecosystem ecosystem, String name) {
+      moved.add(ecosystem.wireName() + ":" + name);
+    }
+  }
+
   private SoftwareReleaseListener listener;
   private RecordingStore store;
   private RecordingIngest sboms;
+  private RecordingUpstream upstream;
 
   @BeforeEach
   void setUp() {
@@ -146,6 +158,8 @@ class SoftwareReleaseListenerTest {
     listener = new SoftwareReleaseListener();
     listener.store = store;
     listener.sboms = sboms;
+    upstream = new RecordingUpstream();
+    listener.upstream = upstream;
   }
 
   private void release(String packageType, String packageName, String version) {
@@ -188,6 +202,10 @@ class SoftwareReleaseListenerTest {
         "event:" + published.id(),
         store.sourceUrls.get("maven:eu.wohlben.qits:qits-eventstream"),
         "a row a registry never answered has to say so, so a surprising value can be traced");
+    assertEquals(
+        List.of("maven:eu.wohlben.qits:qits-eventstream"),
+        upstream.moved,
+        "and the upstream hook is told the latest moved (qits-1133)");
   }
 
   /**
@@ -201,6 +219,7 @@ class SoftwareReleaseListenerTest {
 
     assertEquals("2026.901.5", store.latest.get("maven:eu.wohlben.qits:qits-eventstream"));
     assertEquals(1, store.writes.size(), "the caught-up frame must write nothing at all");
+    assertEquals(1, upstream.moved.size(), "and a frame that moved nothing tells the hook nothing");
   }
 
   /** The ordinary redelivery: the same release offered twice is a read and a return. */

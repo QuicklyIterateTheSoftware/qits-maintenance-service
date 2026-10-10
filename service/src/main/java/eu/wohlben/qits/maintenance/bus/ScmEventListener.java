@@ -219,6 +219,8 @@ public class ScmEventListener implements QitsDurableEventListener {
 
   @Inject MaintenanceStore store;
 
+  @Inject eu.wohlben.qits.maintenance.automation.UpstreamReplan upstream;
+
   @Inject ScanService scans;
 
   /**
@@ -431,6 +433,8 @@ public class ScmEventListener implements QitsDurableEventListener {
       LOG.infof(
           "%s %s moved the latest gitlink %s to %s (%s)",
           frame.name(), frame.id(), repository, version, tag.headSha());
+      // A queue submit, never a call: the claim transaction holds no HTTP open (qits-1133).
+      upstream.latestMoved(Ecosystem.GITLINK, repository);
     } else {
       LOG.debugf(
           "%s %s announced %s at %s, which is not newer than the gitlink latest recorded",

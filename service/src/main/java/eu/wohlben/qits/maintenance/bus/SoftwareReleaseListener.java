@@ -207,6 +207,8 @@ public class SoftwareReleaseListener implements QitsDurableEventListener {
 
   @Inject MaintenanceStore store;
 
+  @Inject eu.wohlben.qits.maintenance.automation.UpstreamReplan upstream;
+
   /**
    * The second write this listener makes, and it is a different fact from the first.
    *
@@ -276,6 +278,8 @@ public class SoftwareReleaseListener implements QitsDurableEventListener {
     if (moved) {
       LOG.infof(
           "%s %s moved the latest %s %s to %s", frame.name(), frame.id(), ecosystem, name, version);
+      // A queue submit, never a call: the claim transaction holds no HTTP open (qits-1133).
+      upstream.latestMoved(ecosystem, name);
     } else {
       LOG.debugf(
           "%s %s announced %s %s at %s, which is not newer than what is recorded; nothing moved",

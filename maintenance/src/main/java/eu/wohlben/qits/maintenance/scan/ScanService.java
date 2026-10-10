@@ -72,6 +72,8 @@ public class ScanService {
 
   @Inject CatalogReader catalog;
 
+  @Inject eu.wohlben.qits.maintenance.automation.UpstreamReplan upstream;
+
   @Inject ManifestScanner manifests;
 
   @Inject LatestResolver resolver;
@@ -326,7 +328,11 @@ public class ScanService {
         latest = LatestLookup.failed(null, "the lookup failed: " + e);
       }
       try {
-        store.recordLatest(lookup.ecosystem(), lookup.name(), latest, Instant.now());
+        if (store.recordLatest(lookup.ecosystem(), lookup.name(), latest, Instant.now())) {
+          // The poll is one of the three places mt_latest advances (qits-1133); a no-op unless
+          // qits.maintenance.pre-run.upstream.enabled is set.
+          upstream.latestMoved(lookup.ecosystem(), lookup.name());
+        }
       } catch (RuntimeException e) {
         LOG.warnf("The latest of %s could not be written: %s", lookup.name(), e.toString());
       }

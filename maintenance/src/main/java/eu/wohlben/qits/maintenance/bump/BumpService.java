@@ -576,10 +576,20 @@ public class BumpService {
             ReleaseRequestClient.summary(bump.groupName, changes(bump).size()));
     store.bumpReleaseAsked(bump.id, result.requestId(), note(bump, result.message()));
     switch (result.outcome()) {
-      case REQUESTED ->
-          LOG.infof(
-              "The bump %s asked for %s to be released: request %s",
-              bump.id, bump.branch, result.requestId());
+      case REQUESTED -> {
+        // REMEMBERED AS OURS (qits-1133): the dependency-bump automation plans third-party upgrades
+        // only in a request this service opened, and a group bump's ask is one.
+        store.recordOpenedRequest(
+            result.requestId(),
+            bump.repository,
+            bump.branch,
+            eu.wohlben.qits.maintenance.entity.MtReleaseRequest.GROUP_BUMP,
+            null,
+            java.time.Instant.now());
+        LOG.infof(
+            "The bump %s asked for %s to be released: request %s",
+            bump.id, bump.branch, result.requestId());
+      }
       case CONVERGED ->
           LOG.infof("The bump %s has nothing left to ask about %s", bump.id, bump.branch);
       case REFUSED ->

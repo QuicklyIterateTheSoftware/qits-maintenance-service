@@ -101,6 +101,12 @@ class AutomationTriggerTest {
         .orElseThrow(() -> new AssertionError("no screenshot entry in " + answer));
   }
 
+  private List<MtBump> screenshotRows(String fold) {
+    return store.automations(REQUEST, fold).stream()
+        .filter(row -> ScreenshotBaselinesAutomation.KIND.equals(row.automationKind))
+        .toList();
+  }
+
   private MtBump row(AutomationDto entry) {
     return store.bump(UUID.fromString(entry.bumpId())).orElseThrow();
   }
@@ -131,8 +137,16 @@ class AutomationTriggerTest {
     ReleaseRequestAutomationsDto answer = trigger(REQUEST, FOLD_A, null, null);
 
     assertEquals(FOLD_A, answer.foldSha());
-    assertTrue(answer.automations().isEmpty(), "nothing applies: " + answer);
-    assertTrue(store.automations(REQUEST, FOLD_A).isEmpty(), "and nothing was stored");
+    assertTrue(
+        answer.automations().stream().noneMatch(AutomationFixture::screenshots),
+        "screenshots do not apply: " + answer);
+    // The one kind that does is the dependency bump, and the fold's manifests are current: FRESH,
+    // with no run (qits-1133).
+    assertEquals(1, answer.automations().size(), answer.toString());
+    assertEquals(
+        AutomationState.FRESH.name(),
+        AutomationFixture.entry(answer, DependencyBumpAutomation.KIND).state());
+    assertTrue(screenshotRows(FOLD_A).isEmpty(), "and nothing was stored for screenshots");
     assertEquals(0, triggers(), "and no run was asked for");
   }
 
@@ -144,7 +158,7 @@ class AutomationTriggerTest {
     AutomationDto entry = screenshots(trigger(REQUEST, FOLD_A, null, null));
 
     assertEquals(AutomationState.UNKNOWN.name(), entry.state());
-    assertTrue(store.automations(REQUEST, FOLD_A).isEmpty(), "so the next ask decides again");
+    assertTrue(screenshotRows(FOLD_A).isEmpty(), "so the next ask decides again");
   }
 
   /** A repository that follows the convention gets one row and one run, on the kind's branch. */
@@ -350,7 +364,7 @@ class AutomationTriggerTest {
 
     assertEquals(first.bumpId(), again.bumpId());
     assertEquals(AutomationState.RUNNING.name(), again.state());
-    assertEquals(1, store.automations(REQUEST, FOLD_A).size());
+    assertEquals(1, screenshotRows(FOLD_A).size());
     assertEquals(1, triggers(), "one fold, one run");
     assertEquals(
         again.bumpId(),

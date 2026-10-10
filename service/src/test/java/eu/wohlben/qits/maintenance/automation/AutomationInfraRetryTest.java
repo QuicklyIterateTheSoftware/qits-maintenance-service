@@ -273,7 +273,7 @@ class AutomationInfraRetryTest {
                 new AutomationService.Fold(
                     Fixture.REPOSITORY, FOLD_A, null, null, List.of("work"), "qits-760"))
             .automations()
-            .getFirst();
+            .stream().filter(AutomationFixture::screenshots).findFirst().orElseThrow();
     queue.awaitIdle(Duration.ofSeconds(30));
     UUID id = UUID.fromString(entry.bumpId());
     assertEquals(BumpStatus.RUNNING.name(), store.bump(id).orElseThrow().status);
@@ -287,7 +287,7 @@ class AutomationInfraRetryTest {
   }
 
   private AutomationDto entry() {
-    return automations.automations(REQUEST, FOLD_A).automations().getFirst();
+    return automations.automations(REQUEST, FOLD_A).automations().stream().filter(AutomationFixture::screenshots).findFirst().orElseThrow();
   }
 
   /** One run as {@code GET /ci/api/runs/{id}} answers it, with its step output when it names a retry. */
