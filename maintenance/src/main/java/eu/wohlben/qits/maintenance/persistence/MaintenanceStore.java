@@ -832,6 +832,11 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
           MtBranch row =
               MtBranch.find("repository = ?1 and groupName = ?2", repository, group).firstResult();
           boolean fresh = row == null;
+          if (!fresh && BranchState.RETIRED.name().equals(row.state)) {
+            // RETIRED IS TERMINAL (qits-1133 R2): a run that ended after the legacy sweep, or the
+            // SCMDeleteBranch its own delete caused, must not bring the row back.
+            return;
+          }
           if (fresh) {
             row = new MtBranch();
             row.id = UUID.randomUUID();
@@ -848,6 +853,60 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
           getEntityManager().flush();
         });
   }
+  /**
+   * <b>Retires one group's branch for good (qits-1133 R2)</b> — what the legacy sweep writes once
+   * the branch is deleted or found gone: the row RETIRED with no head (written if there was none, so
+   * the sweep's work is on record), and every GROUP bump of that group still owed a release ask
+   * closed with the {@code converged} sentinel, so the release sweep never asks to release a branch
+   * that no longer exists. Idempotent: a second call changes nothing.
+   *
+   * @return whether anything was written
+   */
+  @ActivateRequestContext
+  public boolean retireBranch(
+      String repository, String group, String branchName, String note, Instant now) {
+    return DbRetry.inNewTx(
+        "retire the branch of " + repository + "/" + group,
+        () -> {
+          boolean wrote = false;
+          MtBranch row =
+              MtBranch.find("repository = ?1 and groupName = ?2", repository, group).firstResult();
+          if (row == null) {
+            row = new MtBranch();
+            row.id = UUID.randomUUID();
+            row.repository = repository;
+            row.groupName = group;
+            row.branch = branchName;
+            row.state = BranchState.RETIRED.name();
+            row.updatedAt = now;
+            row.persist();
+            wrote = true;
+          } else if (!BranchState.RETIRED.name().equals(row.state)) {
+            row.branch = branchName;
+            row.state = BranchState.RETIRED.name();
+            row.headSha = null;
+            row.updatedAt = now;
+            wrote = true;
+          }
+          List<MtBump> owed =
+              MtBump.find(
+                      "repository = ?1 and groupName = ?2 and mode = ?3 and status in ?4 and"
+                          + " releaseRequestId is null",
+                      repository,
+                      group,
+                      BumpMode.GROUP.name(),
+                      List.of(BumpStatus.SUCCEEDED.name(), BumpStatus.NOTHING_TO_DO.name()))
+                  .list();
+          for (MtBump bump : owed) {
+            bump.releaseRequestId = "converged";
+            bump.message = note;
+            wrote = true;
+          }
+          getEntityManager().flush();
+          return wrote;
+        });
+  }
+
 
   // --- bumps --------------------------------------------------------------------------------
 

@@ -10,6 +10,8 @@ import eu.wohlben.qits.maintenance.bump.BumpDispatcher;
 import eu.wohlben.qits.maintenance.bump.BumpOrder;
 import eu.wohlben.qits.maintenance.bump.BumpService;
 import eu.wohlben.qits.maintenance.bump.CiClient;
+import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
+import eu.wohlben.qits.maintenance.config.UpstreamSwitch;
 import eu.wohlben.qits.maintenance.latest.GitlinkSha;
 import eu.wohlben.qits.maintenance.manifest.GroupConfig;
 import eu.wohlben.qits.maintenance.manifest.ParsedPin;
@@ -20,9 +22,9 @@ import eu.wohlben.qits.maintenance.model.GroupSource;
 import eu.wohlben.qits.maintenance.model.PinKind;
 import eu.wohlben.qits.maintenance.model.RepositoryStatus;
 import eu.wohlben.qits.maintenance.model.ScanScope;
-import eu.wohlben.qits.maintenance.pending.Change;
 import eu.wohlben.qits.maintenance.peer.FakePeers;
 import eu.wohlben.qits.maintenance.peer.PeerTarget;
+import eu.wohlben.qits.maintenance.pending.Change;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import eu.wohlben.qits.maintenance.scan.ScanService;
 import eu.wohlben.qits.maintenance.scan.ScanTrigger;
@@ -33,6 +35,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -63,8 +66,22 @@ class BumpDispatchTest {
 
   @Inject WorkQueue queue;
 
+  @Inject MaintenanceConfig config;
+
+  /** The real bean behind the proxy, put back after every method: a mock lives for the run. */
+  private MaintenanceConfig realConfig;
+
+  @AfterEach
+  void restoreTheConfig() {
+    queue.awaitIdle(Duration.ofSeconds(30));
+    UpstreamSwitch.restore(realConfig);
+  }
+
   @BeforeEach
   void scriptThePeers() {
+    // THE LEGACY GROUP PATH, pinned with the cutover switch OFF (qits-1133 R2): it ships on, which
+    // retires group bumps; off is the emergency position that restores this path until R5.
+    realConfig = UpstreamSwitch.install(config, false);
     queue.awaitIdle(Duration.ofSeconds(30));
     inventory.clear();
     peers.reset();

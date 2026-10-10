@@ -1265,6 +1265,9 @@ paths:
           description: "No such repository, or no such group"
         "409":
           description: "One is already active, or bumping is disabled"
+        "410":
+          description: "Group bumps are retired (qits-1133): the dependency-bump release-request\
+            \ automation writes pending pins now"
         "401":
           description: Not Authorized
         "403":

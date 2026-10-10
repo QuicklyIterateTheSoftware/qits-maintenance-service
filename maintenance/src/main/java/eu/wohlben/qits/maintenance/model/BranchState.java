@@ -32,5 +32,14 @@ public enum BranchState {
   RELEASED,
 
   /** The last bump run went red. */
-  FAILED
+  FAILED,
+
+  /**
+   * <b>Retired by the cutover (qits-1133 R2), and terminal.</b> {@code LegacyGroupBranchSweep}
+   * withdrew the bump-only request standing on the branch, deleted it, and wrote this — or found the
+   * branch already gone. {@code MaintenanceStore.recordBranch} never rewrites a row in this state,
+   * so no late run ending or {@code SCMDeleteBranch} brings it back to a state anything acts on. A
+   * stored word under no check constraint, like the rest: no migration.
+   */
+  RETIRED
 }

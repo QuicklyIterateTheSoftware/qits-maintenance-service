@@ -158,6 +158,11 @@ public class RepositoryController {
    * inventory can be seconds out of date, so refusing here would be refusing on the strength of a
    * cache — and the honest answer is a row that says what the run found.
    *
+   * <p><b>410 Gone since the cutover (qits-1133 R2)</b> — with {@code
+   * qits.maintenance.pre-run.upstream.enabled} on, the shipped default, nothing writes a {@code
+   * maintenance/<group>} branch, and the answer points at the {@code dependency-bump} release-request
+   * automation instead. The door itself is removed in R5; the switch turned off restores it.
+   *
    * <p><b>An agent presses it too, and that is not a loosening.</b> The caller names a group and
    * nothing else: what lands on the branch is whatever is already pending there, every change
    * resolving a version somebody has already released — so what this door grants is <i>when</i>, not
@@ -171,6 +176,11 @@ public class RepositoryController {
   @APIResponse(responseCode = "202", description = "Requested; poll GET /bumps/{id}")
   @APIResponse(responseCode = "404", description = "No such repository, or no such group")
   @APIResponse(responseCode = "409", description = "One is already active, or bumping is disabled")
+  @APIResponse(
+      responseCode = "410",
+      description =
+          "Group bumps are retired (qits-1133): the dependency-bump release-request automation"
+              + " writes pending pins now")
   @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
   public Response bump(@PathParam("name") String name, @PathParam("group") String group) {
     UUID id = bumps.request(name, group, BumpTrigger.MANUAL);

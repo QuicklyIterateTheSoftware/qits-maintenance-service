@@ -78,6 +78,10 @@ class ReleaseRequestAutomationControllerTest {
     return given().contentType(ContentType.JSON).body(body);
   }
 
+  /** The screenshot entry of an answer, wherever the kind order puts it. */
+  private static final String SCREENSHOTS =
+      "automations.find { it.kind == '" + ScreenshotBaselinesAutomation.KIND + "' }";
+
   /** The trigger answers the per-kind states, and the read answers the same. */
   @Test
   void theTriggerAnswersEveryApplicableKindAndTheReadAgrees() {
@@ -91,16 +95,18 @@ class ReleaseRequestAutomationControllerTest {
             .statusCode(200)
             .body("requestId", equalTo(REQUEST))
             .body("foldSha", equalTo(FOLD_A))
-            // The dependency bump ships switched off (qits-1133), so it is not listed and holds
-            // nothing: the DERIVED screenshots go in the same ask.
-            .body("automations", hasSize(1))
-            .body("automations[0].kind", equalTo(ScreenshotBaselinesAutomation.KIND))
-            .body("automations[0].label", equalTo("Screenshot baselines"))
-            .body("automations[0].state", equalTo("REQUESTED"))
-            .body("automations[0].branch", equalTo(AutomationFixture.branch(REQUEST)))
-            .body("automations[0].updatedAt", notNullValue())
+            // The dependency bump ships ON since the cutover (qits-1133 R2): listed first and
+            // FRESH, it holds nothing, so the DERIVED screenshots go in the same ask.
+            .body("automations", hasSize(2))
+            .body("automations[0].kind", equalTo(DependencyBumpAutomation.KIND))
+            .body("automations[0].state", equalTo("FRESH"))
+            .body("automations[1].kind", equalTo(ScreenshotBaselinesAutomation.KIND))
+            .body("automations[1].label", equalTo("Screenshot baselines"))
+            .body("automations[1].state", equalTo("REQUESTED"))
+            .body("automations[1].branch", equalTo(AutomationFixture.branch(REQUEST)))
+            .body("automations[1].updatedAt", notNullValue())
             .extract()
-            .path("automations[0].bumpId");
+            .path("automations[1].bumpId");
     queue.awaitIdle(Duration.ofSeconds(30));
 
     given()
@@ -108,9 +114,9 @@ class ReleaseRequestAutomationControllerTest {
         .get(DOOR + "?foldSha=" + FOLD_A)
         .then()
         .statusCode(200)
-        .body("automations[0].bumpId", equalTo(bumpId))
-        .body("automations[0].state", equalTo("RUNNING"))
-        .body("automations[0].runIds[0]", equalTo("run-automation-door"));
+        .body(SCREENSHOTS + ".bumpId", equalTo(bumpId))
+        .body(SCREENSHOTS + ".state", equalTo("RUNNING"))
+        .body(SCREENSHOTS + ".runIds[0]", equalTo("run-automation-door"));
     given().when().get(DOOR).then().statusCode(200).body("foldSha", equalTo(FOLD_A));
     given().when().get("/maintenance/api/bumps/" + bumpId).then().statusCode(200)
         .body("mode", equalTo("AUTOMATION"));

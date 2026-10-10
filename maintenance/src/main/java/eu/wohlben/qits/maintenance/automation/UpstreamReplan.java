@@ -25,8 +25,9 @@ import org.jboss.logging.Logger;
  * release request has its {@code dependency-bump} re-planned on the request's current fold, so the
  * upgrade lands in the release that is already on its way instead of on a branch of its own.
  *
- * <p><b>Behind {@code qits.maintenance.pre-run.upstream.enabled}, which ships false.</b> Off, this is
- * a no-op and nothing about the bump path moves.
+ * <p><b>Behind {@code qits.maintenance.pre-run.upstream.enabled}, which ships true since the R2
+ * cutover.</b> Off — the emergency position — this is a no-op and nothing about the bump path
+ * moves.
  *
  * <h2>What it does per consumer</h2>
  *

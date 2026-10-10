@@ -41,7 +41,9 @@ import org.jboss.logging.Logger;
  * fires from here, and because a line at 02:00 is where somebody goes looking.
  *
  * <p><b>{@code qits.maintenance.bump.dispatch.gated=false} brings the old loop back</b>, unchanged,
- * in {@link #requestInternalBumps()}. It is kept reachable rather than deleted because how much a
+ * in {@link #requestInternalBumps()} — <b>but only with the cutover switch off</b> (qits-1133 R2):
+ * that loop is a group dispatch, and with {@code qits.maintenance.pre-run.upstream.enabled} on it asks
+ * for nothing. It is kept reachable rather than deleted because how much a
  * qits-ci can take at once is a property of a deployment.
  *
  * <h2>It is its own cron, and that is the point of it existing at all</h2>
@@ -161,6 +163,15 @@ public class BumpSchedule {
 
   /** One bump per OK repository whose INTERNAL group has something pending and no writer. */
   private void requestInternalBumps() {
+    if (bumps.groupBumpsRetired()) {
+      // THE CUTOVER CLOSED THIS LOOP TOO (qits-1133 R2): it is a group dispatch, and nothing writes
+      // a maintenance/<group> branch any more. The dispatcher's main-only requests carry the
+      // pending pins; their pre-run's dependency-bump writes them.
+      LOG.infof(
+          "Group bumps are retired (qits-1133); the ungated nightly loop asks for nothing — the"
+              + " dependency-bump automation writes the pending pins.");
+      return;
+    }
     if (!config.bumpEnabled()) {
       LOG.infof(
           "Bumping is disabled (qits.maintenance.bump.enabled=false); the nightly internal bump is"

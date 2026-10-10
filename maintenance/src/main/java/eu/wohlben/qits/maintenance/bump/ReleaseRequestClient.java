@@ -343,7 +343,8 @@ public class ReleaseRequestClient {
   /**
    * What a repository's listing said.
    *
-   * @param requests the OPEN requests, newest first; empty when there is none or it was unread
+   * @param requests the requests, newest first — the OPEN ones from {@link #openRequests}, every
+   *     listed one from {@link #requests}; empty when there is none or it was unread
    * @param error why it could not be read, or null
    */
   public record Listing(List<Listed> requests, String error) {
@@ -364,6 +365,20 @@ public class ReleaseRequestClient {
    * dispatcher, which opens no main-only request beside one that is open.
    */
   public Listing openRequests(String repoId) {
+    Listing listed = requests(repoId);
+    if (!listed.readable()) {
+      return listed;
+    }
+    return new Listing(listed.requests().stream().filter(Listed::open).toList(), null);
+  }
+
+  /**
+   * Every request the repository's default listing answers — the open ones AND the last released,
+   * unfiltered. The legacy group-branch sweep (qits-1133 R2) reads it, because a branch named by a
+   * RELEASED request is mid-pipeline and its landing deletes it; {@link #openRequests} is the same
+   * read with the released filtered out.
+   */
+  public Listing requests(String repoId) {
     String path = REQUESTS_PATH_PREFIX + encode(repoId) + REQUESTS_PATH_SUFFIX;
     PeerAnswer answer = peers.get(PeerTarget.PROJECTS, path).answer();
     if (!answer.ok()) {
@@ -375,16 +390,15 @@ public class ReleaseRequestClient {
       return new Listing(
           List.of(), "the release requests of " + repoId + " answered no requests array");
     }
-    List<Listed> open = new ArrayList<>();
+    List<Listed> all = new ArrayList<>();
     for (JsonNode request : body.get("requests")) {
       String id = text(request, "id");
-      Listed listed =
-          new Listed(id, text(request, "state"), text(request, "mergedSha"), ciGate(request));
-      if (id != null && listed.open()) {
-        open.add(listed);
+      if (id != null) {
+        all.add(
+            new Listed(id, text(request, "state"), text(request, "mergedSha"), ciGate(request)));
       }
     }
-    return new Listing(open, null);
+    return new Listing(all, null);
   }
 
   /** The {@code CI} gate's state off {@code gates}, or off {@code qualityGates} where that is all. */
