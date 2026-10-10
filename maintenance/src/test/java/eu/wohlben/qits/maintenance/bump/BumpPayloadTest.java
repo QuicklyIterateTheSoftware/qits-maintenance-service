@@ -3,9 +3,11 @@ package eu.wohlben.qits.maintenance.bump;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import eu.wohlben.qits.maintenance.bump.changelog.ChangelogRange;
 import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.pending.Change;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -120,5 +122,51 @@ class BumpPayloadTest {
     assertEquals(
         1,
         BumpPayload.problems("dependencies", BRANCH, "refs/tags/../main", List.of(change)).size());
+  }
+
+  // --- the changelog field (qits-893) -------------------------------------------------------------
+
+  private static List<String> changelogProblems(String repository, List<String> versions) {
+    Change change = gitlink("2026.1008.1", "webui");
+    return BumpPayload.changelogProblems(Map.of(change, new ChangelogRange(repository, versions)));
+  }
+
+  /** A catalog name and the platform's own calvers, unpadded — the shapes a release really has. */
+  @Test
+  void aChangelogOfACatalogNameAndCalversIsAdmitted() {
+    assertTrue(
+        changelogProblems("qits-ci-frontend", List.of("2026.1007.61854", "2026.1007.171656", "2026.919.5"))
+            .isEmpty());
+    assertTrue(BumpPayload.changelogProblems(Map.of()).isEmpty(), "no changelog is no problem");
+  }
+
+  @Test
+  void aChangelogRepositoryIsHeldToTheCatalogNameShape() {
+    for (String bad :
+        List.of("", "Qits-ci", "-qits", "qits/ci", "qits_ci", "../qits", "a".repeat(129))) {
+      List<String> problems = changelogProblems(bad, List.of("2026.1008.1"));
+      assertEquals(1, problems.size(), "'" + bad + "': " + problems);
+      assertTrue(problems.get(0).contains("changelog repository"), problems.toString());
+    }
+    assertEquals(1, changelogProblems(null, List.of("2026.1008.1")).size());
+    assertTrue(changelogProblems("a".repeat(128), List.of("2026.1008.1")).isEmpty());
+  }
+
+  @Test
+  void aChangelogVersionIsACalver() {
+    for (String bad :
+        List.of("", "1.2.3", "26.1008.1", "2026.10080.1", "2026.1008", "2026.1008.1-SNAPSHOT",
+            "2026.1008.1; rm -rf /", "v2026.1008.1")) {
+      List<String> problems = changelogProblems("qits-ci", List.of("2026.1001.1", bad));
+      assertEquals(1, problems.size(), "'" + bad + "': " + problems);
+      assertTrue(problems.get(0).contains("changelog version"), problems.toString());
+    }
+  }
+
+  @Test
+  void aChangelogNamesAtLeastOneVersion() {
+    List<String> problems = changelogProblems("qits-ci", List.of());
+    assertEquals(1, problems.size(), problems.toString());
+    assertTrue(problems.get(0).contains("names no version"), problems.toString());
   }
 }

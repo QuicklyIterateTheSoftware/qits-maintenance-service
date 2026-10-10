@@ -3,7 +3,10 @@ package eu.wohlben.qits.maintenance.api;
 import eu.wohlben.qits.maintenance.bump.CiClient;
 import eu.wohlben.qits.maintenance.manifest.GitmodulesParser;
 import eu.wohlben.qits.maintenance.peer.FakePeers;
+import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.peer.PeerTarget;
+import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
+import java.time.Instant;
 import java.util.Map;
 
 /**
@@ -287,6 +290,49 @@ public final class Fixture {
         TREE + branch.replace("/", "%2F"),
         FakePeers.Scripted.unreachable("connection refused"));
   }
+
+  /**
+   * The repositories that publish the fixture's internal coordinates, as the release events would
+   * have recorded them — the {@code ArtifactGraph.producers()} a bump's changelog ranges read
+   * (qits-893). Without them every internal change of {@link #scriptScan}'s pins has no source
+   * repository, and a bump of them FAILS before it is sent, which is the rule and not what a test of
+   * anything else means to say. The gitlink needs none: its name is its repository.
+   *
+   * <p>No changelog is scripted for any of them, so the docs store answers 404 — every one of these
+   * repositories predates changelogs — and the payload is the one it always was.
+   */
+  public static void seedProducers(MaintenanceStore store) {
+    Instant at = Instant.parse("2026-08-01T00:00:00Z");
+    store.upsertArtifact(
+        Ecosystem.MAVEN, "eu.wohlben.qits:qits-eventstream", "2026.811.1", "qits-eventstream", at);
+    store.upsertArtifact(
+        Ecosystem.MAVEN, "eu.wohlben.qits:qits-parent", "2026.800.1", "qits-parent", at);
+    store.upsertArtifact(
+        Ecosystem.MAVEN, "eu.wohlben.qits:qits-arch-rules", "2026.817.175344", "qits-arch-rules", at);
+    store.upsertArtifact(
+        Ecosystem.NPM, "@qits/ui-components", "2026.8.1", "qits-ui-components-jslib", at);
+    store.upsertArtifact(
+        Ecosystem.DOCKER, "qits/build-images/maven-base", "2026.813.1", "qits-build-images", at);
+  }
+
+  /** The docs store's listing of {@code @changelog/<repository>}: these versions, in this order. */
+  public static void scriptChangelogs(FakePeers peers, String repository, String... versions) {
+    StringBuilder body =
+        new StringBuilder("{\"name\":\"@changelog/" + repository + "\",\"versions\":[");
+    for (int i = 0; i < versions.length; i++) {
+      body.append(i == 0 ? "" : ",")
+          .append("{\"version\":\"")
+          .append(versions[i])
+          .append("\",\"publishedAt\":\"2026-10-01T00:00:00Z\"}");
+    }
+    peers.answer(
+        PeerTarget.ARTIFACTS_DOCS,
+        CHANGELOG_PATH + repository,
+        FakePeers.Scripted.ok(body.append("]}").toString()));
+  }
+
+  /** The docs store's changelog listing route, up to the repository name. */
+  public static final String CHANGELOG_PATH = "/artifacts/docs/docs/@changelog/";
 
   /** qits-ci accepts the trigger and names one run. */
   public static void scriptCiAccepts(FakePeers peers, String runId) {

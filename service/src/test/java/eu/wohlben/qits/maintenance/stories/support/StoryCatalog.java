@@ -1,6 +1,13 @@
 package eu.wohlben.qits.maintenance.stories.support;
 
+import eu.wohlben.qits.maintenance.testdb.EmbeddedPg;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * <b>The platform this catalogue scans</b> — two repositories, as the six peers would describe
@@ -156,6 +163,58 @@ public final class StoryCatalog {
 
   /** …and of the one whose base could not be decided. */
   public static final String FOURTH_RUN = "run-delta";
+
+  // --- the changelogs a bump carries (qits-893) --------------------------------------------------
+
+  /**
+   * The docs store's listing of every changelog one repository published, as the stand-in for
+   * qits-artifacts matches it — the {@code @} and the slash literal, as {@code ChangelogClient}
+   * sends them.
+   */
+  public static String changelogPath(String repository) {
+    return "/artifacts/docs/docs/@changelog/" + repository;
+  }
+
+  /**
+   * WHO PUBLISHES EACH INTERNAL PIN of {@link #REPOSITORY}, written straight into the launched
+   * process's store — the rows a {@code SoftwareRelease} frame would have left, which no story can
+   * send because the bus is dark here.
+   *
+   * <p>A bump resolves every internal change's source repository before it is sent, to find the
+   * changelogs it pulls in, and an internal coordinate nobody is known to publish FAILS the bump.
+   * {@code qits-eventstream} is {@link #SECOND_REPOSITORY}, which is what it is; the other four are
+   * named for what they are. MISSING, so no sweep ever asks qits-artifacts for their documents.
+   * Idempotent: a second call meets the identity index and writes nothing.
+   */
+  public static void seedProducers() {
+    String[][] rows = {
+      {"maven", "eu.wohlben.qits:qits-eventstream", "2026.821.3", SECOND_REPOSITORY},
+      {"maven", "eu.wohlben.qits:qits-parent", "2026.820.1", "qits-parent"},
+      {"maven", "eu.wohlben.qits:qits-arch-rules", "2026.822.1", "qits-arch-rules"},
+      {"npm", "@qits/ui-components", "2026.8.4", "qits-ui-components-jslib"},
+      {"docker", "qits/build-images/maven-base", "2026.821.2", "qits-build-images"},
+    };
+    String url = EmbeddedPg.url(StoryProfile.DATABASE);
+    try (Connection connection =
+            DriverManager.getConnection(url, EmbeddedPg.USER, EmbeddedPg.PASSWORD);
+        PreparedStatement insert =
+            connection.prepareStatement(
+                "insert into mt_artifact (id, ecosystem, name, version, repository, occurred_at,"
+                    + " sbom_status) values (?, ?, ?, ?, ?, ?, 'MISSING')"
+                    + " on conflict (ecosystem, name, version) do nothing")) {
+      for (String[] row : rows) {
+        insert.setObject(1, UUID.randomUUID());
+        insert.setString(2, row[0]);
+        insert.setString(3, row[1]);
+        insert.setString(4, row[2]);
+        insert.setString(5, row[3]);
+        insert.setTimestamp(6, Timestamp.from(Instant.parse("2026-08-21T00:00:00Z")));
+        insert.executeUpdate();
+      }
+    } catch (Exception unwritable) {
+      throw new IllegalStateException("could not seed the artifact producers", unwritable);
+    }
+  }
 
   /** {@code GET …/release-requests?state=all} as it goes out: the listing a base is chosen from. */
   public static String releaseListingWire(String releaseRequestsPath) {

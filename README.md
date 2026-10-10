@@ -357,7 +357,9 @@ release request and one release — not five of each. That is the whole of the s
                "changes": [ {"ecosystem":"maven","manifestPath":"pom.xml",
                              "name":"eu.wohlben.qits:qits-eventstream",
                              "from":"2026.811.1","to":"2026.821.3",
-                             "location":"property:qits.eventstream.version"} ] } }
+                             "location":"property:qits.eventstream.version",
+                             "changelog":{"repository":"qits-eventstream",
+                                          "versions":["2026.815.1","2026.821.3"]}} ] } }
 ```
 
 `location` is honoured for maven only; npm edits whichever section holds the entry, docker anchors on
@@ -366,6 +368,27 @@ the image name, and gitlink restates the path. It is sent anyway. **A gitlink ch
 `160000` index entry there after fetching the tag from the sibling repository its `name` addresses. `from` is never a precondition — a manifest already at
 `to` is a quiet no-op. Every value is validated on this side against what the step enforces, so a
 bad payload is a sentence on the bump row rather than a step log somebody has to read.
+
+**An internal change names the changelogs it pulls in (epic qits-893).** Every release publishes
+`@changelog/<repository>` at its version to qits-artifacts' docs store, and a bump commit carries the
+changelogs of every release it pulls in. Before the trigger, `bump/changelog/ChangelogRanges`
+resolves each INTERNAL change (`MaintenanceConfig.kindOf`; external ones have none and are listed as
+before): its source repository (a gitlink's `name`, otherwise `ArtifactGraph.producers()`), its old
+version (`from`; for a gitlink the sha is mapped through the release ledger, and an unmapped one
+leaves only `to`), and the published versions, `GET /artifacts/docs/docs/@changelog/<repository>`.
+The range is every version of the ledger, the listing and `to` itself with `from < v <= to`, at or
+above the OLDEST published changelog — releases cut before changelogs existed are left out, and a
+repository that never published one (404) has no range. Each change with a range carries
+`changelog: {repository, versions}` (calver order, never empty); one without carries no key. The
+payload NAMES changelogs and never carries one — it reaches the step as one environment string
+capped at about 128 KiB — so the step's `qits changelog bump-message` fetches the texts and composes
+the commit message. **A missing changelog is an error, not a workaround**: a release in the range
+whose changelog was not published, or an internal coordinate with no known source repository, FAILS
+the bump with the sentence naming it and nothing is triggered. A docs store that cannot be read
+(5xx, transport) says nothing about the changelogs, so the bump stays REQUESTED and is sent again,
+exactly as a 503 from the trigger. Group bumps and the source-branch automations (`estate-pins`)
+both go through it; `BumpPayload.changelogProblems` holds the field to a catalog name
+(`[a-z0-9][a-z0-9-]{0,127}`) and calver versions (`[0-9]{4}.[0-9]{1,4}.[0-9]+`).
 
 **`baseRef` is main unless a release has not reached it (qits-1081).** qits-projects folds every
 released-but-unmerged tag into each release request, so a branch cut from main that edits a pin line
@@ -895,7 +918,7 @@ environment without a rebuild.
 | `qits.maintenance.targets.projects-url` | `http://qits-projects:8080` | where the catalog is |
 | `qits.maintenance.targets.githost-url` | `http://qits-githost:8080` | where the manifests are |
 | `qits.maintenance.targets.ci-url` | `http://qits-ci:8080` | which CI applies a bump |
-| `qits.maintenance.targets.artifacts-url` | `http://qits-artifacts:8080` | where the SBOM documents are — a bare host, because the route's whole path belongs to the caller |
+| `qits.maintenance.targets.artifacts-url` | `http://qits-artifacts:8080` | where the SBOM documents and the changelog listings are — a bare host, because both routes' whole paths belong to the caller |
 | `qits.maintenance.registries.maven-url` | `http://qits-artifacts:8080/artifacts/maven/maven` | internal maven |
 | `qits.maintenance.registries.npm-url` | `http://qits-artifacts:8080/artifacts/npm/npm` | internal npm |
 | `qits.maintenance.registries.oci-url` | `http://qits-artifacts:8080/v2` | internal images |
@@ -925,8 +948,8 @@ environment without a rebuild.
 
 **The registry keys carry a PATH as well as a host**, because a registry is mounted under a prefix
 and the prefix names the repository row it serves. Moving a row is then a deployment's decision.
-**`targets.artifacts-url` deliberately does not**: `/artifacts/sboms/…` is qits-artifacts' own API
-rather than a mount, so its whole path belongs to the caller and lives in the code.
+**`targets.artifacts-url` deliberately does not**: `/artifacts/sboms/…` and
+`/artifacts/docs/docs/@changelog/…` are qits-artifacts' own API rather than a mount, so the whole path belongs to the caller and lives in the code.
 
 **The npmjs cache has no key at all.** `qits.maintenance.mirror.npm-url` is gone (qits-472): its
 address is derived in code (`PeerTarget.NPM_MIRROR`) as

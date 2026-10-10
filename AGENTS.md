@@ -283,6 +283,17 @@ with no run id is FAILED, because qits-ci records a run only if the payload's re
 readable in that evaluation; anything else non-2xx is FAILED. Treating an empty `runIds` as success
 would report a branch that was never written.
 
+**A bump proves its changelogs before it is sent (epic qits-893).** `bump/changelog/ChangelogRanges`
+decides, per INTERNAL change, the releases of its source repository after the old pin up to the new
+one, floored at the repository's oldest published changelog, and `ChangelogClient` reads the docs
+store's listing (`PeerTarget.ARTIFACTS_DOCS`, the same bare-host key as the SBOM route). A missing
+changelog, or an internal coordinate `ArtifactGraph.producers()` cannot name a repository for, FAILS
+the bump with the sentence — the owner's rule is "error, not workaround" — and an unreadable store
+is a RETRY. The payload NAMES the changelogs (`changelog: {repository, versions}`) and never carries
+their text: it reaches the step as one environment string, so the step's CLI fetches them. Tests
+that bump the fixture's internal pins seed the producers first (`Fixture.seedProducers`,
+`StoryCatalog.seedProducers`); without them every such bump fails, by design.
+
 **Only the branch HEAD is compared, never a commit count — on a GROUP bump.** One bump is up to two
 commits — the maven step and the node/docker step each clone, commit and push — so a service
 expecting one would report every mixed group as broken. The head is read before the trigger and again

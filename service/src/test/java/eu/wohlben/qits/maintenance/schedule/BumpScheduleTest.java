@@ -79,6 +79,8 @@ class BumpScheduleTest {
     inventory.clear();
     peers.reset();
     Fixture.scriptScan(peers);
+    // Who publishes each internal pin: a bump's changelog ranges need a source repository (qits-893).
+    Fixture.seedProducers(store);
     Fixture.scriptBranchAbsent(peers);
     Fixture.scriptCiAccepts(peers, "run-scheduled");
     Fixture.scriptCiQueueEmpty(peers);

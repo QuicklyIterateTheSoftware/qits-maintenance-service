@@ -3,8 +3,9 @@ package eu.wohlben.qits.maintenance.peer;
 /**
  * Every address this service reads or writes.
  *
- * <p><b>Nine targets, one credential.</b> A target is an ADDRESS — a base url a path is appended
- * to; configured for eight of them, derived in code for {@link #NPM_MIRROR}. There used to be five
+ * <p><b>Ten targets, one credential.</b> A target is an ADDRESS — a base url a path is appended
+ * to; configured for nine of them, derived in code for {@link #NPM_MIRROR}. Two of the nine share
+ * one key ({@link #ARTIFACTS_SBOM} and {@link #ARTIFACTS_DOCS}, both qits-artifacts' own API). There used to be five
  * oidc clients, one per peer SERVICE, because a token used to be cut FOR one service's own audience;
  * the epic qits-540 dossier's 'Plan (as of 2026-09-13)', C4, replaced all five with one named client,
  * {@code qits}, addressed to the one platform audience every receiver now accepts.
@@ -55,6 +56,18 @@ public enum PeerTarget {
    * its whole path belongs to the caller. So the key is a bare host and the prefix is in the code.
    */
   ARTIFACTS_SBOM("qits.maintenance.targets.artifacts-url"),
+
+  /**
+   * qits-artifacts' docs store: {@code /artifacts/docs/docs/@changelog/<repository>}, the listing of
+   * every changelog a repository's releases published (epic qits-893).
+   *
+   * <p><b>The same key as {@link #ARTIFACTS_SBOM}, on purpose.</b> It is the same service and, like
+   * the SBOM route, the docs route is qits-artifacts' own API rather than a mount a deployment may
+   * move — so the key stays a bare host and the prefix is in {@link
+   * eu.wohlben.qits.maintenance.bump.changelog.ChangelogClient}. A second key would be a second
+   * place to point at the one qits-artifacts.
+   */
+  ARTIFACTS_DOCS("qits.maintenance.targets.artifacts-url"),
 
   /** qits-platform-mirror's Maven Central pull-through. */
   MAVEN_MIRROR("qits.maintenance.mirror.maven-url"),

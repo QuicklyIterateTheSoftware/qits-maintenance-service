@@ -5,6 +5,7 @@ import eu.wohlben.qits.maintenance.bump.BumpPayload;
 import eu.wohlben.qits.maintenance.bump.BumpService;
 import eu.wohlben.qits.maintenance.bump.CiClient;
 import eu.wohlben.qits.maintenance.bump.ReleaseRequestClient;
+import eu.wohlben.qits.maintenance.bump.changelog.ChangelogRanges;
 import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
 import eu.wohlben.qits.maintenance.dto.FailureDto;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto;
@@ -176,6 +177,9 @@ public class AutomationService {
 
   /** What a trigger for a repository no scan has read yet asks to read it. */
   @Inject ScanService scans;
+
+  /** Which changelogs a source-branch run's changes pull in, and the proof they exist (qits-893). */
+  @Inject ChangelogRanges changelogRanges;
 
   @Inject @Any Instance<ReleaseRequestAutomation> registered;
 
@@ -618,6 +622,22 @@ public class AutomationService {
       fail(row, String.join("; ", problems));
       return;
     }
+    // THE CHANGELOGS, as a group bump proves them (qits-893): a missing one FAILS the row with the
+    // sentence naming it, an unreadable docs store leaves it REQUESTED for the sweep — the same two
+    // answers a refused payload and a 503 get — and nothing is triggered by either.
+    ChangelogRanges.Result changelogs = changelogRanges.resolve(changes);
+    List<String> changelogProblems = new ArrayList<>(changelogs.problems());
+    changelogProblems.addAll(BumpPayload.changelogProblems(changelogs.ranges()));
+    if (!changelogProblems.isEmpty()) {
+      fail(row, String.join("; ", changelogProblems));
+      LOG.warnf("The automation %s was not sent: %s", row.id, changelogProblems);
+      return;
+    }
+    if (changelogs.transientFailure()) {
+      store.bumpFinished(
+          row.id, BumpStatus.REQUESTED, null, BumpService.CHANGELOGS_UNREADABLE, Instant.now());
+      return;
+    }
     Map<String, String> extra = new LinkedHashMap<>();
     extra.put("kind", row.automationKind);
     if (row.releaseRequestId != null) {
@@ -634,7 +654,8 @@ public class AutomationService {
             row.branch,
             baseRef,
             changes,
-            extra);
+            extra,
+            changelogs.ranges());
     dispatched(row, result);
   }
 

@@ -1,6 +1,8 @@
 package eu.wohlben.qits.maintenance.bump;
 
 import eu.wohlben.qits.maintenance.automation.AutomationService;
+import eu.wohlben.qits.maintenance.bump.changelog.ChangelogRange;
+import eu.wohlben.qits.maintenance.bump.changelog.ChangelogRanges;
 import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
 import eu.wohlben.qits.maintenance.entity.MtBranch;
 import eu.wohlben.qits.maintenance.entity.MtBump;
@@ -50,6 +52,12 @@ import org.jboss.logging.Logger;
  * maven step and the node/docker step each clone, commit and push — so a bump that moved the branch
  * by two commits is the ordinary case and a service that expected one would report every mixed
  * group as broken.
+ *
+ * <p><b>Every changelog a bump pulls in is proved published before the trigger</b> (epic qits-893).
+ * {@link ChangelogRanges} names, per internal change, the releases after the old pin up to the new
+ * one; they ride the payload as each change's {@code changelog}, and the step composes the commit
+ * message from them. A missing one FAILS the bump with the sentence naming it and nothing is sent;
+ * a docs store that cannot be read is a RETRY, like a 503 from the trigger.
  *
  * <p><b>The push is ff-only and never forced</b> — that rule lives in the pipeline, not here — so a
  * red run against a branch that MOVED is somebody's hand-written commit that this service refused
@@ -131,6 +139,9 @@ public class BumpService {
   @Inject BumpBase bases;
 
   @Inject WorkQueue queue;
+
+  /** Which changelogs each change pulls in, and the proof they exist (qits-893). */
+  @Inject ChangelogRanges changelogRanges;
 
   /** The engine every release-request automation runs on; AUTOMATION rows are its to read. */
   @Inject AutomationService automations;
@@ -247,6 +258,15 @@ public class BumpService {
       return;
     }
 
+    // THE CHANGELOGS, PROVED BEFORE ANYTHING IS SENT (qits-893). A missing one is a failed release
+    // somewhere upstream, and a bump commit written without it is exactly what the owner ruled out:
+    // the row FAILS with the sentence naming it, the same way a refused payload does. A docs store
+    // that could not be read says nothing about the changelogs, so that is a RETRY, as a 503 is.
+    Optional<Map<Change, ChangelogRange>> changelogs = changelogs(id, changes);
+    if (changelogs.isEmpty()) {
+      return;
+    }
+
     if (mode.ownsTheBranch()) {
       // The head BEFORE the run, which is what an unmoved branch is compared against afterwards.
       recordBranchHead(repository.get(), bump.groupName, branch);
@@ -262,7 +282,8 @@ public class BumpService {
             changes,
             // OMITTED, never sent empty, when the branch is continued: the step reads a missing
             // `replaceHead` as "continue", which is every bump before qits-1081.
-            base.rebuild() ? Map.of("replaceHead", base.replaceHead()) : Map.of());
+            base.rebuild() ? Map.of("replaceHead", base.replaceHead()) : Map.of(),
+            changelogs.get());
     switch (result.outcome()) {
       case ACCEPTED -> {
         store.bumpDispatched(id, result.eventId(), result.runIds());
@@ -277,6 +298,36 @@ public class BumpService {
       }
     }
   }
+
+  /**
+   * The changelog ranges of one bump's changes, or empty when the bump was finished instead.
+   *
+   * <p>Three endings, and only the first sends anything: every range resolved and valid; a problem
+   * — a changelog missing, a source repository unknown, a range that fails {@link
+   * BumpPayload#changelogProblems} — which FAILS the row with the problems joined as its message;
+   * or a docs store that could not be read, which leaves the row REQUESTED with its changes and the
+   * same event id, for the sweep to send again. Nothing is triggered by the last two.
+   */
+  private Optional<Map<Change, ChangelogRange>> changelogs(UUID id, List<Change> changes) {
+    ChangelogRanges.Result resolved = changelogRanges.resolve(changes);
+    List<String> problems = new ArrayList<>(resolved.problems());
+    problems.addAll(BumpPayload.changelogProblems(resolved.ranges()));
+    if (!problems.isEmpty()) {
+      store.bumpFinished(
+          id, BumpStatus.FAILED, null, String.join("; ", problems), Instant.now());
+      LOG.warnf("The bump %s was not sent: %s", id, problems);
+      return Optional.empty();
+    }
+    if (resolved.transientFailure()) {
+      store.bumpFinished(id, BumpStatus.REQUESTED, null, CHANGELOGS_UNREADABLE, Instant.now());
+      return Optional.empty();
+    }
+    return Optional.of(resolved.ranges());
+  }
+
+  /** The message a bump keeps while the docs store cannot be read; it is sent again. */
+  public static final String CHANGELOGS_UNREADABLE =
+      "the changelogs could not be read from qits-artifacts yet; the bump will be sent again";
 
   /**
    * How long a FAILED run is given for qits-ci's automatic retry of it to appear. qits-ci commits
