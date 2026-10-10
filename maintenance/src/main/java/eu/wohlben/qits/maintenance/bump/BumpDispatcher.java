@@ -742,7 +742,7 @@ public class BumpDispatcher {
             result.requestId(),
             candidate.repository(),
             main,
-            eu.wohlben.qits.maintenance.entity.MtReleaseRequest.UPSTREAM,
+            eu.wohlben.qits.maintenance.entity.MtReleaseRequest.MAIN_ONLY,
             candidate.changes(),
             Instant.now());
         listings.remove(repoId);
@@ -794,7 +794,7 @@ public class BumpDispatcher {
     }
     Optional<eu.wohlben.qits.maintenance.entity.MtReleaseRequest> newest =
         store.newestOpenedRequest(
-            row.name, eu.wohlben.qits.maintenance.entity.MtReleaseRequest.UPSTREAM);
+            row.name, eu.wohlben.qits.maintenance.entity.MtReleaseRequest.MAIN_ONLY);
     if (newest.isEmpty() || !sameChanges(storedChanges(newest.get().changes), pending)) {
       return Hold.FREE;
     }

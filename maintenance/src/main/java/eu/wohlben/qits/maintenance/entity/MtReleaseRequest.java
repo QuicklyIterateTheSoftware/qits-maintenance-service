@@ -16,11 +16,14 @@ import java.time.Instant;
 @Table(name = "mt_release_request")
 public class MtReleaseRequest extends PanacheEntityBase {
 
-  /** A group bump's release ask opened it. */
+  /** A group bump's release ask opened it ({@code maintenance/<group>}). Internal pins only. */
   public static final String GROUP_BUMP = "GROUP_BUMP";
 
-  /** The upstream hook opened it, main-only and LOWEST, for its pre-run to write the bump. */
-  public static final String UPSTREAM = "UPSTREAM";
+  /**
+   * The dispatcher's upstream path opened it (switch on): main-only and LOWEST, for its pre-run to
+   * write the bump. The ONLY origin in which {@code dependency-bump} plans EXTERNAL upgrades.
+   */
+  public static final String MAIN_ONLY = "MAIN_ONLY";
 
   @Id
   @Column(name = "request_id", length = 64)
@@ -33,7 +36,7 @@ public class MtReleaseRequest extends PanacheEntityBase {
   @Column(nullable = false)
   public boolean opened;
 
-  /** {@link #GROUP_BUMP} or {@link #UPSTREAM}; null on a request this service did not open. */
+  /** {@link #GROUP_BUMP} or {@link #MAIN_ONLY}; null on a request this service did not open. */
   @Column(length = 32)
   public String purpose;
 
@@ -41,7 +44,7 @@ public class MtReleaseRequest extends PanacheEntityBase {
   @Column(length = 255)
   public String branch;
 
-  /** The pending changes an UPSTREAM request was opened for, a JSON array. */
+  /** The pending changes a MAIN_ONLY request was opened for, a JSON array. */
   @Column(columnDefinition = "text")
   public String changes;
 

@@ -20,6 +20,7 @@ import eu.wohlben.qits.maintenance.api.Fixture;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
 import eu.wohlben.qits.maintenance.bump.BumpService;
 import eu.wohlben.qits.maintenance.bump.CiClient;
+import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto.AutomationDto;
 import eu.wohlben.qits.maintenance.entity.MtBump;
@@ -35,6 +36,8 @@ import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import eu.wohlben.qits.maintenance.scan.ScanService;
 import eu.wohlben.qits.maintenance.scan.ScanTrigger;
 import eu.wohlben.qits.maintenance.work.WorkQueue;
+import io.quarkus.arc.ClientProxy;
+import io.quarkus.test.junit.QuarkusMock;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import java.time.Duration;
@@ -78,6 +81,8 @@ class DependencyBumpAutomationTest {
   @Inject InventoryReset inventory;
 
   @Inject WorkQueue queue;
+
+  @Inject MaintenanceConfig config;
 
   @BeforeEach
   void scriptThePeers() {
@@ -216,18 +221,40 @@ class DependencyBumpAutomationTest {
     assertTrue(rows(FOLD_A, ScreenshotBaselinesAutomation.KIND).isEmpty());
   }
 
-  /** A request THIS service opened carries upgrades, and plans the external ones too. */
+  /**
+   * EXTERNAL upgrades are not live in R1: a group bump's request (a {@code maintenance/<group>}
+   * branch) gets internal pins only, and so does a MAIN-ONLY request while the upstream switch is
+   * off. Only a main-only request with the switch on plans the external one too.
+   */
   @Test
-  void aRequestMaintenanceOpenedPlansExternalUpgradesToo() {
+  void externalUpgradesArePlannedOnlyInAMainOnlyRequestWithTheSwitchOn() {
+    AutomationFixture.scriptManifests(peers, FOLD_A, STALE_POM, null);
+
     store.recordOpenedRequest(
         REQUEST, Fixture.REPOSITORY, "maintenance/dependencies", MtReleaseRequest.GROUP_BUMP, null,
         Instant.now());
-    AutomationFixture.scriptManifests(peers, FOLD_A, STALE_POM, null);
+    assertEquals(List.of(EVENTSTREAM), planned(), "a group bump's request: internal only");
 
-    AutomationDto bump =
-        AutomationFixture.entry(trigger(FOLD_A, null, null, ACCEPTS), DependencyBumpAutomation.KIND);
+    store.recordOpenedRequest(
+        REQUEST, Fixture.REPOSITORY, "main", MtReleaseRequest.MAIN_ONLY, null, Instant.now());
+    assertEquals(List.of(EVENTSTREAM), planned(), "main-only, switch off: internal only");
 
-    assertEquals(List.of(EVENTSTREAM, QUARKUS_BOM), names(BumpService.changes(row(bump))));
+    MaintenanceConfig real = ClientProxy.unwrap(config);
+    QuarkusMock.installMockForType(new UpstreamSwitch(real), MaintenanceConfig.class);
+    try {
+      assertEquals(
+          List.of(EVENTSTREAM, QUARKUS_BOM), planned(), "main-only, switch on: external too");
+    } finally {
+      QuarkusMock.installMockForType(real, MaintenanceConfig.class);
+    }
+  }
+
+  /** What the bump plans at fold A for the request, without opening anything. */
+  private List<String> planned() {
+    MtRepository repository = store.repository(Fixture.REPOSITORY).orElseThrow();
+    Plan plan = dependencyBump.plan(automations.subject(repository, REQUEST, FOLD_A, null, null));
+    assertEquals(Plan.Kind.RUN, plan.kind(), plan.reason());
+    return names(plan.runs().getFirst().changes());
   }
 
   /** {@code hold:} is the escape hatch: a held dependency is never planned. */

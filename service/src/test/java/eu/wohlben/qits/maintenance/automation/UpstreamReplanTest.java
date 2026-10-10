@@ -247,7 +247,7 @@ class UpstreamReplanTest {
     assertTrue(ask.contains("\"branch\":\"main\""), ask);
     assertTrue(ask.contains("\"priority\":\"LOWEST\""), ask);
     MtReleaseRequest opened =
-        store.newestOpenedRequest(Fixture.REPOSITORY, MtReleaseRequest.UPSTREAM).orElseThrow();
+        store.newestOpenedRequest(Fixture.REPOSITORY, MtReleaseRequest.MAIN_ONLY).orElseThrow();
     assertEquals(MAIN_REQUEST, opened.requestId);
     assertEquals("main", opened.branch);
     assertTrue(store.openedByMaintenance(MAIN_REQUEST));
@@ -266,7 +266,7 @@ class UpstreamReplanTest {
   @Test
   void aMainOnlyRequestWhosePreRunFindsNothingIsWithdrawn() {
     store.recordOpenedRequest(
-        MAIN_REQUEST, Fixture.REPOSITORY, "main", MtReleaseRequest.UPSTREAM, List.of(),
+        MAIN_REQUEST, Fixture.REPOSITORY, "main", MtReleaseRequest.MAIN_ONLY, List.of(),
         Instant.now());
     AutomationFixture.scriptManifests(peers, FOLD_A, CURRENT_POM, null);
     String withdraw = Fixture.RELEASE_REQUESTS_PATH + "/" + MAIN_REQUEST + "/withdraw";
@@ -296,11 +296,15 @@ class UpstreamReplanTest {
     assertTrue(screenshots.reason().contains("withdrawn"), screenshots.reason());
   }
 
-  /** A main-only request whose pre-run DOES find a bump is the request that carries it. */
+  /**
+   * A main-only request whose pre-run DOES find a bump is the request that carries it — the one
+   * origin, with the switch on, that plans external upgrades too.
+   */
   @Test
   void aMainOnlyRequestWithABumpToWriteIsKept() {
+    switchOn();
     store.recordOpenedRequest(
-        MAIN_REQUEST, Fixture.REPOSITORY, "main", MtReleaseRequest.UPSTREAM, List.of(),
+        MAIN_REQUEST, Fixture.REPOSITORY, "main", MtReleaseRequest.MAIN_ONLY, List.of(),
         Instant.now());
     Fixture.scriptForeignBranchAt(
         peers,
@@ -323,7 +327,7 @@ class UpstreamReplanTest {
             .stream()
             .map(eu.wohlben.qits.maintenance.pending.Change::name)
             .toList(),
-        "a request this service opened carries external upgrades too");
+        "a main-only request with the switch on carries external upgrades too");
     assertTrue(
         store.releaseRequest(MAIN_REQUEST).orElseThrow().withdrawnAt == null, "and is kept");
   }

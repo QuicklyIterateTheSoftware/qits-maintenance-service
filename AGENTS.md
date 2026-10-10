@@ -260,9 +260,10 @@ touched none of them. `committablePaths` stay pairwise disjoint across ALL kinds
 another's input" holds within a stage and from DERIVED to SOURCE (`AutomationRegistryTest`), and a
 RUN plan naming another applicable kind's path is refused FAILED at run time (`AutomationService.clash`).
 `dependency-bump` plans AT THE FOLD through `ManifestScanner.pinsAt` and the pending rule, minus
-`ignore:` and the new `hold:`, never a wrapper's gitlinks (estate-pins' own), INTERNAL pins only in a
-request a person opened and EXTERNAL too in one this service opened (`mt_release_request.opened`,
-V21). Its payload carries `changes` in the `MaintenanceBump` entry shape and `commitPaths`, the
+`ignore:` and the new `hold:`, never a wrapper's gitlinks (estate-pins' own), and INTERNAL pins only
+— EXTERNAL ones solely in a MAIN-ONLY request the dispatcher's upstream path opened
+(`mt_release_request.purpose = MAIN_ONLY`, V21) while the switch below is on; a group bump's request
+keeps externals a person's press. Its payload carries `changes` in the `MaintenanceBump` entry shape and `commitPaths`, the
 files they touch; every own-branch join is sent at `LOWEST`. WAITING and NOT_APPLICABLE reach the
 wire only when the trigger body `accepts` them; otherwise the answer is the pre-1133 one. The
 upstream hook (`automation/UpstreamReplan`) and the dispatcher's main-only LOWEST requests are

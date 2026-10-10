@@ -4,6 +4,7 @@ import eu.wohlben.qits.maintenance.bump.CiClient;
 import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
 import eu.wohlben.qits.maintenance.entity.MtLatest;
 import eu.wohlben.qits.maintenance.entity.MtPin;
+import eu.wohlben.qits.maintenance.entity.MtReleaseRequest;
 import eu.wohlben.qits.maintenance.githost.FileLookup;
 import eu.wohlben.qits.maintenance.manifest.GitmodulesParser;
 import eu.wohlben.qits.maintenance.manifest.GroupConfig;
@@ -50,11 +51,13 @@ import java.util.Set;
  *
  * <h2>Whose upgrades</h2>
  *
- * <p><b>In a request a person opened, only the platform's own releases are planned</b> — INTERNAL
- * pins, decided by the same name rule the scan stores ({@link MaintenanceConfig#kindOf(ParsedPin)}).
+ * <p><b>Only the platform's own releases are planned, with one exception</b> — INTERNAL pins,
+ * decided by the same name rule the scan stores ({@link MaintenanceConfig#kindOf(ParsedPin)}).
  * Somebody else's framework major in a person's request would be an opinion pushed into their
- * release. A request THIS SERVICE opened (a group bump's ask, or the upstream hook's main-only
- * request) exists to carry upgrades, and plans EXTERNAL ones too.
+ * release, and a group bump's request keeps the pre-1133 rule that external upgrades are a person's
+ * press. The exception is the MAIN-ONLY request the dispatcher opens on the upstream path ({@code
+ * mt_release_request.purpose = MAIN_ONLY}, switch on): it exists to carry upgrades and plans
+ * EXTERNAL ones too. With {@code qits.maintenance.pre-run.upstream.enabled} off, nothing does.
  *
  * <h2>Who owns which path</h2>
  *
@@ -202,7 +205,7 @@ public class DependencyBumpAutomation implements ReleaseRequestAutomation {
     }
 
     boolean wrapper = wrapper(subject);
-    boolean external = store.openedByMaintenance(subject.requestId());
+    boolean external = plansExternal(subject.requestId());
     Map<String, MtLatest> latest = PendingChanges.index(store.allLatest());
     List<Change> changes = new ArrayList<>();
     List<String> held = new ArrayList<>();
@@ -254,6 +257,22 @@ public class DependencyBumpAutomation implements ReleaseRequestAutomation {
       }
     }
     return List.copyOf(paths);
+  }
+
+  /**
+   * Whether this request may carry EXTERNAL upgrades: only a MAIN-ONLY request the dispatcher's
+   * upstream path opened, and only while {@code qits.maintenance.pre-run.upstream.enabled} is on.
+   * A person's request and a group bump's ({@code maintenance/<group>}) get INTERNAL pins only —
+   * external upgrades stay a person's press on the group door, as they were before qits-1133.
+   */
+  boolean plansExternal(String requestId) {
+    if (!config.preRunUpstreamEnabled()) {
+      return false;
+    }
+    return store
+        .releaseRequest(requestId)
+        .filter(memo -> memo.opened && MtReleaseRequest.MAIN_ONLY.equals(memo.purpose))
+        .isPresent();
   }
 
   /** A pin read at the fold, in the shape the pending rule judges a stored one in. Never persisted. */

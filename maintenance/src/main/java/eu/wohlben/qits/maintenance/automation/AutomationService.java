@@ -1190,7 +1190,7 @@ public class AutomationService {
     Optional<MtReleaseRequest> memo = store.releaseRequest(requestId);
     if (memo.isEmpty()
         || !memo.get().opened
-        || !MtReleaseRequest.UPSTREAM.equals(memo.get().purpose)) {
+        || !MtReleaseRequest.MAIN_ONLY.equals(memo.get().purpose)) {
       return false;
     }
     if (memo.get().withdrawnAt != null) {
