@@ -229,8 +229,20 @@ class ScmEventListenerTest {
     }
   }
 
+
+  /** The upstream hook, recording what it was told instead of queueing a re-plan (qits-1133). */
+  static final class RecordingUpstream extends eu.wohlben.qits.maintenance.automation.UpstreamReplan {
+    final List<String> moved = new java.util.ArrayList<>();
+
+    @Override
+    public void latestMoved(eu.wohlben.qits.maintenance.model.Ecosystem ecosystem, String name) {
+      moved.add(ecosystem.wireName() + ":" + name);
+    }
+  }
+
   private ScmEventListener listener;
   private RecordingStore store;
+  private RecordingUpstream upstream;
   private RecordingScans scans;
   private RecordingGitHost gitHost;
   private RecordingLedger ledger;
@@ -246,6 +258,8 @@ class ScmEventListenerTest {
     listener.scans = scans;
     listener.gitHost = gitHost;
     listener.ledger = ledger;
+    upstream = new RecordingUpstream();
+    listener.upstream = upstream;
     store.repository(REPOSITORY, MAIN, GROUP, "external");
   }
 
@@ -398,6 +412,8 @@ class ScmEventListenerTest {
     MtLatest row = store.latestRow(Ecosystem.GITLINK, FRONTEND);
     assertEquals("2026.902.1", row.latest);
     assertEquals(RELEASE_SHA, GitlinkSha.read(row.sourceUrl).orElseThrow());
+    assertEquals(
+        List.of("gitlink:" + FRONTEND), upstream.moved, "the hook hears the one that moved");
   }
 
   /**

@@ -17,5 +17,12 @@ public enum BumpTrigger {
    * /release-requests/{id}/automations} and an automation opened this row for it. Neither the clock
    * nor a person's press — a re-run through {@code …/automations/{kind}/runs} is {@link #MANUAL}.
    */
-  FOLD
+  FOLD,
+
+  /**
+   * An UPSTREAM release (qits-1133): {@code mt_latest} moved for a dependency an open release
+   * request's repository pins, and the {@code dependency-bump} automation was re-planned on that
+   * request's current fold. Behind {@code qits.maintenance.pre-run.upstream.enabled}.
+   */
+  UPSTREAM
 }

@@ -59,6 +59,13 @@ import org.yaml.snakeyaml.constructor.SafeConstructor;
  * wrapper is the answer. The mechanism is general — any of the four ecosystems may be named, by any
  * repository — but that is the case it was built for.
  *
+ * <p><b>And {@code hold:} (qits-1133) takes one DEPENDENCY off the bumps without taking it off the
+ * inventory.</b> {@code ignore} says a whole ecosystem is not a pin at all; {@code hold} says a pin is
+ * real, is read, is shown and may be behind — and is not to be moved. It is the escape hatch for a
+ * breaking upstream: the {@code dependency-bump} automation plans every other pin at the fold and
+ * leaves a held one where it is. Each entry is a dependency name in its own ecosystem's spelling,
+ * with the same globs a group's {@code deps} take ({@code @angular/*}).
+ *
  * <p><b>An unknown ecosystem name is invalid, exactly like a bad group.</b> This file is this
  * service's OWN configuration surface, unlike {@code .gitmodules}, so strictness is right here: a
  * typo silently ignored would read as a working opt-out and bump the very ecosystem the author
@@ -110,10 +117,29 @@ public final class GroupConfig {
    * @param groups the groups in declaration order
    * @param source whether they came from the file or from the fallback
    * @param ignored the ecosystems this repository is not scanned for at all — empty by default
+   * @param held the dependencies no bump moves, as names or globs — empty by default
    * @param error the sentence for the repository row, or null
    */
   public record Parsed(
-      List<Group> groups, GroupSource source, Set<Ecosystem> ignored, String error) {
+      List<Group> groups,
+      GroupSource source,
+      Set<Ecosystem> ignored,
+      List<String> held,
+      String error) {
+
+    public Parsed {
+      held = held == null ? List.of() : List.copyOf(held);
+    }
+
+    /** The shape before {@code hold:} existed: nothing held. */
+    public Parsed(List<Group> groups, GroupSource source, Set<Ecosystem> ignored, String error) {
+      this(groups, source, ignored, List.of(), error);
+    }
+
+    /** Whether no bump may move this dependency. */
+    public boolean holds(String dependency) {
+      return dependency != null && Globs.matchesAny(held, dependency);
+    }
 
     public boolean ok() {
       return error == null;
@@ -162,7 +188,7 @@ public final class GroupConfig {
       return fallback();
     }
     if (!(document instanceof Map<?, ?> root)) {
-      return invalid(PATH + " must be a mapping with a `groups` or `ignore` key");
+      return invalid(PATH + " must be a mapping with a `groups`, `ignore` or `hold` key");
     }
     Set<Ecosystem> ignored = EnumSet.noneOf(Ecosystem.class);
     Object rawIgnore = root.get("ignore");
@@ -184,11 +210,26 @@ public final class GroupConfig {
         ignored.add(ecosystem.get());
       }
     }
+    List<String> held = new ArrayList<>();
+    Object rawHold = root.get("hold");
+    if (rawHold != null) {
+      if (!(rawHold instanceof List<?> names)) {
+        return invalid("`hold` must be a list of dependency names");
+      }
+      for (Object element : names) {
+        if (!(element instanceof String dependency) || dependency.isBlank()) {
+          // A HOLD THAT DOES NOT PARSE IS NOT A HOLD. Skipping it would bump the very dependency
+          // somebody wrote down to protect, so the whole file is refused, as a bad `ignore` is.
+          return invalid("every entry of `hold` must be a non-empty dependency name");
+        }
+        held.add(dependency.trim());
+      }
+    }
     Object rawGroups = root.get("groups");
     if (rawGroups == null) {
       // A file that only says `ignore` did not ask for a grouping, so its source stays DEFAULT:
       // the two questions are separate and the page should not claim it configured branches.
-      return defaults(ignored);
+      return defaults(ignored, held);
     }
     if (!(rawGroups instanceof List<?> list)) {
       return invalid("`groups` must be a list");
@@ -221,7 +262,7 @@ public final class GroupConfig {
       groups.add(Group.glob(name, patterns));
     }
     if (groups.isEmpty()) {
-      return defaults(ignored);
+      return defaults(ignored, held);
     }
     // EVERY PIN BELONGS SOMEWHERE, AND THE TAIL IS THE SPLIT. The configured groups claim what they
     // claim; whatever they do not claim falls to the same two kind groups an unconfigured
@@ -235,12 +276,16 @@ public final class GroupConfig {
         groups.add(tail);
       }
     }
-    return new Parsed(List.copyOf(groups), GroupSource.CONFIG, Set.copyOf(ignored), null);
+    return new Parsed(
+        List.copyOf(groups), GroupSource.CONFIG, Set.copyOf(ignored), List.copyOf(held), null);
   }
 
-  /** The default grouping, carrying whatever the file's {@code ignore} took off the repository. */
-  private static Parsed defaults(Set<Ecosystem> ignored) {
-    return new Parsed(kindTail(), GroupSource.DEFAULT, Set.copyOf(ignored), null);
+  /**
+   * The default grouping, carrying whatever the file's {@code ignore} took off the repository and
+   * whatever its {@code hold} kept where it is.
+   */
+  private static Parsed defaults(Set<Ecosystem> ignored, List<String> held) {
+    return new Parsed(kindTail(), GroupSource.DEFAULT, Set.copyOf(ignored), List.copyOf(held), null);
   }
 
   /** The four spellings {@code ignore} accepts, for the sentence a broken file is told. */

@@ -52,6 +52,9 @@ public class ReleaseRequestAutomationController {
    *     previous fold or the diff could not be read. Null never carries an outcome over
    * @param sourceBranches the request's named branches; main and the automations' own are ignored
    * @param workItem the work item a commit subject names, or null
+   * @param accepts the answer words the caller understands beyond the old ones (qits-1133): {@code
+   *     WAITING} and {@code NOT_APPLICABLE}. Absent, a waiting kind is answered REQUESTED and a kind
+   *     that does not apply is left out, exactly as before
    */
   public record TriggerRequest(
       String repository,
@@ -59,7 +62,8 @@ public class ReleaseRequestAutomationController {
       String previousFoldSha,
       List<String> changedSincePrevious,
       List<String> sourceBranches,
-      String workItem) {}
+      String workItem,
+      List<String> accepts) {}
 
   /**
    * A re-run's body. Both optional.
@@ -77,7 +81,9 @@ public class ReleaseRequestAutomationController {
    *
    * <p>A kind that does not apply is not listed; a repository no kind applies to answers an empty
    * list. A kind that has to run answers REQUESTED, and its run is dispatched behind the scenes;
-   * follow it with the read below.
+   * follow it with the read below. A DERIVED kind waits for every SOURCE kind to be FRESH at the
+   * fold (qits-1133). With {@code accepts} naming them, a waiting kind answers WAITING and a kind
+   * that does not apply is listed NOT_APPLICABLE with its {@code reason}.
    *
    * <p>A repository no scan has read yet — a new one's first request — is still a 404, but it queues
    * a scan of that repository (one at a time), so the next thirty-second ask finds it.
@@ -104,7 +110,8 @@ public class ReleaseRequestAutomationController {
             request.previousFoldSha(),
             request.changedSincePrevious(),
             request.sourceBranches(),
-            request.workItem()));
+            request.workItem(),
+            request.accepts()));
   }
 
   /**

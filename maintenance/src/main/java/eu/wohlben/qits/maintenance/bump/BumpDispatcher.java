@@ -286,6 +286,11 @@ public class BumpDispatcher {
 
   private final Map<String, Seen> releaseStates = new java.util.concurrent.ConcurrentHashMap<>();
 
+  /** A repository's open release requests, as last read — cached exactly as {@link Seen} is. */
+  private record SeenListing(ReleaseRequestClient.Listing listing, Instant at) {}
+
+  private final Map<String, SeenListing> listings = new java.util.concurrent.ConcurrentHashMap<>();
+
   /**
    * Opens the dispatch window by hand — {@code POST /bumps/window}, and the ungated cron.
    *
@@ -303,6 +308,7 @@ public class BumpDispatcher {
       refused.clear();
     }
     releaseStates.clear();
+    listings.clear();
     store.openBumpWindow(now, closes);
     LOG.infof(
         "The bump dispatch window is open until %s (%s); bumps go from the bottom of the chain, as"
@@ -687,6 +693,9 @@ public class BumpDispatcher {
               + " %s), and the next tick asks again.",
           owed, candidate.repository(), pick.blockedBy());
     }
+    if (config.preRunUpstreamEnabled()) {
+      return openMainOnly(candidate, stillOwed);
+    }
     try {
       UUID id = bumps.request(candidate.repository(), candidate.group(), BumpTrigger.SCHEDULED);
       LOG.infof(
@@ -703,6 +712,137 @@ public class BumpDispatcher {
           candidate.repository(), candidate.group(), e.getMessage(), config.bumpWindow());
       return Optional.empty();
     }
+  }
+
+  /**
+   * <b>The upstream path's dispatch</b> (qits-1133, behind {@code
+   * qits.maintenance.pre-run.upstream.enabled}): where a {@code maintenance/<group>} branch would have
+   * been cut, a MAIN-ONLY {@code LOWEST} release request is opened instead, and its pre-run's
+   * {@code dependency-bump} writes the bump at the fold — one commit, one build. Remembered as this
+   * service's, with the pending set it was opened for: the automation plans external upgrades in it,
+   * withdraws it when the pre-run finds nothing, and {@link #upstreamHold} holds the repository
+   * while it is on its way. The answer is the request's id, read as a UUID.
+   */
+  private Optional<UUID> openMainOnly(BumpOrder.Candidate candidate, int stillOwed) {
+    Optional<MtRepository> row = store.repository(candidate.repository());
+    String repoId = row.map(repository -> repository.catalogId).orElse(null);
+    if (row.isEmpty() || repoId == null || repoId.isBlank()) {
+      refuse(candidate, "it has no catalog id to address qits-projects with");
+      return Optional.empty();
+    }
+    String main = BumpBase.mainBranch(row.get());
+    ReleaseRequestClient.RequestResult result =
+        releases.requestMainOnly(
+            repoId,
+            main,
+            ReleaseRequestClient.summary(candidate.group(), candidate.changes().size()));
+    switch (result.outcome()) {
+      case REQUESTED -> {
+        store.recordOpenedRequest(
+            result.requestId(),
+            candidate.repository(),
+            main,
+            eu.wohlben.qits.maintenance.entity.MtReleaseRequest.MAIN_ONLY,
+            candidate.changes(),
+            Instant.now());
+        listings.remove(repoId);
+        LOG.infof(
+            "Opened the main-only release request %s of %s for its pre-run to bump %d"
+                + " dependencies; %d repositor(ies) are still owed one.",
+            result.requestId(), candidate.repository(), candidate.changes().size(), stillOwed);
+        try {
+          return Optional.of(UUID.fromString(result.requestId()));
+        } catch (IllegalArgumentException e) {
+          return Optional.empty();
+        }
+      }
+      case RETRY -> {
+        LOG.warnf("The main-only release request of %s was not answered: %s; the next tick asks"
+            + " again", candidate.repository(), result.message());
+        return Optional.empty();
+      }
+      default -> {
+        refuse(candidate, result.message());
+        return Optional.empty();
+      }
+    }
+  }
+
+  private void refuse(BumpOrder.Candidate candidate, String why) {
+    synchronized (refused) {
+      refused.put(candidate.repository(), Instant.now());
+    }
+    LOG.warnf(
+        "Could not open the main-only release request of %s: %s; it is not asked for again for %s.",
+        candidate.repository(), why, config.bumpWindow());
+  }
+
+  /**
+   * <b>The upstream path's hold</b> (qits-1133): a repository owed a bump is not sent while it has
+   * ANY open release request — the upstream hook re-plans that request's bump instead — nor while the
+   * main-only request this service last opened for the same pending set is on its way, shipped, or
+   * was withdrawn because its pre-run found nothing to write: the same set would only find nothing
+   * again. A person's withdrawal frees it; an unreadable answer holds, as every read here does.
+   */
+  private Hold upstreamHold(MtRepository row, List<Change> pending) {
+    if (row.catalogId == null || row.catalogId.isBlank()) {
+      return Hold.FREE;
+    }
+    ReleaseRequestClient.Listing listing = openRequests(row.catalogId);
+    if (!listing.readable() || !listing.requests().isEmpty()) {
+      return Hold.HELD;
+    }
+    Optional<eu.wohlben.qits.maintenance.entity.MtReleaseRequest> newest =
+        store.newestOpenedRequest(
+            row.name, eu.wohlben.qits.maintenance.entity.MtReleaseRequest.MAIN_ONLY);
+    if (newest.isEmpty() || !sameChanges(storedChanges(newest.get().changes), pending)) {
+      return Hold.FREE;
+    }
+    if (newest.get().withdrawnAt != null) {
+      return Hold.HELD;
+    }
+    String requestId = newest.get().requestId;
+    Instant now = Instant.now();
+    Seen seen = releaseStates.get(requestId);
+    ReleaseRequestClient.ReleaseState state;
+    if (seen != null && seen.at().plus(config.bumpReleaseStateTtl()).isAfter(now)) {
+      state = seen.state();
+    } else {
+      state = releases.state(row.catalogId, requestId);
+      releaseStates.put(requestId, new Seen(state, now));
+    }
+    return state.withdrawn() ? Hold.FREE : Hold.HELD;
+  }
+
+  private ReleaseRequestClient.Listing openRequests(String repoId) {
+    Instant now = Instant.now();
+    SeenListing seen = listings.get(repoId);
+    if (seen != null && seen.at().plus(config.bumpReleaseStateTtl()).isAfter(now)) {
+      return seen.listing();
+    }
+    ReleaseRequestClient.Listing listing = releases.openRequests(repoId);
+    listings.put(repoId, new SeenListing(listing, now));
+    return listing;
+  }
+
+  private static List<Change> storedChanges(String json) {
+    List<Change> changes = new ArrayList<>();
+    for (Map<String, Object> entry : MaintenanceStore.readObjects(json)) {
+      changes.add(
+          new Change(
+              text(entry, "ecosystem"),
+              text(entry, "manifestPath"),
+              text(entry, "name"),
+              text(entry, "from"),
+              text(entry, "to"),
+              text(entry, "location")));
+    }
+    return changes;
+  }
+
+  private static String text(Map<String, Object> entry, String key) {
+    Object value = entry.get(key);
+    return value == null ? null : value.toString();
   }
 
   /** Whether this repository's refusal is still standing, forgiving the ones that have aged out. */
@@ -879,6 +1019,9 @@ public class BumpDispatcher {
         continue;
       }
       Hold hold = hold(row, group, changes);
+      if (config.preRunUpstreamEnabled() && hold == Hold.FREE) {
+        hold = upstreamHold(row, changes);
+      }
       if (hold.stalled() != null) {
         stalled.add(hold.stalled());
         continue;

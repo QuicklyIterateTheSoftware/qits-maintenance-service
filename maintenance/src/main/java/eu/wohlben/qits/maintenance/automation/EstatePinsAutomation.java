@@ -147,6 +147,12 @@ public class EstatePinsAutomation implements ReleaseRequestAutomation {
     return Target.SOURCE_BRANCHES;
   }
 
+  /** A gitlink is a build input: what the wrapper's members are built at. */
+  @Override
+  public Stage stage() {
+    return Stage.SOURCE;
+  }
+
   /** A port of {@code EstatePinRefresh.attempt}: see the class javadoc. */
   @Override
   public Plan plan(AutomationSubject subject) {

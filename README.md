@@ -171,7 +171,19 @@ stored disappear on the first scan after the line is committed. **An unknown eco
 `CONFIG_ERROR`**, like any other mistake in this file: a typo quietly dropped would read as a working
 opt-out while the ecosystem the author meant to protect went on being bumped nightly.
 
-The case it was built for is the **qits-qits wrapper**, whose forty-seven submodule gitlinks are
+And `hold:` (qits-1133), which keeps one **dependency** where it is without taking it off the
+inventory:
+
+```yaml
+hold: ["@angular/*", "io.quarkus.platform:quarkus-bom"]   # names, or the globs `deps` take
+```
+
+A held pin is still read, stored, shown and reported behind; the `dependency-bump` automation simply
+never plans it. It is the escape hatch for a breaking upstream. A `hold` entry that is not a
+non-empty string is `CONFIG_ERROR`, for `ignore`'s reason: a hold quietly skipped is the very
+dependency somebody wrote down to protect, bumped.
+
+The case `ignore` was built for is the **qits-qits wrapper**, whose forty-seven submodule gitlinks are
 deliberately lagging bank markers rather than version pins — its own README says they exist so
 `git submodule update --init` works on a fresh clone while the submodules follow their branches, and
 every entry carries `ignore = all` for the same reason. Without the opt-out this service would read
@@ -725,10 +737,15 @@ GET  /bumps/{id}                                  → {id, repository, group, br
 POST /release-requests/{id}/automations           → {requestId, foldSha,
      {repository, foldSha, previousFoldSha?,            automations:[{kind, label, state, detail,
       changedSincePrevious?:[path]|null,                             bumpId, runIds, branch,
-      sourceBranches:[…], workItem?}                                 resultSha, updatedAt}]}
+      sourceBranches:[…], workItem?,                                 resultSha, updatedAt,
+      accepts?:["WAITING","NOT_APPLICABLE"]}                         failure, reason}]}
                                                     the every-fold trigger, idempotent per fold;
                                                     state FRESH|REQUESTED|RUNNING|COMMITTED|
-                                                    FAILED|UNKNOWN|SUPERSEDED (qits-978)
+                                                    FAILED|UNKNOWN|SUPERSEDED (qits-978), and
+                                                    WAITING|NOT_APPLICABLE with a reason — only
+                                                    when `accepts` names them (qits-1133); without
+                                                    it a waiting kind reads REQUESTED and an
+                                                    inapplicable one is not listed
                                                                 400 not a uuid/sha  404 unknown repo
 GET  /release-requests/{id}/automations[?foldSha=] → the same answer, newest fold when unnamed
 POST /release-requests/{id}/automations/{kind}/runs
@@ -945,6 +962,7 @@ environment without a rebuild.
 | `qits.maintenance.bump.dispatch.quiet-hours` | *(empty)* | hours a branch is unwelcome in: `HH:MM-HH:MM[,…]` in `time-zone`, end exclusive, midnight-wrapping allowed. Suppresses the debt-driven opening only; `POST /bumps/window` overrides it |
 | `qits.maintenance.bump.internal.window` | `6h` | how long one window lasts before it is closed, logged and re-opened if work is still owed. It closes early the moment nothing is owed, and it is also how long a refusal stands |
 | `qits.maintenance.environment` | `dev` | which environment's CI is recorded on a bump row |
+| `qits.maintenance.pre-run.upstream.enabled` | `false` | **the upstream half of the pre-run (qits-1133).** On: a moved `mt_latest` re-plans the `dependency-bump` of every open, not-READY request of its consumers (three restarts without a QA verdict and a request is left alone until it has one), and the dispatcher opens a main-only `LOWEST` request instead of a `maintenance/<group>` branch, withdrawn again when its pre-run finds nothing. Only such a main-only request has the `dependency-bump` automation plan EXTERNAL upgrades; every other request, and every request while the switch is off, gets INTERNAL pins only. Off: group dispatch exactly as before |
 
 **The registry keys carry a PATH as well as a host**, because a registry is mounted under a prefix
 and the prefix names the repository row it serves. Moving a row is then a deployment's decision.
