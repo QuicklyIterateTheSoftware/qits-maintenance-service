@@ -193,12 +193,8 @@ public class StoryProfile extends PackagedSurfaceIT.PackagedUnderTarget {
     // arrows into whichever story happened to be draining, which is the same reason the scans and
     // the sbom sweep are off. No story drives a dispatch; the gate has its own tests.
     overrides.put("qits.maintenance.bump.internal.auto", "false");
-    // AND THE CUTOVER SWITCH IS OFF (qits-1133 R2). It ships ON, which retires group bumps: the
-    // group door answers 410 and nothing writes a maintenance/<group> branch. The bump stories and
-    // the refusal stories narrate that door, which an emergency still restores with the switch off,
-    // so the catalogue keeps telling it until R5 removes the door and these stories with it. Off,
-    // the legacy sweep riding the hourly timer is a no-op too, and draws no arrow mid-story.
-    overrides.put("qits.maintenance.pre-run.upstream.enabled", "false");
+    // The legacy group-branch sweep (qits-1133) rides the automation-branch sweep's timer — the
+    // first pass five minutes after boot — and is no more of a concern here than that sweep is.
 
     overrides.put("qits.auth.machine.required", "true");
     // No audience override needed beside it: qits-auth-core's MachineAuth now ships its own

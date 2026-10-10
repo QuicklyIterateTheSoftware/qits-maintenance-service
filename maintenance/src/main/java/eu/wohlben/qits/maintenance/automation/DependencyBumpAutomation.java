@@ -65,8 +65,8 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
  * Somebody else's framework major in a person's request would be an opinion pushed into their
  * release, and a group bump's request keeps the pre-1133 rule that external upgrades are a person's
  * press. The exception is the MAIN-ONLY request the dispatcher opens on the upstream path ({@code
- * mt_release_request.purpose = MAIN_ONLY}, switch on): it exists to carry upgrades and plans
- * EXTERNAL ones too. With {@code qits.maintenance.pre-run.upstream.enabled} off, nothing does.
+ * mt_release_request.purpose = MAIN_ONLY}): it exists to carry upgrades and plans EXTERNAL ones
+ * too.
  *
  * <h2>Who owns which path</h2>
  *
@@ -83,8 +83,9 @@ public class DependencyBumpAutomation implements ReleaseRequestAutomation {
 
   /**
    * The switch, ON since the cutover (MT-5, qits-1133 R2), when group bumps were retired and this
-   * kind became the only writer of a pin. Off — an emergency, together with the upstream switch —
-   * the kind is not listed, planned or started.
+   * kind became the only writer of a pin — and since R5, which removed the upstream switch, the one
+   * kill switch left for the whole bump path. Off — an emergency — the kind is not listed, planned
+   * or started, the upstream hook re-plans nothing and the dispatcher opens no main-only request.
    */
   public static final String SWITCH = "qits.maintenance.automations.dependency-bump.enabled";
 
@@ -285,14 +286,10 @@ public class DependencyBumpAutomation implements ReleaseRequestAutomation {
 
   /**
    * Whether this request may carry EXTERNAL upgrades: only a MAIN-ONLY request the dispatcher's
-   * upstream path opened, and only while {@code qits.maintenance.pre-run.upstream.enabled} is on.
-   * A person's request and a group bump's ({@code maintenance/<group>}) get INTERNAL pins only —
-   * external upgrades stay a person's press on the group door, as they were before qits-1133.
+   * upstream path opened. A person's request and a legacy group bump's ({@code maintenance/<group>})
+   * get INTERNAL pins only.
    */
   boolean plansExternal(String requestId) {
-    if (!config.preRunUpstreamEnabled()) {
-      return false;
-    }
     return store
         .releaseRequest(requestId)
         .filter(memo -> memo.opened && MtReleaseRequest.MAIN_ONLY.equals(memo.purpose))

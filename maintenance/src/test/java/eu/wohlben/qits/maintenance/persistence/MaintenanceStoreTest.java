@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.maintenance.entity.MtBump;
@@ -12,7 +11,6 @@ import eu.wohlben.qits.maintenance.entity.MtGroup;
 import eu.wohlben.qits.maintenance.entity.MtPin;
 import eu.wohlben.qits.maintenance.entity.MtRepository;
 import eu.wohlben.qits.maintenance.entity.MtScan;
-import eu.wohlben.qits.maintenance.error.BumpAlreadyActiveException;
 import eu.wohlben.qits.maintenance.latest.LatestLookup;
 import eu.wohlben.qits.maintenance.manifest.GroupConfig;
 import eu.wohlben.qits.maintenance.manifest.ParsedPin;
@@ -694,65 +692,37 @@ class MaintenanceStoreTest {
     assertEquals("all good", store.scan(done).orElseThrow().message);
   }
 
-  @Test
-  void aSecondBumpOfOneBranchIsRefusedInsideTheOpeningTransaction() {
-    String repository = "bump-" + UUID.randomUUID();
-    UUID first =
-        store.openBump(
+  /** A row the store opens for a release-request automation, REQUESTED, carrying these changes. */
+  private UUID automationRow(String repository, List<Change> changes) {
+    return store.openAutomation(
+        new MaintenanceStore.AutomationOpening(
             repository,
-            "dependencies",
-            "maintenance/dependencies",
+            "estate-pins",
+            null,
+            null,
+            null,
+            null,
+            "workspace/ws-" + UUID.randomUUID(),
+            null,
             "dev",
             BumpTrigger.MANUAL,
-            List.of(new Change("maven", "pom.xml", "g:a", "1.0.0", "1.1.0", "dependency:g:a")),
-            Instant.now());
-    BumpAlreadyActiveException refused =
-        assertThrows(
-            BumpAlreadyActiveException.class,
-            () ->
-                store.openBump(
-                    repository,
-                    "dependencies",
-                    "maintenance/dependencies",
-                    "dev",
-                    BumpTrigger.SCHEDULED,
-                    List.of(),
-                    Instant.now()));
-    assertEquals(first, refused.activeBumpId());
-    assertEquals(409, refused.statusCode());
-  }
-
-  @Test
-  void aFinishedBumpReleasesTheBranchForTheNextOne() {
-    String repository = "bump-again-" + UUID.randomUUID();
-    UUID first =
-        store.openBump(
-            repository, "dependencies", "maintenance/dependencies", "dev", BumpTrigger.MANUAL, List.of(), Instant.now());
-    store.bumpFinished(first, BumpStatus.SUCCEEDED, "SUCCESS", "done", Instant.now());
-    UUID second =
-        store.openBump(
-            repository, "dependencies", "maintenance/dependencies", "dev", BumpTrigger.MANUAL, List.of(), Instant.now());
-    assertTrue(store.activeBump(repository, "dependencies").isPresent());
-    MtBump row = store.bump(first).orElseThrow();
-    assertNotNull(row.finishedAt);
-    assertEquals("SUCCESS", row.ciRunStatus);
-    assertNotNull(second);
+            changes,
+            java.util.Map.of(),
+            BumpStatus.REQUESTED,
+            null),
+        true,
+        Instant.now());
   }
 
   @Test
   void theChangesAreStoredAsSentAndReadBackWhole() {
     String repository = "changes-" + UUID.randomUUID();
     UUID id =
-        store.openBump(
+        automationRow(
             repository,
-            "dependencies",
-            "maintenance/dependencies",
-            "dev",
-            BumpTrigger.MANUAL,
             List.of(
                 new Change(
-                    "docker", "Dockerfile", "qits/build-images/maven-base", "1", "2", "line:3")),
-            Instant.now());
+                    "docker", "Dockerfile", "qits/build-images/maven-base", "1", "2", "line:3")));
     var changes = MaintenanceStore.readObjects(store.bump(id).orElseThrow().changes);
     assertEquals(1, changes.size());
     assertEquals("line:3", changes.get(0).get("location"));
@@ -762,9 +732,7 @@ class MaintenanceStoreTest {
   @Test
   void aBumpThatWasDispatchedCarriesItsEventAndItsRuns() {
     String repository = "dispatch-" + UUID.randomUUID();
-    UUID id =
-        store.openBump(
-            repository, "dependencies", "maintenance/dependencies", "dev", BumpTrigger.MANUAL, List.of(), Instant.now());
+    UUID id = automationRow(repository, List.of());
     store.bumpDispatched(id, id.toString(), List.of("run-1", "run-2"));
     MtBump row = store.bump(id).orElseThrow();
     assertEquals(BumpStatus.RUNNING.name(), row.status);
@@ -773,87 +741,57 @@ class MaintenanceStoreTest {
   }
 
   /**
-   * <b>WHEN THE CLOCK LAST REACHED A REPOSITORY — the newest of its scheduled bumps, and nothing
-   * else.</b> This is the column the dispatcher breaks its ties by, so all three properties are one
-   * fact each: newest per repository (an older night must not make a repository look starved), one
-   * entry per repository rather than one per bump, and SCHEDULED only.
-   *
-   * <p>Every bump is finished before the next is opened, because a repository may hold only one
-   * active bump of a group at a time — see {@link #aSecondBumpOfOneBranchIsRefusedInsideTheOpeningTransaction()}.
+   * <b>WHEN THE DISPATCHER LAST REACHED A REPOSITORY — the newest MAIN-ONLY request it opened
+   * there, and nothing else.</b> This is the column the dispatcher breaks its ties by: newest per
+   * repository (an older one must not make a repository look starved), one entry per repository,
+   * and MAIN_ONLY only.
    */
   @Test
-  void theLastScheduledBumpIsTheNewestOnePerRepository() {
-    String repository = "scheduled-" + UUID.randomUUID();
+  void theLastDispatchIsTheNewestMainOnlyRequestPerRepository() {
+    String repository = "dispatched-" + UUID.randomUUID();
     Instant older = Instant.parse("2026-09-01T02:00:00Z");
     Instant newer = Instant.parse("2026-09-13T19:53:00Z");
-    scheduledBump(repository, older);
-    scheduledBump(repository, newer);
+    mainOnly(repository, older);
+    mainOnly(repository, newer);
 
-    assertEquals(newer, store.lastScheduledBumpAt().get(repository));
+    assertEquals(newer, store.lastDispatchedAt().get(repository));
   }
 
   /**
-   * <b>A PERSON'S PRESS IS NOT THE CLOCK REACHING A REPOSITORY.</b> A targeted bump is a caller's
-   * press on a branch that caller owns and a MANUAL group bump is somebody pressing the button;
-   * counting either would let one favour push a repository to the back of the queue the clock
-   * drains, which is the starvation the tiebreak exists to end.
+   * <b>A REQUEST THE DISPATCHER DID NOT OPEN IS NOT IT REACHING A REPOSITORY.</b> A legacy group
+   * bump's release ask is history and counts for nothing; a person's request is never remembered as
+   * opened here at all.
    */
   @Test
-  void aBumpSomebodyAskedForByHandIsNotWhatTheClockLastDid() {
-    String repository = "by-hand-" + UUID.randomUUID();
-    Instant scheduled = Instant.parse("2026-09-01T02:00:00Z");
-    scheduledBump(repository, scheduled);
-    UUID pressed =
-        store.openBump(
-            repository,
-            "dependencies",
-            "maintenance/dependencies",
-            "dev",
-            BumpTrigger.MANUAL,
-            List.of(),
-            Instant.parse("2026-09-14T11:00:00Z"));
-    store.bumpFinished(pressed, BumpStatus.SUCCEEDED, "SUCCESS", "pressed", Instant.now());
+  void aGroupBumpsAskIsNotWhatTheDispatcherLastDid() {
+    String repository = "group-ask-" + UUID.randomUUID();
+    Instant dispatched = Instant.parse("2026-09-01T02:00:00Z");
+    mainOnly(repository, dispatched);
+    store.recordOpenedRequest(
+        "group-" + UUID.randomUUID(), repository, "maintenance/dependencies",
+        eu.wohlben.qits.maintenance.entity.MtReleaseRequest.GROUP_BUMP, null,
+        Instant.parse("2026-09-14T11:00:00Z"));
 
-    assertEquals(
-        scheduled,
-        store.lastScheduledBumpAt().get(repository),
-        "the button was pressed since, and it says nothing about the night");
+    assertEquals(dispatched, store.lastDispatchedAt().get(repository));
   }
 
   /**
-   * <b>NEVER IS ABSENT, NOT A TIMESTAMP.</b> A repository the clock has never reached carries no
-   * entry at all — what "never" ranks as is the reading caller's decision (it goes first), and a
-   * sentinel written here would be this class inventing one.
+   * <b>NEVER IS ABSENT, NOT A TIMESTAMP.</b> What "never" ranks as is the caller's decision (it goes
+   * first), and a sentinel written here would be this class inventing one.
    */
   @Test
-  void aRepositoryTheClockHasNeverReachedIsAbsentFromTheMap() {
-    String never = "never-" + UUID.randomUUID();
-    UUID pressed =
-        store.openBump(
-            never,
-            "dependencies",
-            "maintenance/dependencies",
-            "dev",
-            BumpTrigger.MANUAL,
-            List.of(),
-            Instant.now());
-    store.bumpFinished(pressed, BumpStatus.SUCCEEDED, "SUCCESS", "pressed", Instant.now());
-
-    assertFalse(store.lastScheduledBumpAt().containsKey(never));
-    assertFalse(store.lastScheduledBumpAt().containsKey("no-bump-" + UUID.randomUUID()));
+  void aRepositoryTheDispatcherHasNeverReachedIsAbsentFromTheMap() {
+    assertFalse(store.lastDispatchedAt().containsKey("never-" + UUID.randomUUID()));
   }
 
-  /** One scheduled bump of one repository, opened at that instant and ended straight away. */
-  private void scheduledBump(String repository, Instant at) {
-    UUID id =
-        store.openBump(
-            repository,
-            "dependencies",
-            "maintenance/dependencies",
-            "dev",
-            BumpTrigger.SCHEDULED,
-            List.of(),
-            at);
-    store.bumpFinished(id, BumpStatus.SUCCEEDED, "SUCCESS", "the branch is pushed", at);
+  /** One main-only request the dispatcher opened for one repository at that instant. */
+  private void mainOnly(String repository, Instant at) {
+    store.recordOpenedRequest(
+        "main-only-" + UUID.randomUUID(),
+        repository,
+        "main",
+        eu.wohlben.qits.maintenance.entity.MtReleaseRequest.MAIN_ONLY,
+        List.of(),
+        at);
   }
 }

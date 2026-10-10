@@ -148,12 +148,11 @@ class ClaimTransactionTest {
           store.scans(20);
           store.branches(REPOSITORY);
           store.branch(REPOSITORY, GROUP);
-          store.bumpsOwedARelease();
           store.bump(UUID.randomUUID());
           store.bumps(REPOSITORY, 20);
           store.bumps(null, 20);
           store.activeBumps();
-          store.activeBump(REPOSITORY, GROUP);
+          store.lastDispatchedAt();
           store.pendingArtifacts();
           store.artifact(artifactId);
           store.artifact(Ecosystem.MAVEN, "eu.wohlben.qits:qits-ci", "1.0.0");

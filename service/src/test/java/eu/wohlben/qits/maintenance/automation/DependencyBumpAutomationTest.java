@@ -20,8 +20,6 @@ import eu.wohlben.qits.maintenance.api.Fixture;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
 import eu.wohlben.qits.maintenance.bump.BumpService;
 import eu.wohlben.qits.maintenance.bump.CiClient;
-import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
-import eu.wohlben.qits.maintenance.config.UpstreamSwitch;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto.AutomationDto;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto;
 import eu.wohlben.qits.maintenance.entity.MtBump;
@@ -83,8 +81,6 @@ class DependencyBumpAutomationTest {
   @Inject InventoryReset inventory;
 
   @Inject WorkQueue queue;
-
-  @Inject MaintenanceConfig config;
 
   @BeforeEach
   void scriptThePeers() {
@@ -267,7 +263,7 @@ class DependencyBumpAutomationTest {
   }
 
   /**
-   * On a MAIN-ONLY request with the upstream switch on the external upgrade rides too — and carries
+   * On a MAIN-ONLY request the external upgrade rides too — and carries
    * no {@code changelog} key at all, while the internal one beside it names its range.
    */
   @Test
@@ -276,12 +272,7 @@ class DependencyBumpAutomationTest {
     AutomationFixture.scriptManifests(peers, FOLD_A, STALE_POM, null);
     store.recordOpenedRequest(
         REQUEST, Fixture.REPOSITORY, "main", MtReleaseRequest.MAIN_ONLY, null, Instant.now());
-    MaintenanceConfig real = UpstreamSwitch.install(config, true);
-    try {
-      trigger(FOLD_A, null, null, ACCEPTS);
-    } finally {
-      UpstreamSwitch.restore(real);
-    }
+    trigger(FOLD_A, null, null, ACCEPTS);
 
     assertEquals(1, triggers().size(), triggers().toString());
     JsonNode changes = JSON.readTree(triggers().getFirst()).path("payload").path("changes");
@@ -322,12 +313,11 @@ class DependencyBumpAutomationTest {
   }
 
   /**
-   * EXTERNAL upgrades are not live in R1: a group bump's request (a {@code maintenance/<group>}
-   * branch) gets internal pins only, and so does a MAIN-ONLY request while the upstream switch is
-   * off. Only a main-only request with the switch on plans the external one too.
+   * EXTERNAL upgrades are planned only in a MAIN-ONLY request: a legacy group bump's request (a
+   * {@code maintenance/<group>} branch) gets internal pins only, as a person's does.
    */
   @Test
-  void externalUpgradesArePlannedOnlyInAMainOnlyRequestWithTheSwitchOn() {
+  void externalUpgradesArePlannedOnlyInAMainOnlyRequest() {
     AutomationFixture.scriptManifests(peers, FOLD_A, STALE_POM, null);
 
     store.recordOpenedRequest(
@@ -337,16 +327,7 @@ class DependencyBumpAutomationTest {
 
     store.recordOpenedRequest(
         REQUEST, Fixture.REPOSITORY, "main", MtReleaseRequest.MAIN_ONLY, null, Instant.now());
-    // Shipped ON since the cutover (qits-1133 R2).
-    assertEquals(
-        List.of(EVENTSTREAM, QUARKUS_BOM), planned(), "main-only, switch on: external too");
-
-    MaintenanceConfig real = UpstreamSwitch.install(config, false);
-    try {
-      assertEquals(List.of(EVENTSTREAM), planned(), "main-only, switch off: internal only");
-    } finally {
-      UpstreamSwitch.restore(real);
-    }
+    assertEquals(List.of(EVENTSTREAM, QUARKUS_BOM), planned(), "main-only: external too");
   }
 
   /** What the bump plans at fold A for the request, without opening anything. */

@@ -4,8 +4,8 @@ package eu.wohlben.qits.maintenance.scan;
  * What asked for a scan.
  *
  * <p><b>NO scan bumps anything, whoever asked for it.</b> A SCHEDULED one used to, and that coupling
- * is gone — {@code schedule/BumpSchedule} owns the clock's standing instructions on a cron of its
- * own. What survives here is the RECORD of who asked, which is what a scan row shows and what the
+ * is gone — {@code bump.BumpDispatcher} decides what is owed, from the inventory a scan wrote. What
+ * survives here is the RECORD of who asked, which is what a scan row shows and what the
  * bus's rescan is distinguishable by.
  */
 public enum ScanTrigger {

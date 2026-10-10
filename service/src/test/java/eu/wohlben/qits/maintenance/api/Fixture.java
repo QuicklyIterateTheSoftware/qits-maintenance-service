@@ -154,6 +154,11 @@ public final class Fixture {
   /** What the gitlink is pinned at: a commit, which no registry has ever heard of. */
   public static final String GITLINK_SHA = "c0ffee11d00d2233445566778899aabbccddeeff";
 
+  /**
+   * A {@code groups:} key from before qits-1133 R5, kept on purpose: it is ignored with a WARN now,
+   * and every suite scanning this fixture pins that it does not turn the repository into a
+   * CONFIG_ERROR.
+   */
   private static final String MAINTENANCE_YML =
       """
       groups:

@@ -222,15 +222,11 @@ public class ScanCycleIT {
         .body(
             "find { it.name == '" + StoryCatalog.REPOSITORY + "' }.headSha",
             equalTo(StoryCatalog.HEAD_SHA))
-        // The repository declares `angular`; the two KIND groups are appended after it so no pin is
-        // unclaimed, and a group's name is also its branch.
+        // The repository's file still declares `angular` under the retired `groups:` key, which is
+        // ignored (qits-1133 R5): every repository's pins split into the two KIND groups.
         .body(
             "find { it.name == '" + StoryCatalog.REPOSITORY + "' }.groups.name",
-            equalTo(
-                List.of(
-                    StoryCatalog.ANGULAR_GROUP,
-                    StoryCatalog.DEFAULT_GROUP,
-                    StoryCatalog.EXTERNAL_GROUP)))
+            equalTo(List.of(StoryCatalog.DEFAULT_GROUP, StoryCatalog.EXTERNAL_GROUP)))
         // The second repository carries no configuration, so the fallback IS its whole grouping —
         // and the fallback is the split: our own releases on one branch, everybody else's on the
         // other.
@@ -262,7 +258,7 @@ public class ScanCycleIT {
         // npm's version is the LOCK's, and the manifest's range rides beside it.
         .body("pins.find { it.name == '@angular/core' }.version", equalTo("21.0.4"))
         .body("pins.find { it.name == '@angular/core' }.range", equalTo("^21.0.0"))
-        .body("pins.find { it.name == '@angular/core' }.group", equalTo(StoryCatalog.ANGULAR_GROUP))
+        .body("pins.find { it.name == '@angular/core' }.group", equalTo(StoryCatalog.EXTERNAL_GROUP))
         // docker, anchored on a line.
         .body("pins.find { it.name == 'qits/build-images/maven-base' }.location", equalTo("line:2"))
         .body("pins.find { it.name == 'qits/build-images/maven-base' }.latest",
@@ -503,7 +499,7 @@ public class ScanCycleIT {
     // who they are — not once, not on a cache miss, not at all.
     ReportAssertions.assertNoEdgesTo(CATEGORY_SLUG, READ_SLUG, "qits-platform-idp");
     // AND NOTHING WAS ASKED OF qits-ci. A scan finds out what is out of date; asking for a branch
-    // is a different button, and the clock's own is a different schedule (BumpSchedule).
+    // is a release request's pre-run, and the dispatcher's own is a different schedule.
     ReportAssertions.assertNoEdgesTo(CATEGORY_SLUG, READ_SLUG, StoryTarget.CI);
 
     // --- the outage -----------------------------------------------------------------------------

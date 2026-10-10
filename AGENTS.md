@@ -166,14 +166,12 @@ rule's "unless the pin is one too" is written for.
 reads to compose its payload; two at once would let a bump send a payload computed from a repository
 half-rewritten. It also means the git host and the registries see one caller.
 
-**A second bump of one (repository, group) is refused earlier still**, by `MaintenanceStore.openBump`,
-whose active-bump check is **inside** the opening transaction — a person and a scheduled scan
-arriving together is the ordinary case, not a race worth losing. **The property being protected is a
-REF, and the group is only a stand-in for one**: an AUTOMATION row locked exclusively —
-`AutomationService`'s re-run door, and the old `/branches/bumps` door while it still called
-`MaintenanceStore.openAutomation` directly — therefore locks on `(repository, kind, branch)` rather
-than on `(repository, group)`, and both checks carry the mode so neither one's lock can be taken by
-the other's row.
+**A second run onto one branch is refused earlier still**, by `MaintenanceStore.openAutomation`,
+whose active-row check is **inside** the opening transaction — a person and a fold arriving together
+is the ordinary case, not a race worth losing. **The property being protected is a REF**: an
+AUTOMATION row locked exclusively — `AutomationService`'s re-run door — locks on `(repository, kind,
+branch)`. (The retired group bump locked on `(repository, group)` through `openBump`; both went with
+qits-1133 R5.)
 
 **A task never throws out of `WorkQueue`.** A thrown exception would lose the sentence; every task
 logs its own failure and ends.
@@ -197,9 +195,12 @@ work that reaches the front after the barrier does not exist yet.
 
 ## Bumping
 
-**THERE ARE TWO MODES AND EVERY RULE BELOW IS ABOUT THE FIRST ONE.** A GROUP bump writes
-`maintenance/<group>` — a branch this service names, creates, tracks in `mt_branch`, releases and
-lets the release delete. The second, AUTOMATION, is below.
+**EVERY ROW THIS SERVICE STILL WRITES IS AN AUTOMATION (qits-1133 R5).** The GROUP bump — a
+`maintenance/<group>` branch this service named, created, tracked in `mt_branch`, released and let
+the release delete — is retired: R2 switched it off and R5 removed its code, its doors, its window
+and its cron. `BumpMode.GROUP` stays as a read-only word for the history rows `GET /bumps` still
+lists (and the fallback `BumpMode.of` reads an unknown word as); V22 closed every GROUP row that was
+still going. See "Group bumps are retired" below.
 
 **TARGETED and BASELINES were two more modes, each written by hand with its own dispatch and its own
 ending, and V18 folded both into AUTOMATION** (see the next paragraph): a TARGETED bump wrote a branch
@@ -261,32 +262,38 @@ another's input" holds within a stage and from DERIVED to SOURCE (`AutomationReg
 RUN plan naming another applicable kind's path is refused FAILED at run time (`AutomationService.clash`).
 `dependency-bump` plans AT THE FOLD through `ManifestScanner.pinsAt` and the pending rule, minus
 `ignore:` and the new `hold:`, never a wrapper's gitlinks (estate-pins' own), and INTERNAL pins only
-— EXTERNAL ones solely in a MAIN-ONLY request the dispatcher's upstream path opened
-(`mt_release_request.purpose = MAIN_ONLY`, V21) while the switch below is on; a group bump's request
-keeps externals a person's press. Its payload carries `changes` in the `MaintenanceBump` entry shape
+— EXTERNAL ones solely in a MAIN-ONLY request the dispatcher opened (`mt_release_request.purpose =
+MAIN_ONLY`, V21); a person's request, and a legacy group bump's, get internal pins only. Its
+payload carries `changes` in the `MaintenanceBump` entry shape
 — each internal one with its `changelog` range, proved at dispatch (qits-893) — and `commitPaths`, the
 files they touch; every own-branch join is sent at `LOWEST`. WAITING and NOT_APPLICABLE reach the
 wire only when the trigger body `accepts` them; otherwise the answer is the pre-1133 one. The
 upstream hook (`automation/UpstreamReplan`) and the dispatcher's main-only LOWEST requests are
-behind `qits.maintenance.pre-run.upstream.enabled`, which ships TRUE since R2 (the cutover); off,
-the emergency position, group dispatch is untouched.
+always on: R5 removed `qits.maintenance.pre-run.upstream.enabled` with the group path it fell back
+to. **The one kill switch left is `qits.maintenance.automations.dependency-bump.enabled`** (default
+true): off, the kind is not listed, planned or run, a row it opened ends FRESH, the hook re-plans
+nothing and the dispatcher answers DISABLED (`DependencyBumpSwitchedOffTest`).
 
-**WITH THE SWITCH ON, NOTHING WRITES A `maintenance/<group>` BRANCH (qits-1133 R2).**
-`BumpService.request` throws `GroupBumpsRetiredException` (410) — the door, the ungated 02:00 loop
-and the dispatcher all come through it; `BumpService.dispatch` closes a GROUP row left REQUESTED
-without a trigger (NOTHING_TO_DO, `converged`); `askForRelease` closes the ask as `converged`, so a
-run going at the cutover ends but is never released; and the dispatcher reads `upstreamHold` only,
-never the group hold. The only `CiClient.trigger` with the MaintenanceBump event left is
-`AutomationService.dispatchSourceBranch` (`estate-pins`, label `targeted`, the request's own source
-branches). `bump/LegacyGroupBranchSweep` rides `AutomationBranchSweepSchedule`: per repository it lists
-the branches, retires `mt_branch` rows whose branch is gone, and for each `maintenance/<group>` (one
-segment — never `automations/` or `baselines/`) withdraws every open request whose BRANCH sources
-are all main or `maintenance/` (reason naming qits-1133), leaves a person's open, deletes the branch
-through `GitHostRefs` and marks the row `RETIRED` — terminal, `recordBranch` never rewrites it. It
-waits rather than guesses: an active group bump, a RELEASED request naming the branch, an unreadable
-read or an untaken withdrawal keeps the branch for the next pass. The legacy group suites pin the
-switch OFF through `config/UpstreamSwitch` (test scope), and `StoryProfile` sets it off too, until R5
-removes the group path and its stories.
+**GROUP BUMPS ARE RETIRED (qits-1133: switched off in R2, removed in R5).** Nothing writes a
+`maintenance/<group>` branch, and there is no code left that could: no `BumpService.request`, no
+group dispatch, poll ending or release ask, no `BumpBase`, no `schedule/BumpSchedule` (the 02:00
+cron and its ungated loop), no dispatch window (`mt_bump_window`, dropped by V22, and the `GET/POST/
+DELETE /bumps/window` doors), and no group door (`POST /repositories/{name}/groups/{group}/bumps`
+answers 404). `groups:` in `maintenance.yml` is IGNORED with a WARN rather than parsed — a file
+written for the old service must not turn its repository into a CONFIG_ERROR — while `ignore:` and
+`hold:` apply as before, and every repository's groups are the kind pair (`dependencies` INTERNAL,
+`external` EXTERNAL). A GROUP row found REQUESTED or RUNNING (V22 closed them all, so only a hand
+insert gets here) is closed NOTHING_TO_DO with `converged`, unsent and unread. The only
+`CiClient.trigger` with the MaintenanceBump event left is `AutomationService.dispatchSourceBranch`
+(`estate-pins`, label `targeted`, the request's own source branches). **`bump/LegacyGroupBranchSweep`
+is kept** — idempotent, and it cleans up a group branch somebody pushes by hand: it rides
+`AutomationBranchSweepSchedule`, per repository it lists the branches, retires `mt_branch` rows whose
+branch is gone, and for each `maintenance/<group>` (one segment — never `automations/` or
+`baselines/`) withdraws every open request whose BRANCH sources are all main or `maintenance/`
+(reason naming qits-1133), leaves a person's open, deletes the branch through `GitHostRefs` and marks
+the row `RETIRED` — terminal, `recordBranch` never rewrites it. It waits rather than guesses: a
+RELEASED request naming the branch, an unreadable read or an untaken withdrawal keeps the branch for
+the next pass. `bump/GroupRetirementTest` pins all of it.
 
 **AN OWN-BRANCH AUTOMATION'S BRANCH IS DELETED BY THIS SERVICE ONCE ITS REQUEST IS CLOSED** — the
 one ref this service writes itself, confined to `maintenance/automations/`. A request that releases
@@ -302,17 +309,23 @@ re-arm on the next fold and RELEASED is mid-pipeline, so they are open. A reques
 any other unreadable answer keeps it, and a branch with a REQUESTED or RUNNING row is never
 touched. A failed delete is a WARN and the next pass's retry; an already-gone branch is success.
 
-**Two callers on the group path, and no scan is one of them.** The button is `POST
-/repositories/{name}/groups/{group}/bumps`; the clock is `schedule/BumpSchedule` at 02:00, INTERNAL
-group only. A SCHEDULED scan used to ask for the bumps it found, gated by `bump.auto` — that key and
-that coupling are both gone. A scan is a READ whose schedule is set by how fast facts go stale; a
-bump is a WRITE into somebody else's repository whose schedule is set by when a branch is welcome.
-Welded together, the 01:00 external scan decided when the internal half got a branch.
-
-**The changes are frozen at REQUEST time**, not recomputed at dispatch. A payload recomputed later
-would not be the one the operator saw, and a retry after a 503 would send a different list under the
-same dedupe key. **That freeze is also the coalescing**: N internal releases between two nightly runs
-are ONE branch push, one CI build, one release request and one release.
+**THE DISPATCHER OPENS A MAIN-ONLY REQUEST WHERE A REPOSITORY HAS NONE (`bump/BumpDispatcher`).**
+Every 15 seconds (`BumpDispatchSchedule`) it walks the inventory: a repository is OWED when an
+INTERNAL pin is behind its latest (the `dependencies` group of `PendingChanges`, read off main), and
+HELD when it has any open release request (its pre-run carries the bump, and `UpstreamReplan`
+re-plans it) or when the main-only request this service last opened for the exact same pending set
+is on its way, shipped, or was withdrawn by its own pre-run. A person's withdrawal frees it; an
+unreadable answer holds. Gates in order: `bump.enabled`, `bump.internal.auto`, the dependency-bump
+switch; nothing owed; `bump.dispatch.quiet-hours`; qits-ci's free slots (`slots - active - our
+REQUESTED rows`, an unreadable snapshot is busy — qits-882); then `BumpOrder.nextUpTo`, bottom of the
+chain first and least-recently-dispatched first (`MaintenanceStore.lastDispatchedAt`, the newest
+MAIN_ONLY `opened_at`, so the alphabet is never the tiebreak). A pick is
+`ReleaseRequestClient.requestMainOnly` — `POST …/release-requests` with `branch = main` and
+`priority = LOWEST` — recorded with `recordOpenedRequest(MAIN_ONLY, changes)`; a repository with no
+catalog id, or a refused ask, is set aside for `bump.dispatch.refusal-ttl` (in memory). No
+`mt_bump` row is written for it: the bump is the pre-run's `dependency-bump` row. `explain()` is the
+same reasoning with nothing done, for tests; there is no door for it since the window door went.
+A scan never asks for a bump: a scan is a READ whose schedule is set by how fast facts go stale.
 
 **The event id IS the bump row id**, and qits-ci dedupes on (event id, repository, config path). A
 dispatch whose answer was lost records no second run when it is retried. Never generate a fresh one.
@@ -328,53 +341,24 @@ one, floored at the repository's oldest published changelog, and `ChangelogClien
 store's listing (`PeerTarget.ARTIFACTS_DOCS`, the same bare-host key as the SBOM route). A missing
 changelog, or an internal coordinate `ArtifactGraph.producers()` cannot name a repository for, FAILS
 the bump with the sentence — the owner's rule is "error, not workaround" — and an unreadable store
-is a RETRY. Every path that carries changes proves them: group bumps, `estate-pins`' source-branch
-runs and `dependency-bump`'s own-branch payload (`AutomationService.changelogs`, serialized by the
+is a RETRY. Every path that carries changes proves them: `estate-pins`' source-branch runs and
+`dependency-bump`'s own-branch payload (`AutomationService.changelogs`, serialized by the
 shared `CiClient.changes`). The payload NAMES the changelogs (`changelog: {repository, versions}`) and never carries
 their text: it reaches the step as one environment string, so the step's CLI fetches them. Tests
 that bump the fixture's internal pins seed the producers first (`Fixture.seedProducers`,
 `StoryCatalog.seedProducers`); without them every such bump fails, by design.
 
-**Only the branch HEAD is compared, never a commit count — on a GROUP bump.** One bump is up to two
-commits — the maven step and the node/docker step each clone, commit and push — so a service
-expecting one would report every mixed group as broken. The head is read before the trigger and again
-when the run ends; unmoved after a green run is NOTHING_TO_DO, and moved after a red one is STALE.
-**What licenses all of that is that nothing else commits to `maintenance/<group>`**, which is exactly
-what a TARGETED bump cannot assume: its verdict is its CI run's, its `result_sha` is the head read
-once afterwards, and an unreadable head costs the sha and not the SUCCEEDED.
-
 **`BumpPayload.problems` refuses on this side what the step refuses on that one.** The step holds
 `to`, `group`, the refs and the manifest path to the same rules; failing here puts the reason on the
 bump row instead of in a step log somebody has to go and read.
 
-**A SUCCEEDED group bump asks for the release; the other three endings do not, and a TARGETED bump
-never does.** `ReleaseRequestClient` posts to
-qits-projects' `POST /projects/api/repositories/<repoId>/release-requests` with the branch and the
-commit-subject summary. Nothing merges and nothing is released at that call: a release REQUEST is
-OPENED, the quality gates settle the fold it makes, and Auto Release tags it. **This service's job
-ends there** — nothing here polls the request or waits for a version. NOTHING_TO_DO pushed nothing; STALE
-is somebody's hand-written commit and releasing it on their behalf is the one thing this must never
-do.
-
-**A qits-projects that will not answer never flips the status.** The bump succeeded — green run,
-moved branch, both facts about this service's own work. `mt_bump.release_request_id` carries the
-answer and **NULL is the one value that means work is owed**; `converged` and `refused` are sentinels
-that stop the retrying, because a permanently refused ask re-sent every fifteen seconds for the life
-of a branch is the failure mode a bare boolean would have. **The retry is bounded by the BRANCH, not
-a counter**: it ends when the request exists or when the branch is gone — which is also what a landed
-release leaves behind, since a request's named sources are deleted when it lands.
-
-**The `repoId` on that call is `mt_repository.catalog_id`**, the `id` qits-projects' own listing
-answers, which `CatalogReader` has copied onto the row since V5. That route resolves its path
-parameter against qits-projects' repository table and nothing else, so neither the name nor the
-project can address it — the pair the retired qits-workspaces door took. A row with no catalog id is
-a refusal, not a retry: the next scan fills the column and the next bump asks with it.
-
-**The ask needs no credential of its own.** It is a qits-projects route and the route admits
-`qits:system` beside `qits:admin`, so the bearer every catalog read already mints through the one
-`qits` client opens it. There was a client for the release door once — audience `qits-workspaces` —
-and it went with the door. A 401/403 is still classified RETRYABLE rather than refused, so a grant
-that has not landed heals rather than needing the bump run again.
+**The dispatcher's ask is addressed by `mt_repository.catalog_id`**, the `id` qits-projects' own
+listing answers, which `CatalogReader` has copied onto the row since V5: that route resolves its path
+parameter against qits-projects' repository table and nothing else. Nothing merges and nothing is
+released at that call — a release REQUEST is OPENED, its pre-run writes the bump, the quality gates
+settle the fold and Auto Release tags it. A 401/403 is classified RETRY rather than refused, so a
+grant that has not landed heals by itself; any other 4xx is a refusal; the bearer is the one `qits`
+client every catalog read mints.
 
 ## Persistence
 
@@ -838,28 +822,26 @@ pre-story traffic — the startup JWKS fetch — lands in whichever story drains
 was asked" claim is only checkable once the story that DID ask has drained. Every story method
 carries `@UserflowRunsAfter` and `UserflowClassOrderer` (junit's secondary orderer, registered in
 `service/src/test/resources/application.properties`) turns that into the chain
-`TokenValidationBootstrapIT → ScanCycleIT → InventoryIT → BumpIT → MaintenanceRefusalIT`. Two
+`TokenValidationBootstrapIT → ScanCycleIT → InventoryIT → MaintenanceRefusalIT` (the bump stories,
+`BumpIT`, went with the group door in qits-1133 R5). Two
 multi-story classes also pin `@TestMethodOrder`.
 
 **Namespacing, not resetting.** `InventoryReset` has no equivalent in a launched process, so the
 catalogue keeps stories apart by giving them different repositories: `qits-ci` carries the rich
-reactor and every reading story, `qits-eventstream` exists so the second bump story has a branch of
-its own — a bump holds its (repository, group) lock until it ends.
+reactor and every reading story, and `qits-eventstream` is the second repository the scan stories
+read.
 
-**The clock: one timer alive, and a story drives it.** A bump is closed by `BumpPollSchedule`'s
-sweep and by nothing else, so `StoryProfile` turns the scheduler back **on** and then removes every
-other timer at its own shipped key — both scan crons are `off` (the scheduler's own value for "do
-not register this trigger"), `scan.enabled=false`, and `bump.poll-interval=1s`. The sweep is a no-op
-whenever no bump is in flight, so the only stories it can reach are the two holding one open.
-**Two paths are therefore not covered by a story**: the nightly internal bump (`BumpSchedule`, which
-needs the cron this profile removes), and `RestartRecovery` resuming a bump across a restart, which
-needs a second boot.
-Both keep their coverage in `MaintenanceApiTest`, which drives `bumps.sweep()` by hand.
+**The clock.** `StoryProfile` turns the scheduler back **on** and then removes every timer a story
+could trip over at its own shipped key — both scan crons are `off` (the scheduler's own value for
+"do not register this trigger"), `scan.enabled=false`, the sbom timers `off`, and
+`bump.internal.auto=false` so the dispatcher opens nothing mid-story. No story drives a bump since
+the group door went; the dispatcher's coverage is `schedule/BumpDispatchTest`, and the automations'
+`automation/*Test`.
 
 **What the catalogue does not show, because this service does not do it.** There is no story of a
 commit being made, a file being written or a ref being pushed: this service decides, a CI step
-applies and the platform releases, so the two furthest arrows out of it are a `MaintenanceBump`
-trigger and a release ASK — neither of which touches a tree. And nothing here
+applies and the platform releases, so the furthest arrows out of it are a CI trigger and a release
+ASK — neither of which touches a tree. And nothing here
 transitively resolves, orders an external base image or runs `ng update`; each is a decision recorded
 under "Deliberately not here yet", not a gap in the stories.
 
@@ -913,29 +895,16 @@ Each is a decision, not an omission:
 - **External base image tags.** `FROM eclipse-temurin:…` — ordering tags across vendors is a later
   decision, and the mirror would answer with an upstream's whole tag history with no rule to rank
   it by. `FROM qits/*` is in scope.
-- **`ng update` and tool-driven upgrades.** A group carries `name` and `deps`, and the step edits
-  lines. A migration is a person's job.
-- **Workspace creation.** Pushing the branch is the whole "merge request"; it is released through a
-  qits-projects release request like any other branch — this service opens that request itself.
+- **`ng update` and tool-driven upgrades.** The step edits lines. A migration is a person's job.
 - **Polling the release request's PROGRESS.** qits-projects answers an id and this service stores it
   and stops. Its job ends at "request opened": the gates settle it, Auto Release tags it, and two
   mechanisms watching one fact would be two ways to disagree about it.
-  <br>**What the dispatcher does ask is a different question, and it had to be added
-  (2026-09-10).** Not "how far along is the release" but "is this request still one my bump can wait
-  for" — because the gated dispatcher HOLDS a repository whose branch is pushed until the release
-  lands on main, and a REJECTED request never lands. Live that day: nineteen bumps released, the
-  twentieth was rejected at 07:14 for a red gating build, and four hours later the window was still
-  open, qits-ci idle, that one repository still "owed", nothing dispatched and no line anywhere
-  saying why. So `ReleaseRequestClient.state` reads the one request the bump names, on the tick that
-  needs it: PENDING/READY holds, RELEASED/FINALIZED/OBSOLETE holds (shipped; the next scan of main
-  ends it), REJECTED/FAILED/CONFLICTED make the candidate STALLED and drop it out of the night, and an
-  unreadable answer holds. WITHDRAWN counts as no request (qits-886, owner decision 2026-10-04): the
-  bump's request id is cleared and the release sweep asks for a fresh one. The answer is never stored as a verdict — that
-  service re-arms REJECTED, FAILED and CONFLICTED to PENDING on the next merged sha — only cached
-  for `bump.dispatch.release-state-ttl` and written onto the bump row for a reader.
-- **Automatic EXTERNAL bumps.** `qits.maintenance.bump.external.auto` exists so the deployment
-  surface does not change the day they are implemented, and is read only to WARN when it is set.
-  Somebody else's framework major is an opinion, and it stays a person's press.
+  <br>**What the dispatcher does ask is a different question**: not "how far along is the
+  release" but "is the main-only request I opened for this pending set still coming" — on the tick
+  that needs it, cached for `bump.dispatch.release-state-ttl`. Withdrawn by a person counts as no
+  request (qits-886); anything else, unreadable included, holds.
+- **Automatic EXTERNAL bumps outside a main-only request.** A person's request gets INTERNAL pins
+  only; somebody else's framework major in their release is an opinion.
 - **Cancelling a bump.** There is no route and no column. The CI run has its own cancel, and a bump
   row saying CANCELLED would be a claim this service cannot make about a step that may already have
   pushed.
@@ -945,8 +914,9 @@ Each is a decision, not an omission:
 ## OpenAPI document, pact provider and golden masters (epic qits-112)
 
 `docs/openapi.yml` is written by `OpenApiSchemaExportTest` from the running app; commit it with
-any API change. `BumpController`'s reads carry `operationId`s (`listBumps`, `getBumpWindow`,
-`getBump`), which generated clients name their functions after.
+any API change. `BumpController`'s reads carry `operationId`s (`listBumps`, `listPendingBumps`,
+`getBump`), which generated clients name their functions after. The window doors (`getBumpWindow`,
+`POST/DELETE /bumps/window`) and the group door went with qits-1133 R5.
 
 qits-maintenance is a pact provider, set up like qits-githost-service and qits-events-service.
 The test package `service/src/test/java/eu/wohlben/qits/maintenance/contracts/` holds it:

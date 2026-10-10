@@ -180,51 +180,6 @@ components:
             $ref: "#/components/schemas/Change"
         failure:
           $ref: "#/components/schemas/FailureDto"
-    BumpWindowDto:
-      type: object
-      properties:
-        openedAt:
-          $ref: "#/components/schemas/Instant"
-        closesAt:
-          $ref: "#/components/schemas/Instant"
-        open:
-          type: boolean
-        outcome:
-          type: string
-        summary:
-          type: string
-        inFlight:
-          type: integer
-          format: int32
-        slots:
-          type: integer
-          format: int32
-        free:
-          type: integer
-          format: int32
-        ciActive:
-          type: integer
-          format: int32
-        owed:
-          type: integer
-          format: int32
-        held:
-          type: integer
-          format: int32
-        stalled:
-          type: array
-          items:
-            $ref: "#/components/schemas/StalledBumpDto"
-        queue:
-          type: array
-          items:
-            $ref: "#/components/schemas/OwedBumpDto"
-        next:
-          type: string
-        picks:
-          type: array
-          items:
-            type: string
     Change:
       type: object
       properties:
@@ -387,20 +342,6 @@ components:
       format: date-time
       examples:
       - 2022-03-10T16:15:50Z
-    OwedBumpDto:
-      type: object
-      properties:
-        repository:
-          type: string
-        group:
-          type: string
-        changes:
-          type: integer
-          format: int32
-        reason:
-          type: string
-        detail:
-          type: string
     PackageDto:
       type: object
       properties:
@@ -587,19 +528,6 @@ components:
           $ref: "#/components/schemas/Instant"
         message:
           type: string
-    StalledBumpDto:
-      type: object
-      properties:
-        repository:
-          type: string
-        group:
-          type: string
-        releaseRequestId:
-          type: string
-        state:
-          type: string
-        reason:
-          type: string
     StartScanRequest:
       type: object
       properties:
@@ -665,6 +593,7 @@ components:
   securitySchemes:
     SecurityScheme:
       type: openIdConnect
+      openIdConnectUrl: http://dev-qits-idp:8080/idp/.well-known/openid-configuration
       description: Authentication
 paths:
   /maintenance/api/adoption/by-release:
@@ -803,67 +732,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PendingBumpsDto"
-        "401":
-          description: Not Authorized
-        "403":
-          description: Not Allowed
-      tags:
-      - Bump Controller
-      security:
-      - SecurityScheme:
-        - qits:admin
-        - qits:admin-agent
-        - qits:system
-        - qits:agent
-  /maintenance/api/bumps/window:
-    get:
-      summary: The bump dispatch window and everything owed a bump
-      operationId: getBumpWindow
-      responses:
-        "200":
-          description: "The window, or the reason there is none"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/BumpWindowDto"
-        "401":
-          description: Not Authorized
-        "403":
-          description: Not Allowed
-      tags:
-      - Bump Controller
-      security:
-      - SecurityScheme:
-        - qits:admin
-        - qits:admin-agent
-        - qits:system
-        - qits:agent
-    post:
-      summary: Open a bump dispatch window now
-      responses:
-        "200":
-          description: The window that is now open
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/BumpWindowDto"
-        "401":
-          description: Not Authorized
-        "403":
-          description: Not Allowed
-      tags:
-      - Bump Controller
-      security:
-      - SecurityScheme:
-        - qits:admin
-        - qits:admin-agent
-        - qits:system
-        - qits:agent
-    delete:
-      summary: Close the bump dispatch window
-      responses:
-        "204":
-          description: There is no window now
         "401":
           description: Not Authorized
         "403":
@@ -1216,42 +1084,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DownstreamDto"
-        "401":
-          description: Not Authorized
-        "403":
-          description: Not Allowed
-      tags:
-      - Repository Controller
-      security:
-      - SecurityScheme:
-        - qits:admin
-        - qits:admin-agent
-        - qits:system
-        - qits:agent
-  /maintenance/api/repositories/{name}/groups/{group}/bumps:
-    post:
-      summary: Put this group's pending changes on its maintenance branch
-      parameters:
-      - name: group
-        in: path
-        required: true
-        schema:
-          type: string
-      - name: name
-        in: path
-        required: true
-        schema:
-          type: string
-      responses:
-        "202":
-          description: "Requested; poll GET /bumps/{id}"
-        "404":
-          description: "No such repository, or no such group"
-        "409":
-          description: "One is already active, or bumping is disabled"
-        "410":
-          description: "Group bumps are retired (qits-1133): the dependency-bump release-request\
-            \ automation writes pending pins now"
         "401":
           description: Not Authorized
         "403":

@@ -1,9 +1,7 @@
 package eu.wohlben.qits.maintenance.control;
 
-import eu.wohlben.qits.maintenance.bump.BumpDispatcher;
 import eu.wohlben.qits.maintenance.bump.BumpService;
 import eu.wohlben.qits.maintenance.dto.BumpDto;
-import eu.wohlben.qits.maintenance.dto.BumpWindowDto;
 import eu.wohlben.qits.maintenance.dto.DependencyDto;
 import eu.wohlben.qits.maintenance.dto.FailureDto;
 import eu.wohlben.qits.maintenance.dto.GroupDto;
@@ -14,7 +12,6 @@ import eu.wohlben.qits.maintenance.dto.RepositoryDto;
 import eu.wohlben.qits.maintenance.dto.ScanDto;
 import eu.wohlben.qits.maintenance.entity.MtBranch;
 import eu.wohlben.qits.maintenance.entity.MtBump;
-import eu.wohlben.qits.maintenance.entity.MtBumpWindow;
 import eu.wohlben.qits.maintenance.entity.MtGitlinkPin;
 import eu.wohlben.qits.maintenance.entity.MtGroup;
 import eu.wohlben.qits.maintenance.entity.MtLatest;
@@ -58,8 +55,6 @@ public class Inventory {
   @Inject MaintenanceStore store;
 
   @Inject BumpService bumps;
-
-  @Inject BumpDispatcher dispatcher;
 
   @Inject eu.wohlben.qits.maintenance.automation.AutomationService automations;
 
@@ -318,61 +313,6 @@ public class Inventory {
   }
 
   /** One scan, which is what a client polls after a 202. */
-  /**
-   * The dispatch window as it stands — <b>and it answers whether or not there is one</b>.
-   *
-   * <p>{@code open} is computed here rather than stored: a row whose {@code closesAt} has passed but
-   * which no tick has reached yet is a real state, and reporting it as open would be a lie a reader
-   * could act on. With no row at all the two timestamps are null and {@code open} is false, and the
-   * rest of the answer — the outcome, the counts and the whole owed queue — is the same reasoning
-   * the tick makes. A 404 there was the door saying "no window" to somebody asking "why has nothing
-   * been dispatched", which is the one question it exists to answer.
-   *
-   * <p><b>The read runs the tick's own reasoning and acts on none of it</b> — {@link
-   * BumpDispatcher#explain} — so that "there are pending bumps and nothing is queued" has an answer
-   * at the door rather than in three services' logs. It costs what a tick costs: the candidate walk,
-   * one queue read from qits-ci and, for a held candidate, one release-request read (inside its
-   * ttl, usually a cache hit). Nothing here closes a window and nothing here dispatches.
-   */
-  public BumpWindowDto bumpWindow(Instant now) {
-    Optional<MtBumpWindow> row = store.bumpWindowRow();
-    BumpDispatcher.Decision decision = dispatcher.explain(now);
-    return new BumpWindowDto(
-        row.map(one -> one.openedAt).orElse(null),
-        row.map(one -> one.closesAt).orElse(null),
-        row.filter(one -> now.isBefore(one.closesAt)).isPresent(),
-        decision.outcome(),
-        decision.summary(),
-        decision.inFlight(),
-        decision.slots(),
-        decision.free(),
-        decision.ciActive(),
-        decision.owed(),
-        decision.held(),
-        decision.stalled().stream()
-            .map(
-                one ->
-                    new BumpWindowDto.StalledBumpDto(
-                        one.repository(),
-                        one.group(),
-                        one.requestId(),
-                        one.state(),
-                        one.reason()))
-            .toList(),
-        decision.queue().stream()
-            .map(
-                one ->
-                    new BumpWindowDto.OwedBumpDto(
-                        one.repository(),
-                        one.group(),
-                        one.changes(),
-                        one.reason(),
-                        one.detail()))
-            .toList(),
-        decision.pick() == null ? null : decision.pick().candidate().repository(),
-        decision.picks().stream().map(pick -> pick.candidate().repository()).toList());
-  }
-
   public ScanDto scan(UUID id) {
     MtScan row = store.scan(id).orElseThrow(() -> new NoSuchScanException(id));
     return new ScanDto(

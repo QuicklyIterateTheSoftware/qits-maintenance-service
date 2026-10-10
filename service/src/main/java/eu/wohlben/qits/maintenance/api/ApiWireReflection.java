@@ -3,7 +3,6 @@ package eu.wohlben.qits.maintenance.api;
 import eu.wohlben.qits.maintenance.dto.AdoptionJourneyDto;
 import eu.wohlben.qits.maintenance.dto.ArtifactDto;
 import eu.wohlben.qits.maintenance.dto.BumpDto;
-import eu.wohlben.qits.maintenance.dto.BumpWindowDto;
 import eu.wohlben.qits.maintenance.dto.PendingBumpsDto;
 import eu.wohlben.qits.maintenance.dto.DependencyDto;
 import eu.wohlben.qits.maintenance.dto.DownstreamDto;
@@ -77,13 +76,7 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
       PinSourceDto.ArtifactPinDto.class,
       // BumpDto grew `releaseRequestId` with the release door, and the bump detail page reads it.
       BumpDto.class,
-      // The dispatch window's three verbs on /bumps/window, and the diagnosis the GET carries: the
-      // stalled entries are a nested record and are their own registration, exactly as every other
-      // nested shape here is.
-      BumpWindowDto.class,
       PendingBumpsDto.class,
-      BumpWindowDto.StalledBumpDto.class,
-      BumpWindowDto.OwedBumpDto.class,
       ScanDto.class,
       Change.class,
       // The ad-hoc downstream closure and the adoption journey, which replaced the release trains'
