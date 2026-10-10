@@ -267,8 +267,40 @@ class UpstreamReplanTest {
   }
 
   /**
-   * A main-only request whose pre-run DOES find a bump is the request that carries it — the one
-   * origin that plans external upgrades too.
+   * A main-only request whose fold is behind only on an EXTERNAL pin has nothing to release: the
+   * bump never moves one (qits-1164), so its pre-run withdraws it like any current fold.
+   */
+  @Test
+  void aMainOnlyRequestBehindOnlyExternallyIsWithdrawn() {
+    store.recordOpenedRequest(
+        MAIN_REQUEST, Fixture.REPOSITORY, "main", MtReleaseRequest.MAIN_ONLY, List.of(),
+        Instant.now());
+    AutomationFixture.scriptManifests(
+        peers, FOLD_A, STALE_POM.replace("2026.811.1", "2026.821.3"), null);
+    String withdraw = Fixture.RELEASE_REQUESTS_PATH + "/" + MAIN_REQUEST + "/withdraw";
+    peers.answer(
+        PeerTarget.PROJECTS,
+        withdraw,
+        FakePeers.Scripted.ok(
+            "{\"request\":{\"id\":\"" + MAIN_REQUEST + "\",\"state\":\"WITHDRAWN\"}}"));
+
+    ReleaseRequestAutomationsDto answer =
+        automations.trigger(
+            MAIN_REQUEST,
+            new AutomationService.Fold(
+                Fixture.REPOSITORY, FOLD_A, null, null, List.of("main"), null,
+                List.of("WAITING", "NOT_APPLICABLE")));
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    AutomationDto bump = AutomationFixture.entry(answer, DependencyBumpAutomation.KIND);
+    assertEquals(AutomationState.FRESH.name(), bump.state(), bump.detail());
+    assertEquals(1, peers.bodiesFor(withdraw).size());
+    assertNotNull(store.releaseRequest(MAIN_REQUEST).orElseThrow().withdrawnAt);
+  }
+
+  /**
+   * A main-only request whose pre-run DOES find a bump is the request that carries it — the
+   * internal upgrade only, as every request (qits-1164).
    */
   @Test
   void aMainOnlyRequestWithABumpToWriteIsKept() {
@@ -290,13 +322,13 @@ class UpstreamReplanTest {
     AutomationDto bump = AutomationFixture.entry(answer, DependencyBumpAutomation.KIND);
     assertEquals(AutomationState.REQUESTED.name(), bump.state(), bump.detail());
     assertEquals(
-        List.of(EVENTSTREAM, AutomationFixture.QUARKUS_BOM),
+        List.of(EVENTSTREAM),
         eu.wohlben.qits.maintenance.bump.BumpService.changes(
                 store.bump(UUID.fromString(bump.bumpId())).orElseThrow())
             .stream()
             .map(eu.wohlben.qits.maintenance.pending.Change::name)
             .toList(),
-        "a main-only request carries external upgrades too");
+        "a main-only request carries no external upgrade");
     assertTrue(
         store.releaseRequest(MAIN_REQUEST).orElseThrow().withdrawnAt == null, "and is kept");
   }
