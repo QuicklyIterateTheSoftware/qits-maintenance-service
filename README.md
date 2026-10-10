@@ -526,14 +526,18 @@ POST /release-requests/{id}/automations           → {requestId, foldSha,
      {repository, foldSha, previousFoldSha?,            automations:[{kind, label, state, detail,
       changedSincePrevious?:[path]|null,                             bumpId, runIds, branch,
       sourceBranches:[…], workItem?,                                 resultSha, updatedAt,
-      accepts?:["WAITING","NOT_APPLICABLE"]}                         failure, reason}]}
+      accepts?:["WAITING","NOT_APPLICABLE"],                         failure, reason}]}
+      backingBranch?, qualifiedId?}
                                                     the every-fold trigger, idempotent per fold;
                                                     state FRESH|REQUESTED|RUNNING|COMMITTED|
                                                     FAILED|UNKNOWN|SUPERSEDED (qits-978), and
                                                     WAITING|NOT_APPLICABLE with a reason — only
                                                     when `accepts` names them (qits-1133); without
                                                     it a waiting kind reads REQUESTED and an
-                                                    inapplicable one is not listed
+                                                    inapplicable one is not listed;
+                                                    `backingBranch` is the fold an own-branch run
+                                                    starts from — absent, it is read from
+                                                    qits-projects, else `release/<id>` (qits-1158)
                                                                 400 not a uuid/sha  404 unknown repo
 GET  /release-requests/{id}/automations[?foldSha=] → the same answer, newest fold when unnamed
 POST /release-requests/{id}/automations/{kind}/runs

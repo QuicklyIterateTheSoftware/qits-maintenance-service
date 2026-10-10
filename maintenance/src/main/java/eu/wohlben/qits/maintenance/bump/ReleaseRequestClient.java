@@ -563,6 +563,11 @@ public class ReleaseRequestClient {
    * @param unknown qits-projects answered 404: it holds no such request. Unreadable like any other
    *     failure, and kept apart only because the automation-branch sweep may act on it — every other
    *     reader treats it as the peer that could not be asked, which is what it was before
+   * @param backingBranch the branch the request is folded onto (qits-1158): {@code release/<uuid>}
+   *     for an older request, {@code release/<qualifiedId>} for a newer one. Null when unread or not
+   *     answered
+   * @param qualifiedId the request's logical id, {@code <repository>-rr-<n>} (qits-1158), or null
+   *     when unread or not answered — a qits-projects that predates it answers none
    */
   public record ReleaseState(
       String state,
@@ -570,7 +575,20 @@ public class ReleaseRequestClient {
       String error,
       String mergedSha,
       List<String> branches,
-      boolean unknown) {
+      boolean unknown,
+      String backingBranch,
+      String qualifiedId) {
+
+    /** An answer that names no backing branch and no logical id. */
+    public ReleaseState(
+        String state,
+        String detail,
+        String error,
+        String mergedSha,
+        List<String> branches,
+        boolean unknown) {
+      this(state, detail, error, mergedSha, branches, unknown, null, null);
+    }
 
     /** The three-field answer every reader before the automations needed. */
     public ReleaseState(String state, String detail, String error) {
@@ -635,6 +653,11 @@ public class ReleaseRequestClient {
           && !withdrawn();
     }
 
+    /** What a sentence calls the request: its logical id when answered, else {@code requestId}. */
+    public String name(String requestId) {
+      return qualifiedId == null || qualifiedId.isBlank() ? requestId : qualifiedId;
+    }
+
     /** The sentence a person reads: the state, and what that service said about it. */
     public String sentence() {
       if (state == null) {
@@ -687,7 +710,10 @@ public class ReleaseRequestClient {
         detail == null ? conflict(request) : detail,
         null,
         text(request, "mergedSha"),
-        branchSources(request));
+        branchSources(request),
+        false,
+        text(request, "backingBranch"),
+        text(request, "qualifiedId"));
   }
 
   /**

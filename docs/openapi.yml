@@ -586,6 +586,10 @@ components:
           type: array
           items:
             type: string
+        backingBranch:
+          type: string
+        qualifiedId:
+          type: string
     UUID:
       type: string
       format: uuid
@@ -1213,4 +1217,4 @@ paths:
         - qits:agent
 info:
   title: qits-platform-maintenance API
-  version: 2026.1002.201448
+  version: 2026.1010.154002

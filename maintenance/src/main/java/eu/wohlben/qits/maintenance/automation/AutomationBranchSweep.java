@@ -133,7 +133,7 @@ public class AutomationBranchSweep {
     ReleaseRequestClient.ReleaseState state = releases.state(repository.catalogId, requestId);
     if (state.readable()) {
       return CLOSED.contains(state.state())
-          ? "release request " + requestId + " is " + state.state()
+          ? "release request " + state.name(requestId) + " is " + state.state()
           : null;
     }
     if (!state.unknown()) {

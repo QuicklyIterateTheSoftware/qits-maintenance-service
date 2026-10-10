@@ -1338,6 +1338,8 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
    * @param status REQUESTED to queue a run; NOTHING_TO_DO or FAILED to record an outcome no run is
    *     needed for (a FRESH plan, a carry-over, a breaker that is still tripped)
    * @param message the sentence, for a row opened already ended
+   * @param foldRef the branch the request is folded onto, or null when not known (qits-1158)
+   * @param qualifiedId the request's logical id, or null when not known (qits-1158)
    */
   public record AutomationOpening(
       String repository,
@@ -1353,7 +1355,31 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
       List<?> changes,
       Map<String, Object> extras,
       BumpStatus status,
-      String message) {}
+      String message,
+      String foldRef,
+      String qualifiedId) {
+
+    /** An opening that names no fold ref and no logical id. */
+    public AutomationOpening(
+        String repository,
+        String kind,
+        String requestId,
+        String foldSha,
+        String previousFoldSha,
+        Boolean automationOnly,
+        String branch,
+        String workItem,
+        String environment,
+        BumpTrigger trigger,
+        List<?> changes,
+        Map<String, Object> extras,
+        BumpStatus status,
+        String message) {
+      this(
+          repository, kind, requestId, foldSha, previousFoldSha, automationOnly, branch, workItem,
+          environment, trigger, changes, extras, status, message, null, null);
+    }
+  }
 
   /**
    * Opens one release-request automation row, <b>locked per (repository, kind, request)</b>.
@@ -1452,6 +1478,8 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
                   ? null
                   : writeJson(opening.extras());
           row.releaseRequestId = opening.requestId();
+          row.releaseRequestQualifiedId = opening.qualifiedId();
+          row.foldRef = opening.foldRef();
           row.foldSha = opening.foldSha();
           row.previousFoldSha = opening.previousFoldSha();
           row.automationOnly = opening.automationOnly();

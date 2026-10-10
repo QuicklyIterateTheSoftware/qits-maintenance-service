@@ -143,6 +143,22 @@ public class MtBump extends PanacheEntityBase {
   public String releaseRequestId;
 
   /**
+   * The release request's logical id, {@code <repository>-rr-<n>} (qits-1158, V23): what the
+   * sentences on this row name. Null when qits-projects did not say; they then name {@link
+   * #releaseRequestId}.
+   */
+  @Column(name = "release_request_qualified_id", length = 255)
+  public String releaseRequestQualifiedId;
+
+  /**
+   * The branch the request is folded onto, as qits-projects named it (qits-1158, V23): an own-branch
+   * run's base ref. Null on rows opened before the column and on GROUP rows; dispatch then uses
+   * {@code release/} + {@link #releaseRequestId}.
+   */
+  @Column(name = "fold_ref", length = 255)
+  public String foldRef;
+
+  /**
    * <b>Which release-request automation this row is</b> — {@code screenshot-baselines}, {@code
    * estate-pins} — on a {@link #mode AUTOMATION} row, and null on every GROUP row. The kind's wire
    * name, which is also its {@code ReleaseRequestAutomation.kind()} and the segment of its branch.

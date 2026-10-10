@@ -36,6 +36,9 @@ import java.util.function.Supplier;
  *       fold moved?) and {@link ReleaseRequestClient#withdraw} (nothing left to bump);
  *   <li>{@code BumpDispatcher.tick} — {@link ReleaseRequestClient#openRequests}, to find a request
  *       to join;
+ *   <li>the {@code triggerReleaseRequestAutomations} and {@code runReleaseRequestAutomation} doors —
+ *       {@link ReleaseRequestClient#state}, for the branch the request is folded onto (qits-1158);
+ *       the re-run also for its state and fold;
  *   <li>{@code AutomationBranchSweep.sweep} — {@link ReleaseRequestClient#state}, to tell a closed
  *       request's automation branch from a live one;
  *   <li>the {@code SoftwareRelease} and {@code SCMRelease} events — {@code UpstreamReplan}'s
@@ -97,12 +100,17 @@ final class ProjectsContract {
   /** {@code getWork}: whether the ticket is still open, and still a MAINTENANCE one. */
   static final List<String> TICKET_STATE = List.of("status", "ticketType");
 
-  /** {@link ReleaseRequestClient#state}: the request's state, why, its fold, its branches. */
+  /**
+   * {@link ReleaseRequestClient#state}: the request's state, why, its fold, the branch it is folded
+   * onto, its branches. ({@code qualifiedId} is read too, and is not bound: no pinned golden master
+   * records it yet, and an absent one reads as none.)
+   */
   static final List<String> RELEASE_STATE =
       List.of(
           "request.state",
           "request.detail",
           "request.mergedSha",
+          "request.backingBranch",
           "request.sources[].kind",
           "request.sources[].name");
 
@@ -181,6 +189,7 @@ final class ProjectsContract {
       assertTrue(read.readable(), read.sentence());
       assertEquals(recorded.path("state").asText(), read.state());
       assertEquals(textOrNull(recorded.path("mergedSha")), read.mergedSha());
+      assertEquals(textOrNull(recorded.path("backingBranch")), read.backingBranch());
       // The mock serves every element of an array as the one merged template, so the names
       // repeat; what the contract proves is that each BRANCH source comes back as a branch name.
       int sources = recorded.path("sources").size();
@@ -297,6 +306,20 @@ final class ProjectsContract {
               WITHDRAW_REQUEST,
               STATUS_ONLY,
               WITHDRAW),
+          new Case(
+              Trigger.operation("triggerReleaseRequestAutomations"),
+              A_RELEASE_REQUEST_AWAITING_APPROVAL,
+              GET_RELEASE_REQUEST,
+              null,
+              RELEASE_STATE,
+              releaseState(A_RELEASE_REQUEST_AWAITING_APPROVAL)),
+          new Case(
+              Trigger.operation("runReleaseRequestAutomation"),
+              A_RELEASE_REQUEST_AWAITING_APPROVAL,
+              GET_RELEASE_REQUEST,
+              null,
+              RELEASE_STATE,
+              releaseState(A_RELEASE_REQUEST_AWAITING_APPROVAL)),
           new Case(
               Trigger.schedule("AutomationBranchSweep.sweep"),
               A_WITHDRAWN_RELEASE_REQUEST,

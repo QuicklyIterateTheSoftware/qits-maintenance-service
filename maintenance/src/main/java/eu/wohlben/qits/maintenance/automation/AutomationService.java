@@ -209,6 +209,9 @@ public class AutomationService {
    * @param workItem the work item a commit subject names, or null
    * @param accepts the answer words the caller understands beyond the old ones — {@code WAITING},
    *     {@code NOT_APPLICABLE} (qits-1133); empty for a caller that predates them
+   * @param backingBranch the branch the request is folded onto (qits-1158), or null — a caller that
+   *     predates it sends none, and the branch is then read from qits-projects
+   * @param qualifiedId the request's logical id, {@code <repository>-rr-<n>} (qits-1158), or null
    */
   public record Fold(
       String repository,
@@ -217,10 +220,26 @@ public class AutomationService {
       List<String> changedSincePrevious,
       List<String> sourceBranches,
       String workItem,
-      List<String> accepts) {
+      List<String> accepts,
+      String backingBranch,
+      String qualifiedId) {
 
     public Fold {
       accepts = accepts == null ? List.of() : List.copyOf(accepts);
+    }
+
+    /** A fold that names no backing branch and no logical id. */
+    public Fold(
+        String repository,
+        String foldSha,
+        String previousFoldSha,
+        List<String> changedSincePrevious,
+        List<String> sourceBranches,
+        String workItem,
+        List<String> accepts) {
+      this(
+          repository, foldSha, previousFoldSha, changedSincePrevious, sourceBranches, workItem,
+          accepts, null, null);
     }
 
     /** A fold from a caller that accepts no new word: the answer is exactly the old one. */
@@ -333,7 +352,11 @@ public class AutomationService {
     }
     String name = fold.repository().trim();
     MtRepository row = store.repository(name).orElseThrow(() -> unscanned(name));
-    AutomationSubject subject = subject(row, requestId, foldSha, fold.sourceBranches(), item);
+    RequestNames names = names(row, requestId, fold.backingBranch(), fold.qualifiedId());
+    AutomationSubject subject =
+        subject(
+            row, requestId, foldSha, fold.sourceBranches(), item, names.foldRef(),
+            names.qualifiedId());
 
     // A kind this fold already has rows for is answered from them — and it applied, or it would
     // have none, so its paths join the union without asking the git host again.
@@ -701,13 +724,18 @@ public class AutomationService {
     }
     if (!OPEN.contains(state.state())) {
       throw new ReleaseRequestNotOpenException(
-          "the release request " + requestId + " is " + state.state() + " and takes no branch");
+          "the release request " + state.name(requestId) + " is " + state.state()
+              + " and takes no branch");
     }
     if (state.mergedSha() == null) {
       throw new AutomationNotRunnableException(
-          "the release request " + requestId + " has not been folded yet; there is no fold to run on");
+          "the release request " + state.name(requestId)
+              + " has not been folded yet; there is no fold to run on");
     }
-    AutomationSubject subject = subject(row, requestId, state.mergedSha(), state.branches(), item);
+    AutomationSubject subject =
+        subject(
+            row, requestId, state.mergedSha(), state.branches(), item,
+            foldRef(requestId, state.backingBranch()), state.qualifiedId());
 
     Plan plan = plan(kind, subject);
     List<Plan.Run> runs;
@@ -858,7 +886,7 @@ public class AutomationService {
           + ", which does not write a branch of its own");
       return;
     }
-    String baseRef = FOLD_BRANCH_PREFIX + row.releaseRequestId;
+    String baseRef = foldRef(row.releaseRequestId, row.foldRef);
     List<String> problems = BumpPayload.problems(row.automationKind, row.branch, baseRef, List.of());
     if (!problems.isEmpty()) {
       fail(row, String.join("; ", problems));
@@ -878,7 +906,9 @@ public class AutomationService {
     }
     store.bumpStartHead(row.id, branchHead(repository, row.branch));
     AutomationSubject subject =
-        subject(repository, row.releaseRequestId, row.foldSha, List.of(), row.workItem);
+        subject(
+            repository, row.releaseRequestId, row.foldSha, List.of(), row.workItem, baseRef,
+            row.releaseRequestQualifiedId);
     // A PLAN THAT NAMED ITS FILES STAGES THOSE AND NOTHING ELSE (qits-1133): the dependency bump's
     // `commitPaths` are the manifests its changes touch, frozen on the row at the plan, and they
     // replace the kind's whole pathspec list. A plan's `changes` ride beside them in the
@@ -1041,7 +1071,7 @@ public class AutomationService {
           row.id,
           BumpStatus.SUPERSEDED,
           ciRunStatus,
-          "superseded: release request " + row.releaseRequestId + " moved on to fold "
+          "superseded: release request " + requestName(row) + " moved on to fold "
               + abbreviate(moved) + " before this run ended " + ciRunStatus,
           now);
       LOG.infof("The %s automation %s was superseded by fold %s", row.automationKind, row.id, moved);
@@ -1140,7 +1170,7 @@ public class AutomationService {
               row.id,
               BumpStatus.SUCCEEDED,
               ciRunStatus,
-              base + ", joined to release request " + row.releaseRequestId,
+              base + ", joined to release request " + requestName(row),
               after,
               now);
       case REFUSED ->
@@ -1480,7 +1510,9 @@ public class AutomationService {
                 run.changes(),
                 run.extras(),
                 BumpStatus.REQUESTED,
-                null),
+                null,
+                subject.foldRef(),
+                subject.qualifiedId()),
             exclusive,
             Instant.now());
     LOG.infof(
@@ -1543,18 +1575,33 @@ public class AutomationService {
         List.of(),
         Map.of(),
         status,
-        message);
+        message,
+        subject.foldRef(),
+        subject.qualifiedId());
   }
 
   // --- helpers --------------------------------------------------------------------------------
 
-  /** The subject of one request at one fold. */
+  /** The subject of one request at one fold, folded onto {@code release/<requestId>}. */
   public AutomationSubject subject(
       MtRepository repository,
       String requestId,
       String foldSha,
       List<String> sourceBranches,
       String workItem) {
+    return subject(
+        repository, requestId, foldSha, sourceBranches, workItem, foldRef(requestId, null), null);
+  }
+
+  /** The subject of one request at one fold, folded onto {@code foldRef}. */
+  public AutomationSubject subject(
+      MtRepository repository,
+      String requestId,
+      String foldSha,
+      List<String> sourceBranches,
+      String workItem,
+      String foldRef,
+      String qualifiedId) {
     String main = baseRef(repository);
     List<String> branches = new ArrayList<>();
     if (sourceBranches != null) {
@@ -1574,10 +1621,57 @@ public class AutomationService {
         repository,
         requestId,
         foldSha,
-        FOLD_BRANCH_PREFIX + requestId,
+        foldRef,
         branches,
         workItem,
-        new FoldReader(gitHost, repository.project, repository.name, foldSha));
+        new FoldReader(gitHost, repository.project, repository.name, foldSha),
+        qualifiedId == null || qualifiedId.isBlank() ? null : qualifiedId.trim());
+  }
+
+  /**
+   * The branch a request is folded onto and its logical id (qits-1158).
+   *
+   * @param foldRef never null: the backing branch, or {@code release/<uuid>}
+   * @param qualifiedId null when nobody said
+   */
+  record RequestNames(String foldRef, String qualifiedId) {}
+
+  /**
+   * <b>Where the trigger's request is folded, and what it is called.</b> What the caller sent wins.
+   * A caller that sent no backing branch (one that predates qits-1158) costs one read of the
+   * request; an unreadable answer, or one that names none, leaves {@code release/<uuid>}, which is
+   * where every request such a caller can name is folded.
+   */
+  private RequestNames names(
+      MtRepository repository, String requestId, String backingBranch, String qualifiedId) {
+    if (!blank(backingBranch)) {
+      return new RequestNames(foldRef(requestId, backingBranch), qualifiedId);
+    }
+    if (blank(repository.catalogId)) {
+      return new RequestNames(foldRef(requestId, null), qualifiedId);
+    }
+    ReleaseRequestClient.ReleaseState state = releases.state(repository.catalogId, requestId);
+    return new RequestNames(
+        foldRef(requestId, state.backingBranch()),
+        blank(qualifiedId) ? state.qualifiedId() : qualifiedId);
+  }
+
+  /**
+   * <b>The one rule for a request's fold ref</b> (qits-1158): the backing branch qits-projects
+   * named, else {@code release/<uuid>} — where every request was folded before logical ids, and
+   * where every older one still is.
+   */
+  static String foldRef(String requestId, String backingBranch) {
+    return blank(backingBranch) ? FOLD_BRANCH_PREFIX + requestId : backingBranch.trim();
+  }
+
+  /** What a sentence about a row calls its request: the logical id when known, else the uuid. */
+  private static String requestName(MtBump row) {
+    return blank(row.releaseRequestQualifiedId) ? row.releaseRequestId : row.releaseRequestQualifiedId;
+  }
+
+  private static boolean blank(String value) {
+    return value == null || value.isBlank();
   }
 
   /** Where a row's commit lands — the kind's answer, or, for a kind this build no longer has, the branch's. */

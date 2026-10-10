@@ -46,6 +46,7 @@
         "body": {
           "content": {
             "request": {
+              "backingBranch": "release/00000000-0000-4000-8000-000000000003",
               "detail": "Withdrawn by dana.weber: the export moves to next quarter's release",
               "mergedSha": "cb9776855921387be1951de5bbbf0914aa54b1bf",
               "sources": [
@@ -75,6 +76,14 @@
         },
         "matchingRules": {
           "body": {
+            "$.request.backingBranch": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
             "$.request.detail": {
               "combine": "AND",
               "matchers": [
@@ -328,6 +337,7 @@
         "body": {
           "content": {
             "request": {
+              "backingBranch": "release/00000000-0000-4000-8000-000000000003",
               "detail": "Waiting for a person to approve bd6360a2c6",
               "mergedSha": "bd6360a2c6b42a991c62e3418b7f6d4ac5d89f14",
               "sources": [
@@ -357,6 +367,14 @@
         },
         "matchingRules": {
           "body": {
+            "$.request.backingBranch": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
             "$.request.detail": {
               "combine": "AND",
               "matchers": [
@@ -1225,6 +1243,302 @@
               ]
             },
             "$.requests[*].state": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json.*"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-projects-service",
+            "operationId": "getReleaseRequest"
+          },
+          "qits-trigger": {
+            "app": "qits-maintenance-service",
+            "kind": "operation",
+            "operationId": "runReleaseRequestAutomation"
+          }
+        }
+      },
+      "description": "runReleaseRequestAutomation: getReleaseRequest",
+      "key": "494a725e",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a release request awaiting approval",
+          "params": {
+            "mergedSha": "bd6360a2c6b42a991c62e3418b7f6d4ac5d89f14",
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "repositoryId": "00000000-0000-4000-8000-000000000002",
+            "requestId": "00000000-0000-4000-8000-000000000003"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/projects/api/repositories/${repositoryId}/release-requests/${requestId}",
+            "type": "ProviderState"
+          }
+        },
+        "method": "GET",
+        "path": "/projects/api/repositories/00000000-0000-4000-8000-000000000002/release-requests/00000000-0000-4000-8000-000000000003"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "request": {
+              "backingBranch": "release/00000000-0000-4000-8000-000000000003",
+              "detail": "Waiting for a person to approve bd6360a2c6",
+              "mergedSha": "bd6360a2c6b42a991c62e3418b7f6d4ac5d89f14",
+              "sources": [
+                {
+                  "kind": "BRANCH",
+                  "name": "main"
+                },
+                {
+                  "kind": "BRANCH",
+                  "name": "main"
+                },
+                {
+                  "kind": "BRANCH",
+                  "name": "main"
+                }
+              ],
+              "state": "PENDING"
+            }
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.request.backingBranch": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.request.detail": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.request.mergedSha": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.request.sources": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "max": 3,
+                  "min": 3
+                }
+              ]
+            },
+            "$.request.sources[*].kind": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.request.sources[*].name": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.request.state": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json.*"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-projects-service",
+            "operationId": "getReleaseRequest"
+          },
+          "qits-trigger": {
+            "app": "qits-maintenance-service",
+            "kind": "operation",
+            "operationId": "triggerReleaseRequestAutomations"
+          }
+        }
+      },
+      "description": "triggerReleaseRequestAutomations: getReleaseRequest",
+      "key": "71c56118",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a release request awaiting approval",
+          "params": {
+            "mergedSha": "bd6360a2c6b42a991c62e3418b7f6d4ac5d89f14",
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "repositoryId": "00000000-0000-4000-8000-000000000002",
+            "requestId": "00000000-0000-4000-8000-000000000003"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/projects/api/repositories/${repositoryId}/release-requests/${requestId}",
+            "type": "ProviderState"
+          }
+        },
+        "method": "GET",
+        "path": "/projects/api/repositories/00000000-0000-4000-8000-000000000002/release-requests/00000000-0000-4000-8000-000000000003"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "request": {
+              "backingBranch": "release/00000000-0000-4000-8000-000000000003",
+              "detail": "Waiting for a person to approve bd6360a2c6",
+              "mergedSha": "bd6360a2c6b42a991c62e3418b7f6d4ac5d89f14",
+              "sources": [
+                {
+                  "kind": "BRANCH",
+                  "name": "main"
+                },
+                {
+                  "kind": "BRANCH",
+                  "name": "main"
+                },
+                {
+                  "kind": "BRANCH",
+                  "name": "main"
+                }
+              ],
+              "state": "PENDING"
+            }
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.request.backingBranch": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.request.detail": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.request.mergedSha": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.request.sources": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "max": 3,
+                  "min": 3
+                }
+              ]
+            },
+            "$.request.sources[*].kind": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.request.sources[*].name": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.request.state": {
               "combine": "AND",
               "matchers": [
                 {

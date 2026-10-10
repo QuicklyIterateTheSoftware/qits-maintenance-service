@@ -66,6 +66,7 @@ erDiagram
     int failed_step_index
     text failure_excerpt
     instant finished_at
+    string fold_ref "length 255"
     string fold_sha "length 64"
     string group_name "not null, length 255"
     text message
@@ -73,6 +74,7 @@ erDiagram
     string previous_fold_sha "length 64"
     text release_detail
     string release_request_id "length 255"
+    string release_request_qualified_id "length 255"
     string release_state "length 32"
     instant release_state_at
     string replace_head "length 64"

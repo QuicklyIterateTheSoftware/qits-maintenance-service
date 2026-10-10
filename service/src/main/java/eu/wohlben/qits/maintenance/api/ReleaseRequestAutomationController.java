@@ -55,6 +55,11 @@ public class ReleaseRequestAutomationController {
    * @param accepts the answer words the caller understands beyond the old ones (qits-1133): {@code
    *     WAITING} and {@code NOT_APPLICABLE}. Absent, a waiting kind is answered REQUESTED and a kind
    *     that does not apply is left out, exactly as before
+   * @param backingBranch the branch the request is folded onto (qits-1158): {@code
+   *     release/<qualifiedId>} for a newer request. Absent, it is read from qits-projects, and
+   *     {@code release/<requestId>} when that answers none
+   * @param qualifiedId the request's logical id, {@code <repository>-rr-<n>} (qits-1158): what the
+   *     sentences on its rows name. Absent, they name the request id
    */
   public record TriggerRequest(
       String repository,
@@ -63,7 +68,9 @@ public class ReleaseRequestAutomationController {
       List<String> changedSincePrevious,
       List<String> sourceBranches,
       String workItem,
-      List<String> accepts) {}
+      List<String> accepts,
+      String backingBranch,
+      String qualifiedId) {}
 
   /**
    * A re-run's body. Both optional.
@@ -113,7 +120,9 @@ public class ReleaseRequestAutomationController {
             request.changedSincePrevious(),
             request.sourceBranches(),
             request.workItem(),
-            request.accepts()));
+            request.accepts(),
+            request.backingBranch(),
+            request.qualifiedId()));
   }
 
   /**
