@@ -121,6 +121,8 @@ components:
           $ref: "#/components/schemas/Instant"
         failure:
           $ref: "#/components/schemas/FailureDto"
+        reason:
+          type: string
     BumpDto:
       type: object
       properties:
@@ -1049,12 +1051,6 @@ paths:
         required: true
         schema:
           type: string
-      - name: accepts
-        in: query
-        schema:
-          type: array
-          items:
-            type: string
       - name: foldSha
         in: query
         schema:

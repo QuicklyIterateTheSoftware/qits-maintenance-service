@@ -70,6 +70,8 @@ class MaintenanceApiTest {
     inventory.clear();
     peers.reset();
     Fixture.scriptScan(peers);
+    // Who publishes each internal pin: a bump's changelog ranges need a source repository (qits-893).
+    Fixture.seedProducers(store);
     Fixture.scriptBranchAbsent(peers);
     // qits-projects answers the release ask by default, because the SUCCEEDED ending makes it: a
     // suite that left it unscripted would have every pushed branch record a refusal, and the tests

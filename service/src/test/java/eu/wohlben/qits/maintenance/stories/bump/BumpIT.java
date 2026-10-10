@@ -129,7 +129,13 @@ public class BumpIT {
       does with that is compose a payload — the group's pending changes, each naming a manifest, a
       location and the two versions — and hand it to qits-ci under the bump row's own id, which is
       the dedupe key that makes a retry record no second run. It answers 202 at once, because
-      applying the changes is a CI run in somebody else's pipeline: a clone, an edit, a push. It
+      applying the changes is a CI run in somebody else's pipeline: a clone, an edit, a push.
+      Before the trigger, it asks qits-artifacts' docs store which releases of each internal
+      dependency's source repository published a changelog: every release the bump pulls in must
+      have one — a missing one fails the bump rather than writing a commit without it — and the
+      ones it pulls in are named on their change, for the step to compose the commit message from.
+      A repository whose releases all predate changelogs has none to name, and is listed as before.
+      It
       reads the branch's head before the trigger and again when the run ends, and only the head,
       never a commit count — one bump is up to two commits. While the run is going, a second
       request for the same group is refused: two runs writing one branch would make the second a
@@ -147,6 +153,18 @@ public class BumpIT {
     StoryPeers ci = StoryPeers.attach(StoryTarget.CI);
     StoryPeers githost = StoryPeers.attach(StoryTarget.GITHOST);
     StoryPeers projects = StoryPeers.attach(StoryTarget.PROJECTS);
+    StoryPeers artifacts = StoryPeers.attach(StoryTarget.ARTIFACTS);
+
+    // WHO PUBLISHES EACH INTERNAL PIN, and which of them published changelogs (qits-893). The
+    // eventstream's oldest changelog is the pin's own version, so the one release this bump pulls
+    // in is the new pin, and it published one. The other four repositories answer 404: every
+    // release of theirs predates changelogs, which is not a failure.
+    StoryCatalog.seedProducers();
+    artifacts.json(
+        StoryCatalog.changelogPath(StoryCatalog.SECOND_REPOSITORY),
+        "{\"name\":\"@changelog/" + StoryCatalog.SECOND_REPOSITORY + "\",\"versions\":["
+            + "{\"version\":\"2026.821.3\",\"publishedAt\":\"2026-08-21T01:00:00Z\"},"
+            + "{\"version\":\"2026.811.1\",\"publishedAt\":\"2026-08-11T01:00:00Z\"}]}");
 
     // THE RELEASE ASK, armed before anything is triggered. The sweep closes the bump and makes the
     // ask on the same worker task, so a route armed after the run went green would be a race the
@@ -227,6 +245,18 @@ public class BumpIT {
             && payload.contains("\"to\":\"2026.821.3\"")
             && payload.contains("\"manifestPath\":\"pom.xml\""),
         "a change names a file, a location and two versions: " + payload);
+    // AND THE CHANGELOGS IT PULLS IN, named and never carried: the step fetches the texts itself.
+    assertTrue(
+        payload.contains(
+            "\"changelog\":{\"repository\":\"" + StoryCatalog.SECOND_REPOSITORY
+                + "\",\"versions\":[\"2026.821.3\"]}"),
+        "the eventstream change names the one changelog it pulls in: " + payload);
+    story
+        .note("each internal change names the changelogs of the releases it pulls in — every"
+            + " release after the old pin up to the new one, each proved published before the"
+            + " trigger — and an external one, or one whose repository predates changelogs, names"
+            + " none")
+        .as("the-changelogs-it-pulls-in");
     // AND THE GROUPING IS HONOURED ON THE WIRE. @angular/core is pending too, and it belongs to the
     // group this repository declared for it — a payload carrying it would put a change on a branch
     // its author configured against.
@@ -743,6 +773,7 @@ public class BumpIT {
     ReportAssertions.assertComplete(CATEGORY_SLUG, PUSHED_SLUG, UserflowReport.PASSED);
     ReportAssertions.assertStepId(CATEGORY_SLUG, PUSHED_SLUG, "bump-accepted");
     ReportAssertions.assertStepId(CATEGORY_SLUG, PUSHED_SLUG, "the-payload-is-the-decision");
+    ReportAssertions.assertStepId(CATEGORY_SLUG, PUSHED_SLUG, "the-changelogs-it-pulls-in");
     ReportAssertions.assertStepId(CATEGORY_SLUG, PUSHED_SLUG, "groups-are-branches");
     ReportAssertions.assertStepId(CATEGORY_SLUG, PUSHED_SLUG, "one-branch-one-writer");
     ReportAssertions.assertStepId(CATEGORY_SLUG, PUSHED_SLUG, "the-branch-was-pushed");
@@ -775,6 +806,20 @@ public class BumpIT {
         StoryTarget.PROJECTS,
         "GET " + StoryCatalog.releaseListingWire(StoryCatalog.RELEASE_REQUESTS_PATH) + " -> 200");
 
+    // THE CHANGELOG LISTINGS (qits-893): one read per source repository — the eventstream's
+    // answered, and the four whose releases predate changelogs a 404 each.
+    out(
+        PUSHED_SLUG,
+        StoryTarget.ARTIFACTS,
+        "GET " + StoryCatalog.changelogPath(StoryCatalog.SECOND_REPOSITORY) + " -> 200");
+    for (String predates :
+        List.of("qits-parent", "qits-arch-rules", "qits-ui-components-jslib", "qits-build-images")) {
+      out(
+          PUSHED_SLUG,
+          StoryTarget.ARTIFACTS,
+          "GET " + StoryCatalog.changelogPath(predates) + " -> 404");
+    }
+
     ReportAssertions.assertDeclaredEdge(
         CATEGORY_SLUG,
         PUSHED_SLUG,
@@ -783,19 +828,18 @@ public class BumpIT {
         StoryTarget.STORE,
         "the changes are frozen onto the bump row at REQUEST time and never recomputed");
 
-    // THE DESIGN, ASSERTED AS A SHAPE. Four requests in; out, the release listing, one trigger, one
-    // run read, two head reads, one release ask and a row. THIS SERVICE PUSHED NOTHING — there is no
-    // arrow from it to any repository, because there is no such call in it to make. A twelfth edge
-    // would be this process having grown a way to touch somebody else's tree, and no presence check
-    // could see it.
-    ReportAssertions.assertEdgeCount(CATEGORY_SLUG, PUSHED_SLUG, 11);
+    // THE DESIGN, ASSERTED AS A SHAPE. Four requests in; out, the release listing, five changelog
+    // listings, one trigger, one run read, two head reads, one release ask and a row. THIS SERVICE
+    // PUSHED NOTHING — there is no arrow from it to any repository, because there is no such call in
+    // it to make. A seventeenth edge would be this process having grown a way to touch somebody
+    // else's tree, and no presence check could see it.
+    ReportAssertions.assertEdgeCount(CATEGORY_SLUG, PUSHED_SLUG, 16);
     ReportAssertions.assertOnlyEdgesFrom(
         CATEGORY_SLUG, PUSHED_SLUG, List.of(StoryIdentities.OPERATOR, StoryTarget.SERVICE));
     // A bump reads no manifest and asks no registry: the changes were frozen at REQUEST time, out
     // of an inventory a scan wrote. Recomputing at dispatch would not be the list the operator saw.
     // (qits-projects IS reached here — for the release listing and the release ask above, never the
-    // catalog.)
-    ReportAssertions.assertNoEdgesTo(CATEGORY_SLUG, PUSHED_SLUG, StoryTarget.ARTIFACTS);
+    // catalog; and qits-artifacts only for the changelog listings above, never a registry.)
     ReportAssertions.assertNoEdgesTo(CATEGORY_SLUG, PUSHED_SLUG, StoryTarget.MIRROR);
     // The row id is generated per run and reaches no label, no note and no rendering.
     ReportAssertions.assertNotLeaked(CATEGORY_SLUG, PUSHED_SLUG, pushedBumpId);

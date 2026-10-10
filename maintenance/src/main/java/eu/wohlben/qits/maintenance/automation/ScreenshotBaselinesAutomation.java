@@ -105,6 +105,12 @@ public class ScreenshotBaselinesAutomation implements ReleaseRequestAutomation {
     return Target.OWN_BRANCH;
   }
 
+  /** Rendered from what the fold builds — after the bumps, never beside them. */
+  @Override
+  public Stage stage() {
+    return Stage.DERIVED;
+  }
+
   /** Whether a {@code package.json} declares the script. One that does not parse declares nothing. */
   static boolean declaresScript(String content) {
     try {

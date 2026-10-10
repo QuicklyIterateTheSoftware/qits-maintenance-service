@@ -54,6 +54,9 @@ public class MaintenanceConfig {
   @ConfigProperty(name = "qits.maintenance.time-zone")
   String timeZone;
 
+  @ConfigProperty(name = "qits.maintenance.pre-run.upstream.enabled", defaultValue = "false")
+  boolean preRunUpstreamEnabled;
+
   /** {@link #bumpQuietHours()}, parsed once. */
   private volatile QuietHours quietHours;
 
@@ -123,6 +126,19 @@ public class MaintenanceConfig {
    */
   public boolean bumpDispatchGated() {
     return bumpDispatchGated;
+  }
+
+  /**
+   * <b>The upstream half of the pre-run (qits-1133)</b> — off by default, and the one switch R2's
+   * cutover flips. On: every time {@code mt_latest} advances, each open release request of a
+   * consumer that is not READY has its {@code dependency-bump} re-planned on its current fold (three
+   * restarts without a QA verdict and it is left alone until it has one), and the dispatcher, where
+   * it would have cut a {@code maintenance/dependencies} branch, opens a MAIN-ONLY {@code LOWEST}
+   * request for the pre-run to write the bump into instead — and withdraws it again when that
+   * pre-run finds nothing to write. Off: none of that, and group dispatch is exactly what it was.
+   */
+  public boolean preRunUpstreamEnabled() {
+    return preRunUpstreamEnabled;
   }
 
   /**

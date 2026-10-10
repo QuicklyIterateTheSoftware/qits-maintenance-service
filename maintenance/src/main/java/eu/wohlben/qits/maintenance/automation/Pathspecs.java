@@ -35,50 +35,6 @@ public final class Pathspecs {
     return false;
   }
 
-  /**
-   * A path both lists would match, or null — the runtime disjointness check (qits-1133). Read
-   * through {@link #witnesses}: for a plain path that is the path itself, for a glob a couple of
-   * paths it matches. A null or empty list overlaps nothing.
-   */
-  public static String overlap(List<String> one, List<String> other) {
-    if (one == null || other == null || one.isEmpty() || other.isEmpty()) {
-      return null;
-    }
-    for (String pathspec : one) {
-      for (String witness : witnesses(pathspec)) {
-        if (matches(pathspec, witness) && matchesAny(other, witness)) {
-          return witness;
-        }
-      }
-    }
-    for (String pathspec : other) {
-      for (String witness : witnesses(pathspec)) {
-        if (matches(pathspec, witness) && matchesAny(one, witness)) {
-          return witness;
-        }
-      }
-    }
-    return null;
-  }
-
-  /** Paths a pathspec matches: its wildcards filled in a couple of ways. */
-  public static List<String> witnesses(String pathspec) {
-    if (pathspec == null || pathspec.isBlank()) {
-      return List.of();
-    }
-    String spec =
-        pathspec.startsWith(":(") && pathspec.indexOf(')') > 0
-            ? pathspec.substring(pathspec.indexOf(')') + 1)
-            : pathspec;
-    String shallow =
-        spec.replace("**/", "").replace("/**", "/x.png").replace("**", "x").replace("*", "x")
-            .replace("?", "x");
-    String deep =
-        spec.replace("**/", "a/b/").replace("/**", "/c/d.png").replace("**", "y").replace("*", "y")
-            .replace("?", "y");
-    return shallow.equals(deep) ? List.of(shallow) : List.of(shallow, deep);
-  }
-
   /** Whether {@code path} is under {@code pathspec}. */
   public static boolean matches(String pathspec, String path) {
     if (pathspec == null || path == null || pathspec.isBlank()) {

@@ -2,7 +2,9 @@ package eu.wohlben.qits.maintenance.bump;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import eu.wohlben.qits.maintenance.bump.changelog.ChangelogRange;
 import eu.wohlben.qits.maintenance.peer.PeerAnswer;
 import eu.wohlben.qits.maintenance.peer.PeerClient;
 import eu.wohlben.qits.maintenance.peer.PeerExchange;
@@ -40,6 +42,12 @@ import java.util.regex.Pattern;
  * {@code MaintenanceBump} — or the repository could not be read this time. Nothing is running
  * either way, so the bump is FAILED and the next scheduled scan asks again. Treating it as success
  * would report a branch that was never written.
+ *
+ * <p><b>An internal change may carry a {@code changelog}</b> (epic qits-893): {@code {repository,
+ * versions}}, naming the changelogs of the releases it pulls in, which {@link
+ * eu.wohlben.qits.maintenance.bump.changelog.ChangelogRanges} proved published before the trigger.
+ * A change with none carries no such key. The texts never ride here — the payload reaches the step
+ * as one environment string — the step's CLI fetches them.
  *
  * <p><b>{@code payload.repository} is the repository's public NAME</b>, which qits-ci resolves
  * against its candidate list — qits-projects' catalog, the same listing this service scans from. An
@@ -119,7 +127,27 @@ public class CiClient {
       String baseRef,
       List<Change> changes,
       Map<String, String> extra) {
-    return trigger(EVENT_NAME, bumpId, repository, group, branch, baseRef, changes, extra);
+    return trigger(bumpId, repository, group, branch, baseRef, changes, extra, Map.of());
+  }
+
+  /**
+   * The bump trigger with the changelogs its changes pull in (epic qits-893).
+   *
+   * @param changelogs the range of every change that has one, as {@link
+   *     eu.wohlben.qits.maintenance.bump.changelog.ChangelogRanges} resolved it; a change with none
+   *     is sent without a {@code changelog} key
+   */
+  public TriggerResult trigger(
+      String bumpId,
+      String repository,
+      String group,
+      String branch,
+      String baseRef,
+      List<Change> changes,
+      Map<String, String> extra,
+      Map<Change, ChangelogRange> changelogs) {
+    return trigger(
+        EVENT_NAME, bumpId, repository, group, branch, baseRef, changes, extra, changelogs);
   }
 
   /**
@@ -136,14 +164,54 @@ public class CiClient {
       String baseRef,
       List<Change> changes,
       Map<String, String> extra) {
+    return trigger(eventName, bumpId, repository, group, branch, baseRef, changes, extra, Map.of());
+  }
+
+  /**
+   * The same, with the changelogs: <b>each change that has a range carries {@code "changelog":
+   * {"repository": "…", "versions": ["…"]}}</b> beside its six plan fields, and a change without
+   * one carries no {@code changelog} key at all — never a null, never an empty list, so a step
+   * older than the field reads exactly the payload it always did.
+   *
+   * <p>The field NAMES the changelogs and carries none of their text: the payload reaches the step
+   * as one environment string capped at about 128 KiB, so the step's {@code qits changelog
+   * bump-message} fetches them from the docs store itself.
+   */
+  public TriggerResult trigger(
+      String eventName,
+      String bumpId,
+      String repository,
+      String group,
+      String branch,
+      String baseRef,
+      List<Change> changes,
+      Map<String, String> extra,
+      Map<Change, ChangelogRange> changelogs) {
     ObjectNode payload = JSON.createObjectNode();
     payload.put("repository", repository);
     payload.put("group", group);
     payload.put("branch", branch);
     payload.put("baseRef", baseRef);
-    payload.set("changes", JSON.valueToTree(changes));
+    payload.set("changes", changes(changes, changelogs));
     extra.forEach(payload::put);
     return trigger(eventName, bumpId, payload);
+  }
+
+  /** The {@code changes} array: each change as the plan spells it, plus its changelog if any. */
+  static ArrayNode changes(List<Change> changes, Map<Change, ChangelogRange> changelogs) {
+    ArrayNode array = JSON.createArrayNode();
+    for (Change change : changes) {
+      ObjectNode node = JSON.valueToTree(change);
+      ChangelogRange range = changelogs == null ? null : changelogs.get(change);
+      if (range != null) {
+        ObjectNode changelog = node.putObject("changelog");
+        changelog.put("repository", range.repository());
+        ArrayNode versions = changelog.putArray("versions");
+        range.versions().forEach(versions::add);
+      }
+      array.add(node);
+    }
+    return array;
   }
 
   /**

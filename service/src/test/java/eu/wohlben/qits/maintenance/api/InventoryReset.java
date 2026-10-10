@@ -3,7 +3,6 @@ package eu.wohlben.qits.maintenance.api;
 import eu.wohlben.qits.maintenance.entity.MtArtifact;
 import eu.wohlben.qits.maintenance.entity.MtArtifactComponent;
 import eu.wohlben.qits.maintenance.entity.MtArtifactEdge;
-import eu.wohlben.qits.maintenance.entity.MtAutomationDecision;
 import eu.wohlben.qits.maintenance.entity.MtBranch;
 import eu.wohlben.qits.maintenance.entity.MtBump;
 import eu.wohlben.qits.maintenance.entity.MtGitlinkPin;
@@ -13,6 +12,7 @@ import eu.wohlben.qits.maintenance.entity.MtLatest;
 import eu.wohlben.qits.maintenance.entity.MtPin;
 import eu.wohlben.qits.maintenance.entity.MtRelease;
 import eu.wohlben.qits.maintenance.entity.MtReleasePin;
+import eu.wohlben.qits.maintenance.entity.MtReleaseRequest;
 import eu.wohlben.qits.maintenance.entity.MtRepository;
 import eu.wohlben.qits.maintenance.entity.MtSbomCheckRun;
 import eu.wohlben.qits.maintenance.entity.MtSbomTicket;
@@ -48,7 +48,9 @@ public class InventoryReset {
     MtArtifactComponent.deleteAll();
     MtArtifact.deleteAll();
     MtBump.deleteAll();
-    MtAutomationDecision.deleteAll();
+    // What this service remembers about release requests (V21): who opened one, its upstream
+    // restarts. A leftover "opened by maintenance" would plan external upgrades in the next test.
+    MtReleaseRequest.deleteAll();
     MtBranch.deleteAll();
     MtScan.deleteAll();
     // The ledger, pins first: mt_release_pin.release_id is a plain uuid rather than a foreign key

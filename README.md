@@ -171,7 +171,19 @@ stored disappear on the first scan after the line is committed. **An unknown eco
 `CONFIG_ERROR`**, like any other mistake in this file: a typo quietly dropped would read as a working
 opt-out while the ecosystem the author meant to protect went on being bumped nightly.
 
-The case it was built for is the **qits-qits wrapper**, whose forty-seven submodule gitlinks are
+And `hold:` (qits-1133), which keeps one **dependency** where it is without taking it off the
+inventory:
+
+```yaml
+hold: ["@angular/*", "io.quarkus.platform:quarkus-bom"]   # names, or the globs `deps` take
+```
+
+A held pin is still read, stored, shown and reported behind; the `dependency-bump` automation simply
+never plans it. It is the escape hatch for a breaking upstream. A `hold` entry that is not a
+non-empty string is `CONFIG_ERROR`, for `ignore`'s reason: a hold quietly skipped is the very
+dependency somebody wrote down to protect, bumped.
+
+The case `ignore` was built for is the **qits-qits wrapper**, whose forty-seven submodule gitlinks are
 deliberately lagging bank markers rather than version pins — its own README says they exist so
 `git submodule update --init` works on a fresh clone while the submodules follow their branches, and
 every entry carries `ignore = all` for the same reason. Without the opt-out this service would read
@@ -357,7 +369,9 @@ release request and one release — not five of each. That is the whole of the s
                "changes": [ {"ecosystem":"maven","manifestPath":"pom.xml",
                              "name":"eu.wohlben.qits:qits-eventstream",
                              "from":"2026.811.1","to":"2026.821.3",
-                             "location":"property:qits.eventstream.version"} ] } }
+                             "location":"property:qits.eventstream.version",
+                             "changelog":{"repository":"qits-eventstream",
+                                          "versions":["2026.815.1","2026.821.3"]}} ] } }
 ```
 
 `location` is honoured for maven only; npm edits whichever section holds the entry, docker anchors on
@@ -366,6 +380,27 @@ the image name, and gitlink restates the path. It is sent anyway. **A gitlink ch
 `160000` index entry there after fetching the tag from the sibling repository its `name` addresses. `from` is never a precondition — a manifest already at
 `to` is a quiet no-op. Every value is validated on this side against what the step enforces, so a
 bad payload is a sentence on the bump row rather than a step log somebody has to read.
+
+**An internal change names the changelogs it pulls in (epic qits-893).** Every release publishes
+`@changelog/<repository>` at its version to qits-artifacts' docs store, and a bump commit carries the
+changelogs of every release it pulls in. Before the trigger, `bump/changelog/ChangelogRanges`
+resolves each INTERNAL change (`MaintenanceConfig.kindOf`; external ones have none and are listed as
+before): its source repository (a gitlink's `name`, otherwise `ArtifactGraph.producers()`), its old
+version (`from`; for a gitlink the sha is mapped through the release ledger, and an unmapped one
+leaves only `to`), and the published versions, `GET /artifacts/docs/docs/@changelog/<repository>`.
+The range is every version of the ledger, the listing and `to` itself with `from < v <= to`, at or
+above the OLDEST published changelog — releases cut before changelogs existed are left out, and a
+repository that never published one (404) has no range. Each change with a range carries
+`changelog: {repository, versions}` (calver order, never empty); one without carries no key. The
+payload NAMES changelogs and never carries one — it reaches the step as one environment string
+capped at about 128 KiB — so the step's `qits changelog bump-message` fetches the texts and composes
+the commit message. **A missing changelog is an error, not a workaround**: a release in the range
+whose changelog was not published, or an internal coordinate with no known source repository, FAILS
+the bump with the sentence naming it and nothing is triggered. A docs store that cannot be read
+(5xx, transport) says nothing about the changelogs, so the bump stays REQUESTED and is sent again,
+exactly as a 503 from the trigger. Group bumps and the source-branch automations (`estate-pins`)
+both go through it; `BumpPayload.changelogProblems` holds the field to a catalog name
+(`[a-z0-9][a-z0-9-]{0,127}`) and calver versions (`[0-9]{4}.[0-9]{1,4}.[0-9]+`).
 
 **`baseRef` is main unless a release has not reached it (qits-1081).** qits-projects folds every
 released-but-unmerged tag into each release request, so a branch cut from main that edits a pin line
@@ -710,16 +745,17 @@ GET  /bumps/{id}                                  → {id, repository, group, br
 POST /release-requests/{id}/automations           → {requestId, foldSha,
      {repository, foldSha, previousFoldSha?,            automations:[{kind, label, state, detail,
       changedSincePrevious?:[path]|null,                             bumpId, runIds, branch,
-      sourceBranches:[…], workItem?,                                 resultSha, updatedAt}]}
-      accepts?:[WAITING,NOT_APPLICABLE]}            the every-fold trigger, idempotent per fold;
+      sourceBranches:[…], workItem?,                                 resultSha, updatedAt,
+      accepts?:["WAITING","NOT_APPLICABLE"]}                         failure, reason}]}
+                                                    the every-fold trigger, idempotent per fold;
                                                     state FRESH|REQUESTED|RUNNING|COMMITTED|
                                                     FAILED|UNKNOWN|SUPERSEDED (qits-978), and
-                                                    WAITING|NOT_APPLICABLE only when `accepts`
-                                                    names them (qits-1133; else WAITING reads
-                                                    UNKNOWN and NOT_APPLICABLE is left out)
+                                                    WAITING|NOT_APPLICABLE with a reason — only
+                                                    when `accepts` names them (qits-1133); without
+                                                    it a waiting kind reads REQUESTED and an
+                                                    inapplicable one is not listed
                                                                 400 not a uuid/sha  404 unknown repo
-GET  /release-requests/{id}/automations[?foldSha=][&accepts=WAITING,NOT_APPLICABLE]
-                                                  → the same answer, newest fold when unnamed
+GET  /release-requests/{id}/automations[?foldSha=] → the same answer, newest fold when unnamed
 POST /release-requests/{id}/automations/{kind}/runs
      {workItem?, repository?}                     → 202 {id}    404 unknown kind or repo
                                                                 409 not open, no fold, one active,
@@ -907,7 +943,7 @@ environment without a rebuild.
 | `qits.maintenance.targets.projects-url` | `http://qits-projects:8080` | where the catalog is |
 | `qits.maintenance.targets.githost-url` | `http://qits-githost:8080` | where the manifests are |
 | `qits.maintenance.targets.ci-url` | `http://qits-ci:8080` | which CI applies a bump |
-| `qits.maintenance.targets.artifacts-url` | `http://qits-artifacts:8080` | where the SBOM documents are — a bare host, because the route's whole path belongs to the caller |
+| `qits.maintenance.targets.artifacts-url` | `http://qits-artifacts:8080` | where the SBOM documents and the changelog listings are — a bare host, because both routes' whole paths belong to the caller |
 | `qits.maintenance.registries.maven-url` | `http://qits-artifacts:8080/artifacts/maven/maven` | internal maven |
 | `qits.maintenance.registries.npm-url` | `http://qits-artifacts:8080/artifacts/npm/npm` | internal npm |
 | `qits.maintenance.registries.oci-url` | `http://qits-artifacts:8080/v2` | internal images |
@@ -934,11 +970,13 @@ environment without a rebuild.
 | `qits.maintenance.bump.dispatch.quiet-hours` | *(empty)* | hours a branch is unwelcome in: `HH:MM-HH:MM[,…]` in `time-zone`, end exclusive, midnight-wrapping allowed. Suppresses the debt-driven opening only; `POST /bumps/window` overrides it |
 | `qits.maintenance.bump.internal.window` | `6h` | how long one window lasts before it is closed, logged and re-opened if work is still owed. It closes early the moment nothing is owed, and it is also how long a refusal stands |
 | `qits.maintenance.environment` | `dev` | which environment's CI is recorded on a bump row |
+| `qits.maintenance.automations.dependency-bump.enabled` | `false` | **the `dependency-bump` automation (qits-1133).** Off until the cutover: the kind is not listed, planned or started, and a row it opened before ends FRESH. The upstream switch below needs it on to do anything |
+| `qits.maintenance.pre-run.upstream.enabled` | `false` | **the upstream half of the pre-run (qits-1133).** On: a moved `mt_latest` re-plans the `dependency-bump` of every open, not-READY request of its consumers (three restarts without a QA verdict and a request is left alone until it has one), and the dispatcher opens a main-only `LOWEST` request instead of a `maintenance/<group>` branch, withdrawn again when its pre-run finds nothing. Only such a main-only request has the `dependency-bump` automation plan EXTERNAL upgrades; every other request, and every request while the switch is off, gets INTERNAL pins only. Off: group dispatch exactly as before |
 
 **The registry keys carry a PATH as well as a host**, because a registry is mounted under a prefix
 and the prefix names the repository row it serves. Moving a row is then a deployment's decision.
-**`targets.artifacts-url` deliberately does not**: `/artifacts/sboms/…` is qits-artifacts' own API
-rather than a mount, so its whole path belongs to the caller and lives in the code.
+**`targets.artifacts-url` deliberately does not**: `/artifacts/sboms/…` and
+`/artifacts/docs/docs/@changelog/…` are qits-artifacts' own API rather than a mount, so the whole path belongs to the caller and lives in the code.
 
 **The npmjs cache has no key at all.** `qits.maintenance.mirror.npm-url` is gone (qits-472): its
 address is derived in code (`PeerTarget.NPM_MIRROR`) as
@@ -1047,26 +1085,6 @@ no object name, this service reads `mode` and `sha` off a tree entry when they a
 applied into somebody else's repository. Both spellings (`mode` or `type`) are accepted here. Until
 that githost release deploys, the fifteen `ci-event-upstream-frontend.yml` hop files still do the
 work and nothing is lost.
-
-**The pre-run (qits-1133).** The automations of a release request run in two stages. SOURCE kinds
-(`estate-pins`, `dependency-bump`) write the build's inputs and are planned on every fold. DERIVED
-kinds (`screenshot-baselines`, `entity-diagram`) are planned only once every SOURCE kind is FRESH
-at the fold, and answer WAITING until then. A DERIVED kind is carried to a new fold when only
-DERIVED output changed, or when no changed path matches its `inputPaths()` (`entity-diagram`:
-`**/*.java`, `**/*.kt`, `**/pom.xml`). Two kinds whose paths overlap at a fold are both UNKNOWN. A
-kind that does not apply is kept in `mt_automation_decision`. The cap on running automation runs
-is half of qits-ci's slots (at least one; 2 when the queue cannot be read).
-
-**`dependency-bump`** (behind `qits.maintenance.automations.dependency-bump.enabled`, off) moves a
-request's platform-internal pins, never third-party ones, to their newest release. It plans the
-pins at the fold against `mt_latest`; when one is behind, it sends a `MaintenanceBump` (group
-`dependencies`, `kind: dependency-bump`, `requestId`, `foldSha`, `baseRef: main`, `replaceHead`
-when the branch exists) that rebuilds `maintenance/automations/dependency-bump/<request>` as ONE
-commit on main, with every change measured against main. A green run that moved the branch joins it
-at priority LOWEST; exit 42 (a commit qits maintenance did not write) is FAILED and holds the
-request. On a wrapper it leaves gitlinks to `estate-pins`. `hold: [<dependency>]` in the fold's
-`.config/qits/maintenance.yml` leaves a dependency alone. The automation-branch sweep deletes the
-branch once its request is FINALIZED, WITHDRAWN or OBSOLETE.
 
 **qits-ci answers the events with its packaged platform pipelines**:
 `ci/src/main/resources/platform-pipelines/maintenance-bump.yml` for `MaintenanceBump`, and the shared

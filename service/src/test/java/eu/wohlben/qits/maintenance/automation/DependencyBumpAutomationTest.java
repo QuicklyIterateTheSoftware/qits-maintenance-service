@@ -1,67 +1,76 @@
 package eu.wohlben.qits.maintenance.automation;
 
+import static eu.wohlben.qits.maintenance.automation.AutomationFixture.CURRENT_POM;
+import static eu.wohlben.qits.maintenance.automation.AutomationFixture.EVENTSTREAM;
+import static eu.wohlben.qits.maintenance.automation.AutomationFixture.FOLD_A;
+import static eu.wohlben.qits.maintenance.automation.AutomationFixture.FOLD_B;
+import static eu.wohlben.qits.maintenance.automation.AutomationFixture.FOLD_C;
+import static eu.wohlben.qits.maintenance.automation.AutomationFixture.QUARKUS_BOM;
 import static eu.wohlben.qits.maintenance.automation.AutomationFixture.REQUEST;
+import static eu.wohlben.qits.maintenance.automation.AutomationFixture.STALE_POM;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import eu.wohlben.qits.maintenance.api.Fixture;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
 import eu.wohlben.qits.maintenance.bump.BumpService;
 import eu.wohlben.qits.maintenance.bump.CiClient;
+import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto.AutomationDto;
 import eu.wohlben.qits.maintenance.entity.MtBump;
+import eu.wohlben.qits.maintenance.entity.MtReleaseRequest;
+import eu.wohlben.qits.maintenance.entity.MtRepository;
+import eu.wohlben.qits.maintenance.latest.GitlinkSha;
 import eu.wohlben.qits.maintenance.model.BumpStatus;
+import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.ScanScope;
+import eu.wohlben.qits.maintenance.pending.Change;
 import eu.wohlben.qits.maintenance.peer.FakePeers;
-import eu.wohlben.qits.maintenance.peer.PeerTarget;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import eu.wohlben.qits.maintenance.scan.ScanService;
 import eu.wohlben.qits.maintenance.scan.ScanTrigger;
 import eu.wohlben.qits.maintenance.work.WorkQueue;
+import io.quarkus.arc.ClientProxy;
+import io.quarkus.test.junit.QuarkusMock;
 import io.quarkus.test.junit.QuarkusTest;
-import io.quarkus.test.junit.QuarkusTestProfile;
 import io.quarkus.test.junit.TestProfile;
 import jakarta.inject.Inject;
 import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * <b>The dependency-bump automation</b> (qits-1133), with its switch on: a fold whose
- * platform-internal pins are behind gets one run that rebuilds the kind's branch from the base;
- * third-party pins are never in it; {@code hold:} leaves a pin alone; the DERIVED kinds wait for it.
- *
- * <p>The fold is {@link Fixture#HEAD_SHA}, the fixture repository's main, so the fold and the base
- * declare the same pins and the scan has filled {@code mt_latest} for every one of them.
+ * <b>The pre-run's two stages and its dependency bump</b> (qits-1133), driven through {@code
+ * AutomationService.trigger} the way qits-projects' post reaches it: the bump planned AT THE FOLD,
+ * the DERIVED kinds WAITING behind it, the two new answer words only for a caller that accepts
+ * them, the LOWEST join, and the carry-over a SOURCE commit must not get for the DERIVED kinds.
  */
 @QuarkusTest
-@TestProfile(DependencyBumpAutomationTest.SwitchedOn.class)
+@TestProfile(DependencyBumpOn.class)
 class DependencyBumpAutomationTest {
-
-  /** The switch on, nothing else changed. */
-  public static class SwitchedOn implements QuarkusTestProfile {
-    @Override
-    public Map<String, String> getConfigOverrides() {
-      return Map.of(DependencyBumpAutomation.SWITCH, "true");
-    }
-  }
 
   private static final String RUN = "run-dependency-bump";
 
-  private static final String FOLD = Fixture.HEAD_SHA;
+  private static final List<String> ACCEPTS = List.of("WAITING", "NOT_APPLICABLE");
 
-  private static final String BLOB =
-      "/git/" + Fixture.PROJECT + "/" + Fixture.REPOSITORY + "/blob/" + FOLD + "/";
+  private static final ObjectMapper JSON = new ObjectMapper();
 
-  private static final List<String> BOTH = List.of("WAITING", "NOT_APPLICABLE");
+  private static final String BUMP_BRANCH =
+      AutomationFixture.branch(DependencyBumpAutomation.KIND, REQUEST);
 
   @Inject AutomationService automations;
+
+  @Inject DependencyBumpAutomation dependencyBump;
 
   @Inject BumpService bumps;
 
@@ -75,9 +84,7 @@ class DependencyBumpAutomationTest {
 
   @Inject WorkQueue queue;
 
-  @Inject DependencyBumpAutomation dependencyBump;
-
-  @Inject eu.wohlben.qits.maintenance.githost.GitHostReader gitHost;
+  @Inject MaintenanceConfig config;
 
   @BeforeEach
   void scriptThePeers() {
@@ -87,247 +94,367 @@ class DependencyBumpAutomationTest {
     Fixture.scriptScan(peers);
     Fixture.scriptBranchAbsent(peers);
     Fixture.scriptCiAccepts(peers, RUN);
-    AutomationFixture.scriptRequest(peers, REQUEST, "PENDING", FOLD);
+    for (String fold : List.of(FOLD_A, FOLD_B, FOLD_C)) {
+      AutomationFixture.scriptFold(peers, fold, true);
+    }
+    AutomationFixture.scriptRequest(peers, REQUEST, "PENDING", FOLD_A);
     AutomationFixture.scriptJoin(peers, REQUEST, AutomationFixture.joined(REQUEST));
+    Fixture.scriptForeignBranchAt(
+        peers, AutomationFixture.branch(REQUEST), AutomationFixture.BEFORE);
+    Fixture.scriptForeignBranchAt(peers, BUMP_BRANCH, AutomationFixture.BEFORE);
     scans.request(ScanScope.ALL, null, ScanTrigger.MANUAL);
     queue.awaitIdle(Duration.ofSeconds(60));
   }
 
-  private ReleaseRequestAutomationsDto trigger(List<String> accepts) {
+  private ReleaseRequestAutomationsDto trigger(
+      String fold, String previous, List<String> changed, List<String> accepts) {
     ReleaseRequestAutomationsDto answer =
         automations.trigger(
             REQUEST,
             new AutomationService.Fold(
-                Fixture.REPOSITORY, FOLD, null, null, List.of("main", "work"), null, accepts));
+                Fixture.REPOSITORY, fold, previous, changed, List.of("main", "work"), "qits-1133",
+                accepts));
     queue.awaitIdle(Duration.ofSeconds(30));
     return answer;
   }
 
-  private static AutomationDto entry(ReleaseRequestAutomationsDto answer, String kind) {
-    return answer.automations().stream()
-        .filter(candidate -> kind.equals(candidate.kind()))
-        .findFirst()
-        .orElseThrow(() -> new AssertionError("no " + kind + " entry in " + answer));
+  private MtBump row(AutomationDto entry) {
+    return store.bump(UUID.fromString(entry.bumpId())).orElseThrow();
   }
 
-  private String payload() {
-    List<String> bodies = peers.bodiesFor(CiClient.TRIGGER_PATH);
-    assertEquals(1, bodies.size(), "one run: " + bodies);
-    return bodies.getFirst();
+  private List<MtBump> rows(String fold, String kind) {
+    return store.automations(REQUEST, fold).stream()
+        .filter(row -> kind.equals(row.automationKind))
+        .toList();
   }
 
-  private static String branch() {
-    return AutomationFixture.branch(DependencyBumpAutomation.KIND, REQUEST);
+  private List<String> triggers() {
+    return peers.bodiesFor(CiClient.TRIGGER_PATH);
   }
 
-  /** The fold's {@code .config/qits/maintenance.yml}, replaced. */
-  private void scriptConfig(String yaml) {
-    peers.answer(
-        PeerTarget.GITHOST,
-        BLOB + ".config/qits/maintenance.yml",
-        FakePeers.Scripted.ok(yaml, Map.of("Git-Commit-Sha", FOLD)));
+  private static List<String> names(List<Change> changes) {
+    return changes.stream().map(Change::name).toList();
   }
+
+  /** Ends the newest run of a row with this CI status, the branch standing at {@code head}. */
+  private MtBump end(MtBump row, String branch, String head, String status) {
+    Fixture.scriptForeignBranchAt(peers, branch, head);
+    Fixture.scriptRun(peers, RUN, status);
+    bumps.poll(row.id);
+    queue.awaitIdle(Duration.ofSeconds(30));
+    return store.bump(row.id).orElseThrow();
+  }
+
+  // --- planning at the fold --------------------------------------------------------------------
 
   /**
-   * Behind platform pins are one run on the kind's own branch, with every change measured against
-   * the base — and never a third-party pin.
+   * A stale INTERNAL pin at the fold is planned and dispatched; the external one is not, because a
+   * person opened this request. The DERIVED screenshots WAIT and store nothing, the kinds that do
+   * not apply are listed with their reason — and the payload carries the MaintenanceBump entry shape
+   * and the one file it touches.
    */
   @Test
-  void behindPlatformPinsAreOneRunWithTheirChangesAndNoThirdPartyPin() {
-    AutomationDto bump = entry(trigger(BOTH), DependencyBumpAutomation.KIND);
+  void aStalePinAtTheFoldIsPlannedAndTheDerivedKindsWait() throws Exception {
+    AutomationFixture.scriptManifests(peers, FOLD_A, STALE_POM, null);
 
+    ReleaseRequestAutomationsDto answer = trigger(FOLD_A, null, null, ACCEPTS);
+
+    AutomationDto bump = AutomationFixture.entry(answer, DependencyBumpAutomation.KIND);
     assertEquals(AutomationState.REQUESTED.name(), bump.state(), bump.detail());
-    MtBump row = store.bump(UUID.fromString(bump.bumpId())).orElseThrow();
+    MtBump row = row(bump);
     assertEquals(BumpStatus.RUNNING.name(), row.status, row.message);
-    assertEquals(branch(), row.branch);
-    String payload = payload();
-    assertTrue(payload.contains("\"name\":\"MaintenanceBump\""), payload);
-    assertTrue(payload.contains("\"kind\":\"dependency-bump\""), payload);
-    assertTrue(payload.contains("\"group\":\"dependencies\""), payload);
-    assertTrue(payload.contains("\"baseRef\":\"main\""), payload);
-    assertTrue(payload.contains("\"branch\":\"" + branch() + "\""), payload);
-    assertTrue(payload.contains("\"requestId\":\"" + REQUEST + "\""), payload);
-    assertTrue(payload.contains("\"foldSha\":\"" + FOLD + "\""), payload);
-    assertTrue(payload.contains("eu.wohlben.qits:qits-eventstream"), payload);
-    assertTrue(payload.contains("\"to\":\"2026.821.3\""), payload);
-    assertTrue(payload.contains("@qits/ui-components"), payload);
-    assertFalse(payload.contains("quarkus-bom"), "a third-party pin is never bumped: " + payload);
-    assertFalse(payload.contains("@angular/core"), payload);
-    assertFalse(payload.contains("replaceHead"), "no branch yet, nothing to rebuild over");
+    assertEquals(BUMP_BRANCH, row.branch);
+    assertEquals(List.of(EVENTSTREAM), names(BumpService.changes(row)), "internal only");
+
+    AutomationDto screenshots =
+        AutomationFixture.entry(answer, ScreenshotBaselinesAutomation.KIND);
+    assertEquals(AutomationState.WAITING.name(), screenshots.state());
+    assertTrue(screenshots.reason().contains("dependency bump"), screenshots.reason());
+    assertNull(screenshots.bumpId());
+    assertTrue(rows(FOLD_A, ScreenshotBaselinesAutomation.KIND).isEmpty(), "nothing stored");
+
+    AutomationDto estate = AutomationFixture.entry(answer, EstatePinsAutomation.KIND);
+    assertEquals(AutomationState.NOT_APPLICABLE.name(), estate.state());
+    assertTrue(estate.reason().contains("no wrapper"), estate.reason());
+    assertEquals(estate.reason(), estate.detail());
+
+    assertEquals(1, triggers().size(), "one run: the bump, and no screenshots beside it");
+    JsonNode body = JSON.readTree(triggers().getFirst());
+    assertEquals(CiClient.AUTOMATION_EVENT_NAME, body.get("name").asText());
+    JsonNode payload = body.get("payload");
+    assertEquals(DependencyBumpAutomation.KIND, payload.get("kind").asText());
+    assertEquals(BUMP_BRANCH, payload.get("branch").asText());
+    assertEquals("[\"pom.xml\"]", payload.get("commitPaths").toString());
+    JsonNode change = payload.get("changes").get(0);
+    assertEquals(1, payload.get("changes").size());
+    List<String> fields = new ArrayList<>();
+    change.fieldNames().forEachRemaining(fields::add);
+    assertEquals(
+        List.of("ecosystem", "manifestPath", "name", "from", "to", "location"), fields,
+        "exactly the MaintenanceBump changes[] entry");
+    assertEquals("maven", change.get("ecosystem").asText());
+    assertEquals("pom.xml", change.get("manifestPath").asText());
+    assertEquals(EVENTSTREAM, change.get("name").asText());
+    assertEquals("2026.811.1", change.get("from").asText());
+    assertEquals("2026.821.3", change.get("to").asText());
+    assertFalse(change.get("location").asText().isBlank());
   }
 
   /**
-   * What the kind may commit is every manifest the fold's pins sit in, the lock beside {@code
-   * package.json}, and the gitlink path — what carry-over and the overlap check read.
+   * Without {@code accepts} the answer is exactly the old one: no NOT_APPLICABLE entry, and the
+   * waiting screenshots read REQUESTED — with no row behind them.
    */
   @Test
-  void itMayCommitTheManifestsTheLockAndTheGitlink() {
-    AutomationSubject subject =
-        new AutomationSubject(
-            store.repository(Fixture.REPOSITORY).orElseThrow(),
-            REQUEST,
-            FOLD,
-            AutomationService.FOLD_BRANCH_PREFIX + REQUEST,
-            List.of(),
-            null,
-            new FoldReader(gitHost, Fixture.PROJECT, Fixture.REPOSITORY, FOLD));
+  void withoutTheAcceptsFlagTheAnswerIsTheOldOne() {
+    AutomationFixture.scriptManifests(peers, FOLD_A, STALE_POM, null);
 
-    List<String> paths = dependencyBump.committablePaths(subject);
+    ReleaseRequestAutomationsDto answer = trigger(FOLD_A, null, null, null);
 
-    for (String path :
-        List.of("pom.xml", "service/pom.xml", "package.json", "package-lock.json", "Dockerfile",
-            "webui")) {
-      assertTrue(paths.contains(path), path + " in " + paths);
+    assertEquals(
+        List.of(DependencyBumpAutomation.KIND, ScreenshotBaselinesAutomation.KIND),
+        answer.automations().stream().map(AutomationDto::kind).toList(),
+        "no inapplicable kind is listed");
+    AutomationDto screenshots =
+        AutomationFixture.entry(answer, ScreenshotBaselinesAutomation.KIND);
+    assertEquals(AutomationState.REQUESTED.name(), screenshots.state());
+    assertNull(screenshots.bumpId());
+    assertNull(screenshots.reason());
+    assertTrue(screenshots.detail().contains("waiting"), screenshots.detail());
+    assertTrue(rows(FOLD_A, ScreenshotBaselinesAutomation.KIND).isEmpty());
+  }
+
+  /**
+   * EXTERNAL upgrades are not live in R1: a group bump's request (a {@code maintenance/<group>}
+   * branch) gets internal pins only, and so does a MAIN-ONLY request while the upstream switch is
+   * off. Only a main-only request with the switch on plans the external one too.
+   */
+  @Test
+  void externalUpgradesArePlannedOnlyInAMainOnlyRequestWithTheSwitchOn() {
+    AutomationFixture.scriptManifests(peers, FOLD_A, STALE_POM, null);
+
+    store.recordOpenedRequest(
+        REQUEST, Fixture.REPOSITORY, "maintenance/dependencies", MtReleaseRequest.GROUP_BUMP, null,
+        Instant.now());
+    assertEquals(List.of(EVENTSTREAM), planned(), "a group bump's request: internal only");
+
+    store.recordOpenedRequest(
+        REQUEST, Fixture.REPOSITORY, "main", MtReleaseRequest.MAIN_ONLY, null, Instant.now());
+    assertEquals(List.of(EVENTSTREAM), planned(), "main-only, switch off: internal only");
+
+    MaintenanceConfig real = ClientProxy.unwrap(config);
+    QuarkusMock.installMockForType(new UpstreamSwitch(real), MaintenanceConfig.class);
+    try {
+      assertEquals(
+          List.of(EVENTSTREAM, QUARKUS_BOM), planned(), "main-only, switch on: external too");
+    } finally {
+      QuarkusMock.installMockForType(real, MaintenanceConfig.class);
     }
-    assertFalse(paths.contains(".gitmodules"), paths.toString());
   }
 
-  /** An existing branch is rebuilt: its head travels as {@code replaceHead}. */
-  @Test
-  void anExistingBranchIsRebuiltOverItsHead() {
-    Fixture.scriptForeignBranchAt(peers, branch(), AutomationFixture.BEFORE);
-
-    trigger(BOTH);
-
-    assertTrue(
-        payload().contains("\"replaceHead\":\"" + AutomationFixture.BEFORE + "\""), payload());
+  /** What the bump plans at fold A for the request, without opening anything. */
+  private List<String> planned() {
+    MtRepository repository = store.repository(Fixture.REPOSITORY).orElseThrow();
+    Plan plan = dependencyBump.plan(automations.subject(repository, REQUEST, FOLD_A, null, null));
+    assertEquals(Plan.Kind.RUN, plan.kind(), plan.reason());
+    return names(plan.runs().getFirst().changes());
   }
 
-  /** The kinds that do not apply are listed with their reason, to a caller that accepts the word. */
+  /** {@code hold:} is the escape hatch: a held dependency is never planned. */
   @Test
-  void theKindsThatDoNotApplyAreListedWithTheirReason() {
-    ReleaseRequestAutomationsDto answer = trigger(BOTH);
+  void aHeldDependencyIsNeverBumped() {
+    AutomationFixture.scriptManifests(
+        peers, FOLD_A, STALE_POM, "hold:\n  - \"eu.wohlben.qits:qits-event*\"\n");
 
-    AutomationDto estate = entry(answer, EstatePinsAutomation.KIND);
-    assertEquals(AutomationState.NOT_APPLICABLE.name(), estate.state());
-    assertTrue(estate.detail().contains("no wrapper"), estate.detail());
-    assertNull(estate.bumpId());
-    assertNull(estate.updatedAt());
+    ReleaseRequestAutomationsDto answer = trigger(FOLD_A, null, null, ACCEPTS);
+
+    AutomationDto bump = AutomationFixture.entry(answer, DependencyBumpAutomation.KIND);
+    assertEquals(AutomationState.FRESH.name(), bump.state(), bump.detail());
+    assertTrue(bump.detail().contains("held") && bump.detail().contains(EVENTSTREAM),
+        bump.detail());
+    assertTrue(triggers().stream().noneMatch(body -> body.contains(DependencyBumpAutomation.KIND)));
     assertEquals(
-        AutomationState.NOT_APPLICABLE.name(),
-        entry(answer, ScreenshotBaselinesAutomation.KIND).state());
-    assertTrue(
-        store.notApplicable(REQUEST, FOLD).containsKey(EstatePinsAutomation.KIND),
-        "kept per (request, fold, kind)");
-    assertEquals(
-        answer.automations().size(),
-        automations.automations(REQUEST, FOLD, BOTH).automations().size(),
-        "and the read door answers the same entries");
+        AutomationState.REQUESTED.name(),
+        AutomationFixture.entry(answer, ScreenshotBaselinesAutomation.KIND).state(),
+        "the source is fresh, so the derived kinds go in the same ask");
   }
 
-  /** A caller that names no extra state gets neither word: the answer before qits-1133. */
+  /** {@code ignore:} takes the ecosystem off the fold altogether — and so off the plan. */
   @Test
-  void aCallerThatAcceptsNothingGetsNeitherWord() {
-    ReleaseRequestAutomationsDto answer = trigger(null);
+  void anIgnoredEcosystemIsNeverBumped() {
+    AutomationFixture.scriptManifests(peers, FOLD_A, STALE_POM, "ignore: [maven]\n");
 
-    assertTrue(
-        answer.automations().stream()
-            .noneMatch(
-                entry ->
-                    entry.state().equals("NOT_APPLICABLE") || entry.state().equals("WAITING")),
-        answer.toString());
-    assertEquals(1, answer.automations().size(), answer.toString());
-  }
-
-  /** A DERIVED kind waits until the SOURCE kinds are FRESH, and an older caller reads UNKNOWN. */
-  @Test
-  void screenshotBaselinesWaitForTheBump() {
-    Map<String, String> sha = Map.of("Git-Commit-Sha", FOLD);
-    peers.answer(
-        PeerTarget.GITHOST,
-        BLOB + "package.json",
-        FakePeers.Scripted.ok(
-            "{\"name\":\"client\",\"scripts\":{\"test:browser\":\"vitest --browser\"},"
-                + "\"dependencies\":{\"@qits/ui-components\":\"2026.8.1\"}}",
-            sha));
-    peers.answer(
-        PeerTarget.GITHOST,
-        BLOB + ScreenshotBaselinesAutomation.RENDERER,
-        FakePeers.Scripted.ok("chromium 140 / linux\n", sha));
-
-    AutomationDto waiting = entry(trigger(BOTH), ScreenshotBaselinesAutomation.KIND);
-    assertEquals(AutomationState.WAITING.name(), waiting.state());
-    assertEquals("waits for Dependency bump", waiting.detail());
-    assertTrue(
-        store.automations(REQUEST, FOLD).stream()
-            .noneMatch(row -> ScreenshotBaselinesAutomation.KIND.equals(row.automationKind)),
-        "WAITING is not stored");
-
-    AutomationDto older = entry(trigger(null), ScreenshotBaselinesAutomation.KIND);
-    assertEquals(AutomationState.UNKNOWN.name(), older.state());
-    assertEquals("waits for Dependency bump", older.detail());
-  }
-
-  /** {@code hold:} leaves a pin alone: held everything is FRESH with no run. */
-  @Test
-  void heldPinsAreLeftAlone() {
-    scriptConfig("hold: [\"*\"]\n");
-
-    AutomationDto bump = entry(trigger(BOTH), DependencyBumpAutomation.KIND);
+    AutomationDto bump =
+        AutomationFixture.entry(trigger(FOLD_A, null, null, ACCEPTS), DependencyBumpAutomation.KIND);
 
     assertEquals(AutomationState.FRESH.name(), bump.state(), bump.detail());
-    assertTrue(bump.detail().contains("held: *"), bump.detail());
-    assertTrue(peers.bodiesFor(CiClient.TRIGGER_PATH).isEmpty(), "no run");
   }
 
-  /** One held pin is left out of the run; the rest are written. */
+  /**
+   * A gitlink is a pin like any other outside a wrapper — planned, its path among the files the run
+   * stages — and estate-pins' alone inside one, where this kind neither plans nor claims it.
+   */
   @Test
-  void oneHeldPinIsLeftOutOfTheRun() {
-    scriptConfig("hold: [\"eu.wohlben.qits:qits-eventstream\"]\n");
+  void aGitlinkIsBumpedOutsideAWrapperAndLeftToEstatePinsInOne() {
+    String stale = "0000000000000000000000000000000000000001";
+    String released = "0000000000000000000000000000000000000002";
+    store.recordLatestIfNewer(
+        Ecosystem.GITLINK, "qits-ci-frontend", "2026.900.1", GitlinkSha.of(released),
+        Instant.now());
+    AutomationFixture.scriptGitlinkFold(peers, FOLD_A, stale);
+    MtRepository repository = store.repository(Fixture.REPOSITORY).orElseThrow();
 
-    trigger(BOTH);
+    Plan plan = dependencyBump.plan(automations.subject(repository, REQUEST, FOLD_A, null, null));
+    assertEquals(Plan.Kind.RUN, plan.kind(), plan.reason());
+    Plan.Run run = plan.runs().getFirst();
+    assertEquals(List.of("qits-ci-frontend"), names(run.changes()));
+    assertEquals(List.of("webui"), run.extras().get(DependencyBumpAutomation.COMMIT_PATHS));
+    assertTrue(
+        dependencyBump
+            .committablePaths(automations.subject(repository, REQUEST, FOLD_A, null, null))
+            .contains("webui"));
 
-    assertFalse(payload().contains("qits-eventstream"), payload());
-    assertTrue(payload().contains("@qits/ui-components"), payload());
+    MtRepository wrapper = new MtRepository();
+    wrapper.name = repository.name;
+    wrapper.project = repository.project;
+    wrapper.catalogId = repository.catalogId;
+    wrapper.mainBranch = repository.mainBranch;
+    wrapper.archetype = "PROJECT";
+    AutomationSubject inWrapper = automations.subject(wrapper, REQUEST, FOLD_A, null, null);
+    assertEquals(Plan.Kind.FRESH, dependencyBump.plan(inWrapper).kind());
+    assertFalse(dependencyBump.committablePaths(inWrapper).contains("webui"));
   }
 
-  /** A broken config is UNKNOWN with its sentence: it holds the request until the branch fixes it. */
+  // --- the ending, the join, and what the commit re-runs ---------------------------------------
+
+  /**
+   * A green run that moved the branch is joined at LOWEST; the fold its commit makes is planned
+   * again and FRESH — and the screenshots are NOT carried across it, although they were COMMITTED
+   * on the fold before: a SOURCE commit is a build input, never their own output.
+   */
   @Test
-  void aBrokenConfigIsUnknown() {
-    scriptConfig("hold: nope\n");
-
-    AutomationDto bump = entry(trigger(BOTH), DependencyBumpAutomation.KIND);
-
-    assertEquals(AutomationState.UNKNOWN.name(), bump.state());
-    assertTrue(bump.detail().contains("`hold` must be a list"), bump.detail());
-  }
-
-  /** A green run that moved the branch joins it to the request at priority LOWEST. */
-  @Test
-  void aGreenRunJoinsItsBranchAtTheLowestPriority() {
-    AutomationDto bump = entry(trigger(BOTH), DependencyBumpAutomation.KIND);
-    Fixture.scriptForeignBranchAt(peers, branch(), AutomationFixture.PUSHED);
-    Fixture.scriptRun(peers, RUN, "SUCCESS");
-
-    bumps.poll(UUID.fromString(bump.bumpId()));
-    queue.awaitIdle(Duration.ofSeconds(30));
-
-    MtBump row = store.bump(UUID.fromString(bump.bumpId())).orElseThrow();
-    assertEquals(BumpStatus.SUCCEEDED.name(), row.status, row.message);
+  void theBumpJoinsAtLowestAndItsCommitReRunsTheDerivedKinds() {
+    // Fold A: both pins stale only for the bump; the screenshots have been run and committed there.
+    AutomationFixture.scriptManifests(peers, FOLD_A, STALE_POM, null);
+    MtBump bump =
+        row(AutomationFixture.entry(trigger(FOLD_A, null, null, ACCEPTS),
+            DependencyBumpAutomation.KIND));
+    MtBump ended = end(bump, BUMP_BRANCH, AutomationFixture.PUSHED, "SUCCESS");
+    assertEquals(BumpStatus.SUCCEEDED.name(), ended.status, ended.message);
     List<String> joins = peers.bodiesFor(AutomationFixture.joinPath(REQUEST));
-    assertEquals(1, joins.size(), joins.toString());
+    assertEquals(1, joins.size());
     assertTrue(joins.getFirst().contains("\"priority\":\"LOWEST\""), joins.getFirst());
-    assertTrue(joins.getFirst().contains(branch()), joins.getFirst());
+    assertTrue(joins.getFirst().contains(BUMP_BRANCH), joins.getFirst());
+
+    // Fold B is the bump's own commit: only pom.xml changed. Pins current, so the bump is FRESH by
+    // its plan, and the screenshots run on what it wrote.
+    AutomationFixture.scriptManifests(peers, FOLD_B, CURRENT_POM, null);
+    ReleaseRequestAutomationsDto answer = trigger(FOLD_B, FOLD_A, List.of("pom.xml"), ACCEPTS);
+    assertEquals(
+        AutomationState.FRESH.name(),
+        AutomationFixture.entry(answer, DependencyBumpAutomation.KIND).state());
+    AutomationDto screenshots =
+        AutomationFixture.entry(answer, ScreenshotBaselinesAutomation.KIND);
+    assertEquals(AutomationState.REQUESTED.name(), screenshots.state(), screenshots.detail());
+    MtBump screenshotRow = row(screenshots);
+    assertEquals(BumpStatus.RUNNING.name(), screenshotRow.status, screenshotRow.message);
+    MtBump committed =
+        end(screenshotRow, AutomationFixture.branch(REQUEST), AutomationFixture.PUSHED, "SUCCESS");
+    assertEquals(BumpStatus.SUCCEEDED.name(), committed.status, committed.message);
+
+    // Fold C: another pom-only change after the screenshots COMMITTED on fold B. Under the old union
+    // rule a pom path was "automation output" and would carry; a SOURCE path never does.
+    AutomationFixture.scriptManifests(peers, FOLD_C, CURRENT_POM, null);
+    AutomationDto again =
+        AutomationFixture.entry(
+            trigger(FOLD_C, FOLD_B, List.of("pom.xml"), ACCEPTS),
+            ScreenshotBaselinesAutomation.KIND);
+    assertEquals(AutomationState.REQUESTED.name(), again.state(), again.detail());
+    assertFalse(row(again).automationOnly, "a SOURCE commit is not the screenshots' own output");
   }
 
-  /** The step's "not ours" exit says so: a hand-written commit is never rebuilt over. */
+  /**
+   * A run that found nothing to write leaves the branch where it was: FRESH, and the next ask of
+   * the same fold lets the screenshots go.
+   */
   @Test
-  void aHandWrittenCommitFailsWithASentence() {
-    AutomationDto bump = entry(trigger(BOTH), DependencyBumpAutomation.KIND);
-    peers.answer(
-        PeerTarget.CI,
-        "/ci/api/runs/" + RUN,
-        FakePeers.Scripted.ok(
-            "{\"id\":\"" + RUN + "\",\"status\":\"FAILED\",\"steps\":[{\"stepIndex\":0,"
-                + "\"image\":\"node-base:latest\",\"status\":\"FAILED\",\"exitCode\":42,"
-                + "\"output\":\"not ours\\n\"}]}"));
+  void anUnmovedBumpIsFreshAndTheDerivedKindsGoOnTheNextAsk() {
+    AutomationFixture.scriptManifests(peers, FOLD_A, STALE_POM, null);
+    MtBump bump =
+        row(AutomationFixture.entry(trigger(FOLD_A, null, null, ACCEPTS),
+            DependencyBumpAutomation.KIND));
+    assertEquals(
+        BumpStatus.NOTHING_TO_DO.name(),
+        end(bump, BUMP_BRANCH, AutomationFixture.BEFORE, "SUCCESS").status);
 
-    bumps.poll(UUID.fromString(bump.bumpId()));
-    queue.awaitIdle(Duration.ofSeconds(30));
+    ReleaseRequestAutomationsDto answer = trigger(FOLD_A, null, null, ACCEPTS);
 
-    MtBump row = store.bump(UUID.fromString(bump.bumpId())).orElseThrow();
-    assertEquals(BumpStatus.FAILED.name(), row.status);
-    assertTrue(row.message.contains("did not write"), row.message);
-    assertTrue(peers.bodiesFor(AutomationFixture.joinPath(REQUEST)).isEmpty());
+    assertEquals(
+        AutomationState.FRESH.name(),
+        AutomationFixture.entry(answer, DependencyBumpAutomation.KIND).state());
+    assertEquals(
+        AutomationState.REQUESTED.name(),
+        AutomationFixture.entry(answer, ScreenshotBaselinesAutomation.KIND).state());
+    assertTrue(peers.bodiesFor(AutomationFixture.joinPath(REQUEST)).isEmpty(), "nothing joined");
+  }
+
+  // --- inputPaths ---------------------------------------------------------------------------------
+
+  /**
+   * {@code entity-diagram} declares its inputs, so a fold that touched none of them carries its
+   * outcome — a README is nobody's automation output and still costs no run — while one that
+   * touched a Java source runs again.
+   */
+  @Test
+  void entityDiagramCarriesAcrossAFoldThatTouchedNoInput() {
+    String branch = AutomationFixture.branch(EntityDiagramAutomation.KIND, REQUEST);
+    for (String fold : List.of(FOLD_A, FOLD_B, FOLD_C)) {
+      AutomationFixture.scriptFold(peers, fold, false);
+      AutomationFixture.scriptEntityDiagramApplies(peers, fold);
+    }
+    Fixture.scriptForeignBranchAt(peers, branch, AutomationFixture.BEFORE);
+    MtBump diagram =
+        row(AutomationFixture.entry(trigger(FOLD_A, null, null, ACCEPTS),
+            EntityDiagramAutomation.KIND));
+    assertEquals(
+        BumpStatus.SUCCEEDED.name(),
+        end(diagram, branch, AutomationFixture.PUSHED, "SUCCESS").status);
+    int before = triggers().size();
+
+    AutomationDto carried =
+        AutomationFixture.entry(
+            trigger(FOLD_B, FOLD_A, List.of("README.md"), ACCEPTS), EntityDiagramAutomation.KIND);
+    assertEquals(AutomationState.FRESH.name(), carried.state(), carried.detail());
+    assertTrue(carried.detail().contains("carried"), carried.detail());
+    assertEquals(before, triggers().size(), "no run for a fold that touched no input");
+
+    AutomationDto rerun =
+        AutomationFixture.entry(
+            trigger(FOLD_C, FOLD_B, List.of("ci/src/main/java/Foo.java"), ACCEPTS),
+            EntityDiagramAutomation.KIND);
+    assertEquals(AutomationState.REQUESTED.name(), rerun.state(), rerun.detail());
+  }
+
+  // --- the runtime disjointness check -------------------------------------------------------
+
+  /** A plan naming a path another applicable kind commits is refused, with the sentence. */
+  @Test
+  void aPlanThatWritesAnotherKindsPathIsRefused() {
+    Plan plan =
+        Plan.runs(
+            List.of(
+                new Plan.Run(
+                    null,
+                    List.of(),
+                    java.util.Map.of(DependencyBumpAutomation.COMMIT_PATHS, List.of("webui")))));
+    java.util.Map<String, List<String>> paths = new java.util.LinkedHashMap<>();
+    paths.put(DependencyBumpAutomation.KIND, DependencyBumpAutomation.MANIFESTS);
+    paths.put(EstatePinsAutomation.KIND, List.of("webui"));
+
+    String clash = AutomationService.clash(dependencyBump, plan, paths);
+
+    assertNotNull(clash);
+    assertTrue(clash.contains("webui") && clash.contains(EstatePinsAutomation.KIND), clash);
+    paths.remove(EstatePinsAutomation.KIND);
+    assertNull(AutomationService.clash(dependencyBump, plan, paths), "its own paths never clash");
   }
 }

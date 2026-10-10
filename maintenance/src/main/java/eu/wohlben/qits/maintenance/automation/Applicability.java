@@ -4,9 +4,9 @@ package eu.wohlben.qits.maintenance.automation;
  * Whether a kind applies to a repository at one fold — <b>decided by the platform from the
  * repository, never by an opt-in file</b> (owner decision, qits-978).
  *
- * <p>Three answers, and the third is the one that matters. NOT_APPLICABLE is stored per (request,
- * fold, kind) and answered with its reason to a caller that accepts the word (qits-1133); an older
- * caller gets it left out, as before. UNKNOWN is answered and NOT stored, so qits-projects' sweep asks again and the request holds until
+ * <p>Three answers, and the third is the one that matters. NOT_APPLICABLE is omitted from the answer
+ * altogether: a repository no kind applies to answers an empty list and releases as it always did.
+ * UNKNOWN is answered and NOT stored, so qits-projects' sweep asks again and the request holds until
  * somebody can say — a git host that was away must not read as "no screenshots here".
  *
  * @param state which of the three

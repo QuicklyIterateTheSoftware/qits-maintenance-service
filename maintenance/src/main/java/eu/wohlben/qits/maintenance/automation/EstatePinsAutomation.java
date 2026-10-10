@@ -147,7 +147,7 @@ public class EstatePinsAutomation implements ReleaseRequestAutomation {
     return Target.SOURCE_BRANCHES;
   }
 
-  /** Gitlinks are inputs of the build: a SOURCE kind, planned on every fold (qits-1133). */
+  /** A gitlink is a build input: what the wrapper's members are built at. */
   @Override
   public Stage stage() {
     return Stage.SOURCE;

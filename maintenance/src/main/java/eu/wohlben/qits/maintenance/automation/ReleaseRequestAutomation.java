@@ -17,10 +17,11 @@ import java.util.Map;
  *
  * <p>Implementations are CDI beans, discovered through {@code Instance<ReleaseRequestAutomation>}.
  * Two invariants hold across every one of them, and a registry test enforces both: kind ids are
- * unique, and {@link #committablePaths()} are pairwise disjoint. Paths read from the fold are
- * checked again at run time, per subject. Since qits-1133 a SOURCE kind's output IS a DERIVED kind's
- * input (a new library changes the screenshots): {@link #stage()} orders them, and carry-over of a
- * DERIVED kind counts only DERIVED output.
+ * unique, and {@link #committablePaths()} are pairwise disjoint across ALL kinds. The second is half
+ * of the invariant carry-over rests on — <b>no automation's output is another automation's input
+ * within its {@link Stage}</b> (qits-1133); the other half is each kind's own to document, and a kind
+ * that declares {@link #inputPaths()} lets the registry test hold that half too. A DERIVED kind may
+ * read SOURCE output: the stage ordering, not carry-over, is what keeps those two apart.
  */
 public interface ReleaseRequestAutomation {
 
@@ -66,58 +67,38 @@ public interface ReleaseRequestAutomation {
   /** Where the commit lands. */
   Target target();
 
-  /** When it runs in the pre-run: SOURCE kinds first, DERIVED kinds once every SOURCE is FRESH. */
-  default Stage stage() {
-    return Stage.DERIVED;
-  }
+  /**
+   * Which half of the pre-run this kind belongs to (qits-1133): SOURCE kinds write build inputs and
+   * are always planned; DERIVED kinds are planned only once every applicable SOURCE kind is FRESH at
+   * the fold, and answer WAITING until then. See {@link Stage}.
+   */
+  Stage stage();
 
   /**
-   * The paths this kind reads, as pathspecs. A DERIVED kind is carried to a new fold when no path
-   * that changed since the previous fold matches one of them. Default: every path.
+   * The pathspecs this kind's plan and run READ, or null for "everything" — the default, which
+   * leaves the kind to the union rule of carry-over. A kind that declares them gets the precise
+   * rule instead: a fold whose changed paths touch none of them, after a FRESH or COMMITTED fold,
+   * carries over; one that touches any of them is planned again, whoever wrote it.
    */
   default List<String> inputPaths() {
-    return ALL_PATHS;
-  }
-
-  /** Every path, as a pathspec: the default of {@link #inputPaths()}. */
-  List<String> ALL_PATHS = List.of(":(glob)**");
-
-  /**
-   * Whether this build offers the kind. A kind that is switched off is not listed, not asked and
-   * not run. Default: on.
-   */
-  default boolean enabled() {
-    return true;
-  }
-
-  /**
-   * Payload fields known only at dispatch, sent beside the plan's extras.
-   *
-   * @param startHead the head of the kind's branch read just before the run, or null when the branch
-   *     does not exist
-   */
-  default Map<String, String> dispatchExtras(AutomationSubject subject, String startHead) {
-    return Map.of();
-  }
-
-  /**
-   * The payload's {@code group} for an {@link Target#OWN_BRANCH} kind that runs on the bump
-   * pipeline ({@code MaintenanceBump}) rather than the shared core. Default: the kind id.
-   */
-  default String bumpGroup() {
-    return kind();
-  }
-
-  /**
-   * The priority of the source this kind's branch adds when it joins the request ({@code LOWEST},
-   * {@code LOW}, …), or null to let qits-projects choose.
-   */
-  default String joinPriority() {
     return null;
+  }
+
+  /** {@link #inputPaths()} for ONE subject; a kind whose inputs are read from the fold overrides it. */
+  default List<String> inputPaths(AutomationSubject subject) {
+    return inputPaths();
   }
 
   /** {@link Target#OWN_BRANCH} only: the branch is this plus the request id. */
   default String branchPrefix() {
     return AutomationService.BRANCH_PREFIX + kind() + "/";
+  }
+
+  /**
+   * Whether this build offers the kind. A kind that is switched off is not listed, planned or
+   * started; rows it opened before still end. Default: on.
+   */
+  default boolean enabled() {
+    return true;
   }
 }

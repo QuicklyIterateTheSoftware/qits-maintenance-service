@@ -90,7 +90,7 @@ class AutomationEndingTest {
                 new AutomationService.Fold(
                     Fixture.REPOSITORY, FOLD_A, null, null, List.of("work"), "qits-998"))
             .automations()
-            .getFirst();
+            .stream().filter(AutomationFixture::screenshots).findFirst().orElseThrow();
     queue.awaitIdle(Duration.ofSeconds(30));
     UUID id = UUID.fromString(entry.bumpId());
     assertEquals(BumpStatus.RUNNING.name(), store.bump(id).orElseThrow().status);
@@ -106,7 +106,7 @@ class AutomationEndingTest {
   }
 
   private AutomationDto entry() {
-    return automations.automations(REQUEST, FOLD_A).automations().getFirst();
+    return automations.automations(REQUEST, FOLD_A).automations().stream().filter(AutomationFixture::screenshots).findFirst().orElseThrow();
   }
 
   @Test
@@ -305,7 +305,7 @@ class AutomationEndingTest {
                     List.of("work", AutomationFixture.branch(REQUEST)),
                     null))
             .automations()
-            .getFirst();
+            .stream().filter(AutomationFixture::screenshots).findFirst().orElseThrow();
     queue.awaitIdle(Duration.ofSeconds(30));
     assertEquals(AutomationState.REQUESTED.name(), waiting.state(), waiting.detail());
     int triggers = peers.bodiesFor(eu.wohlben.qits.maintenance.bump.CiClient.TRIGGER_PATH).size();
@@ -324,7 +324,7 @@ class AutomationEndingTest {
         "no second run for the fold the run's own push made");
     assertEquals(
         AutomationState.FRESH.name(),
-        automations.automations(REQUEST, FOLD_B).automations().getFirst().state());
+        automations.automations(REQUEST, FOLD_B).automations().stream().filter(AutomationFixture::screenshots).findFirst().orElseThrow().state());
   }
 
   /**

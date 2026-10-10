@@ -78,45 +78,6 @@ class ReleaseRequestAutomationControllerTest {
     return given().contentType(ContentType.JSON).body(body);
   }
 
-  /**
-   * A caller that accepts NOT_APPLICABLE gets every kind (qits-1133): the one that runs, and the
-   * ones that do not apply with their reason and no row — on the trigger and on the read.
-   */
-  @Test
-  void aCallerThatAcceptsNotApplicableGetsEveryKind() {
-    String body =
-        TRIGGER_BODY.replace("\"workItem\":null}", "\"workItem\":null,"
-            + "\"accepts\":[\"WAITING\",\"NOT_APPLICABLE\"]}");
-    given()
-        .contentType(ContentType.JSON)
-        .body(body)
-        .when()
-        .post(DOOR)
-        .then()
-        .statusCode(200)
-        .body("automations", hasSize(3))
-        .body("automations.find { it.kind == 'estate-pins' }.state", equalTo("NOT_APPLICABLE"))
-        .body("automations.find { it.kind == 'estate-pins' }.detail", notNullValue())
-        .body("automations.find { it.kind == 'estate-pins' }.bumpId", is((Object) null))
-        .body("automations.find { it.kind == 'estate-pins' }.runIds", hasSize(0))
-        .body("automations.find { it.kind == 'entity-diagram' }.state", equalTo("NOT_APPLICABLE"))
-        .body("automations.find { it.kind == 'screenshot-baselines' }.state", equalTo("REQUESTED"));
-    queue.awaitIdle(Duration.ofSeconds(30));
-
-    given()
-        .when()
-        .get(DOOR + "?foldSha=" + FOLD_A + "&accepts=WAITING,NOT_APPLICABLE")
-        .then()
-        .statusCode(200)
-        .body("automations", hasSize(3));
-    given()
-        .when()
-        .get(DOOR + "?foldSha=" + FOLD_A)
-        .then()
-        .statusCode(200)
-        .body("automations", hasSize(1));
-  }
-
   /** The trigger answers the per-kind states, and the read answers the same. */
   @Test
   void theTriggerAnswersEveryApplicableKindAndTheReadAgrees() {
@@ -130,6 +91,8 @@ class ReleaseRequestAutomationControllerTest {
             .statusCode(200)
             .body("requestId", equalTo(REQUEST))
             .body("foldSha", equalTo(FOLD_A))
+            // The dependency bump ships switched off (qits-1133), so it is not listed and holds
+            // nothing: the DERIVED screenshots go in the same ask.
             .body("automations", hasSize(1))
             .body("automations[0].kind", equalTo(ScreenshotBaselinesAutomation.KIND))
             .body("automations[0].label", equalTo("Screenshot baselines"))

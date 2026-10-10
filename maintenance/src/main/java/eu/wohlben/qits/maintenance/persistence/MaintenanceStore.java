@@ -6,7 +6,6 @@ import eu.wohlben.qits.maintenance.bump.CiClient;
 import eu.wohlben.qits.maintenance.entity.MtArtifact;
 import eu.wohlben.qits.maintenance.entity.MtArtifactComponent;
 import eu.wohlben.qits.maintenance.entity.MtArtifactEdge;
-import eu.wohlben.qits.maintenance.entity.MtAutomationDecision;
 import eu.wohlben.qits.maintenance.entity.MtBranch;
 import eu.wohlben.qits.maintenance.entity.MtBump;
 import eu.wohlben.qits.maintenance.entity.MtBumpWindow;
@@ -17,6 +16,7 @@ import eu.wohlben.qits.maintenance.entity.MtLatest;
 import eu.wohlben.qits.maintenance.entity.MtPin;
 import eu.wohlben.qits.maintenance.entity.MtRelease;
 import eu.wohlben.qits.maintenance.entity.MtReleasePin;
+import eu.wohlben.qits.maintenance.entity.MtReleaseRequest;
 import eu.wohlben.qits.maintenance.entity.MtRepository;
 import eu.wohlben.qits.maintenance.entity.MtSbomCheckRun;
 import eu.wohlben.qits.maintenance.entity.MtSbomTicket;
@@ -466,10 +466,16 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
         });
   }
 
-  /** One dependency's latest, written whether the lookup succeeded or failed. */
+  /**
+   * One dependency's latest, written whether the lookup succeeded or failed.
+   *
+   * @return whether the column ADVANCED: a known version replaced by a strictly newer one, in that
+   *     ecosystem's order. A first row, a failed lookup and a downgrade are writes that moved nothing
+   *     anybody pins forward — what the upstream hook (qits-1133) is told about is only the first
+   */
   @ActivateRequestContext
-  public void recordLatest(Ecosystem ecosystem, String name, LatestLookup lookup, Instant now) {
-    DbRetry.runInNewTx(
+  public boolean recordLatest(Ecosystem ecosystem, String name, LatestLookup lookup, Instant now) {
+    return DbRetry.inNewTx(
         "record the latest of " + name,
         () -> {
           MtLatest row =
@@ -482,6 +488,11 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
             row.ecosystem = ecosystem.wireName();
             row.name = name;
           }
+          boolean advanced =
+              !fresh
+                  && row.latest != null
+                  && lookup.latest() != null
+                  && VersionOrder.newer(ecosystem, row.latest, lookup.latest());
           row.latest = lookup.latest();
           row.sourceUrl = lookup.sourceUrl();
           row.error = lookup.error();
@@ -490,6 +501,7 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
             row.persist();
           }
           getEntityManager().flush();
+          return advanced;
         });
   }
 
@@ -1676,60 +1688,6 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
         });
   }
 
-  /**
-   * Keeps "this kind does not apply at this fold" (qits-1133), once per (request, fold, kind). A
-   * second write of the same key is ignored, so two concurrent asks cannot fail on the unique key.
-   */
-  @ActivateRequestContext
-  public void recordNotApplicable(
-      String repository, String requestId, String foldSha, String kind, String reason, Instant now) {
-    if (requestId == null || foldSha == null || kind == null) {
-      return;
-    }
-    DbRetry.inNewTx(
-        "record that " + kind + " does not apply to " + repository + " at " + abbreviate(foldSha),
-        () ->
-            getEntityManager()
-                .createNativeQuery(
-                    "insert into mt_automation_decision"
-                        + " (id, release_request_id, fold_sha, automation_kind, repository, state,"
-                        + " reason, decided_at)"
-                        + " values (?1, ?2, ?3, ?4, ?5, 'NOT_APPLICABLE', ?6, ?7)"
-                        + " on conflict (release_request_id, fold_sha, automation_kind) do nothing")
-                .setParameter(1, UUID.randomUUID())
-                .setParameter(2, requestId)
-                .setParameter(3, foldSha)
-                .setParameter(4, kind)
-                .setParameter(5, repository)
-                .setParameter(6, reason)
-                .setParameter(7, now)
-                .executeUpdate());
-  }
-
-  /** Every kind that does not apply at one fold of one request, with its reason, by kind. */
-  @ActivateRequestContext
-  public Map<String, String> notApplicable(String requestId, String foldSha) {
-    if (requestId == null || foldSha == null) {
-      return Map.of();
-    }
-    return DbRetry.inNewTx(
-        "read the skipped automations of one fold",
-        () -> {
-          Map<String, String> out = new LinkedHashMap<>();
-          for (MtAutomationDecision row :
-              MtAutomationDecision.<MtAutomationDecision>find(
-                      "releaseRequestId = ?1 and foldSha = ?2 and state = ?3",
-                      Sort.by("automationKind"),
-                      requestId,
-                      foldSha,
-                      "NOT_APPLICABLE")
-                  .list()) {
-            out.put(row.automationKind, row.reason);
-          }
-          return out;
-        });
-  }
-
   private static int supersedeWaitingRows(
       String requestId, String kind, String exceptFold, Instant now) {
     List<MtBump> waiting =
@@ -2685,6 +2643,146 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
             }
           }
           return List.copyOf(found);
+        });
+  }
+
+  // --- release requests this service remembers (V21, qits-1133) --------------------------------
+
+  /** What this service remembers about one release request, if anything. */
+  @ActivateRequestContext
+  public Optional<MtReleaseRequest> releaseRequest(String requestId) {
+    if (requestId == null || requestId.isBlank()) {
+      return Optional.empty();
+    }
+    return DbRetry.inNewTx(
+        "read what is remembered about release request " + requestId,
+        () -> Optional.ofNullable((MtReleaseRequest) MtReleaseRequest.findById(requestId)));
+  }
+
+  /** Whether this service opened that request itself — a group bump's ask or the upstream hook's. */
+  @ActivateRequestContext
+  public boolean openedByMaintenance(String requestId) {
+    return releaseRequest(requestId).map(row -> row.opened).orElse(false);
+  }
+
+  /**
+   * Records that this service opened a request. Idempotent: the release ask converges onto the
+   * request a branch already participates in, so the same id may come back twice.
+   *
+   * @param changes the pending set an UPSTREAM request was opened for, or null
+   */
+  @ActivateRequestContext
+  public void recordOpenedRequest(
+      String requestId,
+      String repository,
+      String branch,
+      String purpose,
+      List<?> changes,
+      Instant now) {
+    if (requestId == null || requestId.isBlank()) {
+      return;
+    }
+    DbRetry.runInNewTx(
+        "record that release request " + requestId + " was opened here",
+        () -> {
+          MtReleaseRequest row = MtReleaseRequest.findById(requestId);
+          boolean fresh = row == null;
+          if (fresh) {
+            row = new MtReleaseRequest();
+            row.requestId = requestId;
+            row.repository = repository;
+            row.openedAt = now;
+          }
+          if (!row.opened) {
+            row.openedAt = now;
+          }
+          row.opened = true;
+          row.purpose = purpose;
+          row.branch = branch;
+          if (changes != null) {
+            row.changes = writeJson(changes);
+          }
+          row.updatedAt = now;
+          if (fresh) {
+            row.persist();
+          }
+          getEntityManager().flush();
+        });
+  }
+
+  /** The newest request this service opened for one repository for one purpose. */
+  @ActivateRequestContext
+  public Optional<MtReleaseRequest> newestOpenedRequest(String repository, String purpose) {
+    return DbRetry.inNewTx(
+        "read the newest " + purpose + " request of " + repository,
+        () ->
+            MtReleaseRequest.<MtReleaseRequest>find(
+                    "repository = ?1 and opened = true and purpose = ?2",
+                    Sort.by("openedAt").descending(),
+                    repository,
+                    purpose)
+                .firstResultOptional());
+  }
+
+  /** How many upstream-driven restarts a request has had since its last QA verdict. */
+  @ActivateRequestContext
+  public int upstreamRestarts(String requestId) {
+    return releaseRequest(requestId).map(row -> row.upstreamRestarts).orElse(0);
+  }
+
+  /** One more upstream-driven restart of a request's pre-run. */
+  @ActivateRequestContext
+  public void recordUpstreamRestart(String requestId, String repository, Instant now) {
+    DbRetry.runInNewTx(
+        "count an upstream restart of release request " + requestId,
+        () -> {
+          MtReleaseRequest row = MtReleaseRequest.findById(requestId);
+          boolean fresh = row == null;
+          if (fresh) {
+            row = new MtReleaseRequest();
+            row.requestId = requestId;
+            row.repository = repository;
+          }
+          row.upstreamRestarts = row.upstreamRestarts + 1;
+          row.upstreamRestartedAt = now;
+          row.updatedAt = now;
+          if (fresh) {
+            row.persist();
+          }
+          getEntityManager().flush();
+        });
+  }
+
+  /** A request had a QA verdict: the starvation guard starts counting again from zero. */
+  @ActivateRequestContext
+  public void resetUpstreamRestarts(String requestId, Instant now) {
+    DbRetry.runInNewTx(
+        "reset the upstream restarts of release request " + requestId,
+        () -> {
+          MtReleaseRequest row = MtReleaseRequest.findById(requestId);
+          if (row == null || row.upstreamRestarts == 0) {
+            return;
+          }
+          row.upstreamRestarts = 0;
+          row.updatedAt = now;
+          getEntityManager().flush();
+        });
+  }
+
+  /** This service withdrew a request it had opened. */
+  @ActivateRequestContext
+  public void requestWithdrawn(String requestId, String reason, Instant now) {
+    DbRetry.runInNewTx(
+        "record the withdrawal of release request " + requestId,
+        () -> {
+          MtReleaseRequest row = MtReleaseRequest.findById(requestId);
+          if (row == null) {
+            return;
+          }
+          row.withdrawnAt = now;
+          row.withdrawnReason = reason;
+          row.updatedAt = now;
+          getEntityManager().flush();
         });
   }
 

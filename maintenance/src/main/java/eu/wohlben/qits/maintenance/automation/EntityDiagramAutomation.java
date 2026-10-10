@@ -66,12 +66,7 @@ public class EntityDiagramAutomation implements ReleaseRequestAutomation {
 
   private static final List<String> PATHS = List.of(":(glob)docs/database/**");
 
-  /**
-   * What the generator reads: Java and Kotlin sources and the poms (qits-1133). A fold that changes
-   * none of them is carried with no run, so it adds no wait before QA.
-   */
-  static final List<String> INPUTS =
-      List.of(":(glob)**/*.java", ":(glob)**/*.kt", ":(glob)**/pom.xml");
+  private static final List<String> INPUTS = List.of(":(glob)**/*.java", ":(glob)**/pom.xml");
 
   @Override
   public String kind() {
@@ -116,6 +111,17 @@ public class EntityDiagramAutomation implements ReleaseRequestAutomation {
     return Target.OWN_BRANCH;
   }
 
+  /** Generated from compiled classes, so from whatever the SOURCE kinds left the poms at. */
+  @Override
+  public Stage stage() {
+    return Stage.DERIVED;
+  }
+
+  /**
+   * What the generator reads: the sources it compiles and the poms that decide what it compiles
+   * against (qits-1133). A fold that changed neither — a screenshot join, a lockfile, a README —
+   * carries the previous fold's FRESH or COMMITTED outcome with no run.
+   */
   @Override
   public List<String> inputPaths() {
     return INPUTS;

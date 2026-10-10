@@ -4,8 +4,9 @@ import eu.wohlben.qits.maintenance.bump.CiClient;
 import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
 import eu.wohlben.qits.maintenance.entity.MtLatest;
 import eu.wohlben.qits.maintenance.entity.MtPin;
-import eu.wohlben.qits.maintenance.entity.MtRepository;
+import eu.wohlben.qits.maintenance.entity.MtReleaseRequest;
 import eu.wohlben.qits.maintenance.githost.FileLookup;
+import eu.wohlben.qits.maintenance.manifest.GitmodulesParser;
 import eu.wohlben.qits.maintenance.manifest.GroupConfig;
 import eu.wohlben.qits.maintenance.manifest.ManifestScanner;
 import eu.wohlben.qits.maintenance.manifest.ParsedPin;
@@ -23,86 +24,83 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
- * <b>Dependency bump</b> (ticket qits-1133, decision D2): move a request's platform-internal pins to
- * their newest release INSIDE the request, before its QA run, instead of on a separate
- * {@code maintenance/<group>} train.
- *
- * <h2>Which pins</h2>
- *
- * <p><b>Platform-internal only, in every request</b> (user decision 2026-10-09): the platform's own
- * maven artifacts, npm packages, images and sibling gitlinks — what {@link
- * MaintenanceConfig#kindOf(ParsedPin)} calls INTERNAL. Third-party pins are never bumped here. A
- * wrapper's gitlinks belong to {@link EstatePinsAutomation}, so this kind drops GITLINK pins when the
- * archetype is {@code PROJECT}. A dependency named under {@code hold:} in the fold's {@code
- * .config/qits/maintenance.yml} is left alone: the escape for an upstream release that breaks the
- * repository.
+ * <b>Dependency bump</b> (qits-1133): every pin a release request's FOLD carries that is behind its
+ * latest, written as ONE commit onto {@code maintenance/automations/dependency-bump/<request>} and
+ * joined to the request at {@code LOWEST} — before the request's first build, rather than as a
+ * separate {@code maintenance/<group>} branch whose every push re-folded the request and restarted
+ * its QA.
  *
  * <h2>Applies, plans, writes</h2>
  *
  * <ul>
- *   <li><b>Applies</b> when the fold declares at least one platform-internal pin ({@link
- *       ManifestScanner#pinsAt}, one read per fold, cached). An unreadable fold is UNKNOWN.
- *   <li><b>Plans</b> the pins AT THE FOLD against {@code mt_latest}, through {@link
- *       PendingChanges#newerVersion} (same order and prerelease rules as every bump). Nothing newer:
- *       FRESH, no run.
- *   <li><b>Otherwise one run</b> of the bump pipeline ({@code MaintenanceBump}, group {@code
- *       dependencies}) that rebuilds {@code maintenance/automations/dependency-bump/<rr>} as ONE
- *       commit on main. The changes are measured against main, so pins an earlier run already moved
- *       are in the payload again and survive the rebuild. The branch head travels as {@code
- *       replaceHead}; the step pushes under {@code --force-with-lease} and refuses a branch with a
- *       commit it did not write (exit 42). A green run that moved the branch joins it to the
- *       request at priority LOWEST.
+ *   <li><b>Applies</b> when the inventory knows a pin of the repository a bump could move — an
+ *       INTERNAL or EXTERNAL one, and in a wrapper not a gitlink (below). One store read, no git
+ *       host.
+ *   <li><b>Plans AT THE FOLD</b>, never at main: the fold's manifests are read through the scan's
+ *       own discovery ({@link ManifestScanner#pinsAt}, the same parsers and the same {@code ignore:}),
+ *       each pin is judged by the pending rule ({@link PendingChanges#newerVersion}) against {@code
+ *       mt_latest}, and what is left after the fold's own {@code hold:} list is the change list.
+ *       Nothing behind is FRESH with no run — the loop's terminator, as estate pins' is: the
+ *       re-fold this kind's own commit causes is planned again and finds nothing.
+ *   <li><b>Writes</b> through the shared core's {@code automations/dependency-bump.yml}: the payload
+ *       carries {@code changes} in exactly the {@code MaintenanceBump} entry shape ({@link Change})
+ *       and {@code commitPaths}, the manifests those changes touch.
  * </ul>
  *
- * <p><b>Payload</b>: {@code repository}, {@code group: dependencies}, {@code branch}, {@code
- * baseRef: main}, {@code changes}, {@code kind: dependency-bump}, {@code requestId}, {@code
- * foldSha}, {@code workItem} when there is one, {@code replaceHead} when the branch exists.
+ * <h2>Whose upgrades</h2>
+ *
+ * <p><b>Only the platform's own releases are planned, with one exception</b> — INTERNAL pins,
+ * decided by the same name rule the scan stores ({@link MaintenanceConfig#kindOf(ParsedPin)}).
+ * Somebody else's framework major in a person's request would be an opinion pushed into their
+ * release, and a group bump's request keeps the pre-1133 rule that external upgrades are a person's
+ * press. The exception is the MAIN-ONLY request the dispatcher opens on the upstream path ({@code
+ * mt_release_request.purpose = MAIN_ONLY}, switch on): it exists to carry upgrades and plans
+ * EXTERNAL ones too. With {@code qits.maintenance.pre-run.upstream.enabled} off, nothing does.
+ *
+ * <h2>Who owns which path</h2>
+ *
+ * <p><b>In a wrapper the gitlinks are {@code estate-pins}'</b>, and this kind never plans, applies to
+ * or claims one there; everywhere else a gitlink is a pin like any other. {@link
+ * #committablePaths(AutomationSubject)} is the manifests and, outside a wrapper, the gitlink paths
+ * the fold's {@code .gitmodules} declares — which is what keeps the two kinds disjoint, and what the
+ * engine checks again at run time before a plan is opened.
  */
 @ApplicationScoped
 public class DependencyBumpAutomation implements ReleaseRequestAutomation {
 
   public static final String KIND = "dependency-bump";
 
-  /** The switch (release R1): off until the cutover. */
+  /**
+   * The switch, off until the cutover (MT-5): off, the kind is not listed, planned or started, and
+   * the group bumps carry on as before.
+   */
   public static final String SWITCH = "qits.maintenance.automations.dependency-bump.enabled";
 
-  /** The lock npm rewrites beside a {@code package.json}. */
-  static final String PACKAGE_LOCK = ManifestScanner.PACKAGE_LOCK;
+  /** The manifests the four parsers edit: every pom, the npm pair, both Dockerfile spellings. */
+  public static final List<String> MANIFESTS =
+      List.of(
+          ":(glob)**/pom.xml",
+          ":(glob)**/package.json",
+          ":(glob)**/" + ManifestScanner.PACKAGE_LOCK,
+          ":(glob)**/Dockerfile",
+          ":(glob)**/Dockerfile.*",
+          ":(glob)**/*.Dockerfile");
 
-  /** How many folds' reads are kept. Small: a fold is asked about a few times in a minute. */
-  private static final int CACHE_SIZE = 64;
-
-  @Inject ManifestScanner manifests;
+  @Inject MaintenanceStore store;
 
   @Inject MaintenanceConfig config;
 
-  @Inject MaintenanceStore store;
+  @Inject ManifestScanner scanner;
 
   @ConfigProperty(name = SWITCH, defaultValue = "false")
   boolean enabled;
 
-  /** One fold's manifests, read once: {@code project/name@sha}. */
-  private final Map<String, FoldPins> cache = new ConcurrentHashMap<>();
-
-  /**
-   * What one fold declares, as this kind reads it.
-   *
-   * @param status FOUND, or why nothing could be read
-   * @param message the sentence for a read that failed
-   * @param all every pin the scan found
-   * @param internal the pins this kind may move: platform-internal, actionable, gitlinks dropped on
-   *     a wrapper
-   */
-  record FoldPins(
-      FileLookup.Status status, String message, List<ParsedPin> all, List<ParsedPin> internal) {
-
-    boolean found() {
-      return status == FileLookup.Status.FOUND;
-    }
+  @Override
+  public boolean enabled() {
+    return enabled;
   }
 
   @Override
@@ -116,25 +114,75 @@ public class DependencyBumpAutomation implements ReleaseRequestAutomation {
   }
 
   @Override
-  public boolean enabled() {
-    return enabled;
-  }
-
-  @Override
   public Stage stage() {
     return Stage.SOURCE;
   }
 
-  /** The bump pipeline, not the shared core: its step owns the one-commit rebuild (qits-1133). */
   @Override
-  public String pipeline() {
-    return CiClient.EVENT_NAME;
+  public Applicability applicability(AutomationSubject subject) {
+    boolean wrapper = wrapper(subject);
+    for (MtPin pin : store.pins(subject.repository().name)) {
+      if (!PendingChanges.kindOf(pin).actionable()) {
+        continue;
+      }
+      if (wrapper && Ecosystem.GITLINK.wireName().equals(pin.ecosystem)) {
+        continue;
+      }
+      return Applicability.applies();
+    }
+    return Applicability.notApplicable(
+        "the inventory knows no pin of " + subject.repository().name + " a bump could move"
+            + (wrapper ? " (a wrapper's gitlinks are estate-pins')" : ""));
   }
 
-  /** The payload's group, and the commit subject's scope when the request names no work item. */
   @Override
-  public String bumpGroup() {
-    return GroupConfig.DEFAULT_GROUP;
+  public String pipeline() {
+    return CiClient.AUTOMATION_EVENT_NAME;
+  }
+
+  @Override
+  public List<String> committablePaths() {
+    return MANIFESTS;
+  }
+
+  /** The manifests, and outside a wrapper the gitlink paths the fold declares. */
+  @Override
+  public List<String> committablePaths(AutomationSubject subject) {
+    if (wrapper(subject)) {
+      return MANIFESTS;
+    }
+    FileLookup declaration = subject.fold().file(GitmodulesParser.PATH);
+    if (!declaration.found()) {
+      return MANIFESTS;
+    }
+    List<String> paths = new ArrayList<>(MANIFESTS);
+    for (GitmodulesParser.Submodule module : GitmodulesParser.parse(declaration.content())) {
+      if (module.path() != null && !module.path().isBlank() && !paths.contains(module.path())) {
+        paths.add(module.path());
+      }
+    }
+    return List.copyOf(paths);
+  }
+
+  /**
+   * What the plan reads: its own manifests, the {@code .gitmodules} that names the gitlinks and the
+   * config that says what is ignored and held. A fold that touched none of them carries; one that
+   * did — this kind's own commit included — is planned again, and the plan is what ends the loop.
+   */
+  @Override
+  public List<String> inputPaths(AutomationSubject subject) {
+    List<String> paths = new ArrayList<>(committablePaths(subject));
+    paths.add(GitmodulesParser.PATH);
+    paths.add(GroupConfig.PATH);
+    return List.copyOf(paths);
+  }
+
+  @Override
+  public List<String> inputPaths() {
+    List<String> paths = new ArrayList<>(MANIFESTS);
+    paths.add(GitmodulesParser.PATH);
+    paths.add(GroupConfig.PATH);
+    return List.copyOf(paths);
   }
 
   @Override
@@ -143,213 +191,121 @@ public class DependencyBumpAutomation implements ReleaseRequestAutomation {
   }
 
   @Override
-  public String joinPriority() {
-    return "LOWEST";
+  public Plan plan(AutomationSubject subject) {
+    FoldReader fold = subject.fold();
+    FileLookup file = fold.file(GroupConfig.PATH);
+    GroupConfig.Parsed declared =
+        switch (file.status()) {
+          case FOUND -> GroupConfig.parse(file.content());
+          case ABSENT -> GroupConfig.fallback();
+          default -> null;
+        };
+    if (declared == null) {
+      return Plan.unknown(
+          GroupConfig.PATH + " could not be read at the fold: "
+              + (file.message() == null ? file.status().name() : file.message()));
+    }
+    if (!declared.ok()) {
+      // The scan's own rule: an invalid file is a CONFIG_ERROR and nothing is bumped for it. FRESH
+      // rather than FAILED, because a person's request must not hold on a file that is theirs to fix.
+      return Plan.fresh(declared.error() + " — nothing is bumped until it parses");
+    }
+
+    ManifestScanner.Pins read =
+        scanner.pinsAt(subject.repository().project, subject.repository().name, fold.sha());
+    if (read.status() != FileLookup.Status.FOUND) {
+      return Plan.unknown(
+          "the manifests at the fold could not be read: "
+              + (read.message() == null ? read.status().name() : read.message()));
+    }
+
+    boolean wrapper = wrapper(subject);
+    boolean external = plansExternal(subject.requestId());
+    Map<String, MtLatest> latest = PendingChanges.index(store.allLatest());
+    List<Change> changes = new ArrayList<>();
+    List<String> held = new ArrayList<>();
+    for (ParsedPin pin : read.pins()) {
+      if (wrapper && pin.ecosystem() == Ecosystem.GITLINK) {
+        continue;
+      }
+      PinKind kind = config.kindOf(pin);
+      if (!kind.actionable() || (!external && kind != PinKind.INTERNAL)) {
+        continue;
+      }
+      MtPin row = asRow(pin, kind);
+      Optional<String> newer = PendingChanges.newerVersion(row, latest);
+      if (newer.isEmpty()) {
+        continue;
+      }
+      if (declared.holds(pin.name())) {
+        held.add(pin.name());
+        continue;
+      }
+      changes.add(
+          new Change(
+              row.ecosystem, row.manifestPath, row.name, row.version, newer.get(), row.location));
+    }
+    if (changes.isEmpty()) {
+      return Plan.fresh(
+          "every " + (external ? "" : "internal ") + "pin at the fold names its latest"
+              + (held.isEmpty() ? "" : "; held by " + GroupConfig.PATH + ": " + held));
+    }
+    return Plan.runs(
+        List.of(new Plan.Run(null, changes, Map.of(COMMIT_PATHS, commitPaths(changes)))));
   }
 
-  @Override
-  public Applicability applicability(AutomationSubject subject) {
-    FoldPins pins = read(subject.repository(), subject.foldSha());
-    if (!pins.found()) {
-      return Applicability.unknown("the manifests at the fold could not be read: " + pins.message());
-    }
-    if (pins.all().isEmpty()) {
-      return Applicability.notApplicable("no manifest the scan knows");
-    }
-    if (pins.internal().isEmpty()) {
-      return Applicability.notApplicable(
-          wrapper(subject.repository())
-              ? "no platform dependency outside its gitlinks, which estate pins owns"
-              : "no platform dependency: every pin is third-party or the repository's own");
-    }
-    return Applicability.applies();
-  }
+  /** The payload field naming the files a run may stage, as the engine and qits-ci both read it. */
+  public static final String COMMIT_PATHS = "commitPaths";
 
-  /** None that hold for every repository: the paths are the fold's manifests. */
-  @Override
-  public List<String> committablePaths() {
-    return List.of();
+  /**
+   * The files a change list touches: each change's manifest, and beside an npm manifest its lock,
+   * which the step rewrites with it. A gitlink's "manifest" is its path, which is what is staged.
+   */
+  static List<String> commitPaths(List<Change> changes) {
+    Set<String> paths = new LinkedHashSet<>();
+    for (Change change : changes) {
+      paths.add(change.manifestPath());
+      if (Ecosystem.NPM.wireName().equals(change.ecosystem())) {
+        int slash = change.manifestPath().lastIndexOf('/');
+        String directory = slash < 0 ? "" : change.manifestPath().substring(0, slash + 1);
+        paths.add(directory + ManifestScanner.PACKAGE_LOCK);
+      }
+    }
+    return List.copyOf(paths);
   }
 
   /**
-   * Every manifest the fold's pins sit in (gitlink paths included), plus the lock beside each
-   * {@code package.json}. An unreadable fold is no paths: nothing carries on them.
+   * Whether this request may carry EXTERNAL upgrades: only a MAIN-ONLY request the dispatcher's
+   * upstream path opened, and only while {@code qits.maintenance.pre-run.upstream.enabled} is on.
+   * A person's request and a group bump's ({@code maintenance/<group>}) get INTERNAL pins only —
+   * external upgrades stay a person's press on the group door, as they were before qits-1133.
    */
-  @Override
-  public List<String> committablePaths(AutomationSubject subject) {
-    FoldPins pins = read(subject.repository(), subject.foldSha());
-    if (!pins.found()) {
-      return List.of();
+  boolean plansExternal(String requestId) {
+    if (!config.preRunUpstreamEnabled()) {
+      return false;
     }
-    boolean wrapper = wrapper(subject.repository());
-    List<ParsedPin> mine = new ArrayList<>();
-    for (ParsedPin pin : pins.all()) {
-      if (!(wrapper && pin.ecosystem() == Ecosystem.GITLINK)) {
-        mine.add(pin);
-      }
-    }
-    return paths(mine);
+    return store
+        .releaseRequest(requestId)
+        .filter(memo -> memo.opened && MtReleaseRequest.MAIN_ONLY.equals(memo.purpose))
+        .isPresent();
   }
 
-  /** The branch head the step rebuilds over, when there is a branch. */
-  @Override
-  public Map<String, String> dispatchExtras(AutomationSubject subject, String startHead) {
-    return startHead == null || startHead.isBlank() ? Map.of() : Map.of("replaceHead", startHead);
-  }
-
-  @Override
-  public Plan plan(AutomationSubject subject) {
-    MtRepository repository = subject.repository();
-    FoldPins atFold = read(repository, subject.foldSha());
-    if (!atFold.found()) {
-      return Plan.unknown("the manifests at the fold could not be read: " + atFold.message());
-    }
-    FileLookup file = subject.fold().file(GroupConfig.PATH);
-    GroupConfig.Parsed settings;
-    switch (file.status()) {
-      case FOUND -> settings = GroupConfig.parse(file.content());
-      case ABSENT -> settings = GroupConfig.fallback();
-      default -> {
-        return Plan.unknown(
-            GroupConfig.PATH + " could not be read at the fold: "
-                + (file.message() == null ? file.status().name() : file.message()));
-      }
-    }
-    if (!settings.ok()) {
-      return Plan.unknown(settings.error() + " — fix it on the request's branch");
-    }
-    Map<String, MtLatest> latest = PendingChanges.index(store.allLatest());
-
-    List<String> behind = new ArrayList<>();
-    for (ParsedPin pin : atFold.internal()) {
-      if (!settings.holds(pin.name()) && newer(pin, latest).isPresent()) {
-        behind.add(pin.name());
-      }
-    }
-    String heldNote =
-        settings.held().isEmpty() ? "" : " (held: " + String.join(", ", settings.held()) + ")";
-    if (behind.isEmpty()) {
-      return Plan.fresh("every platform dependency is at its newest release" + heldNote);
-    }
-
-    // THE CHANGES ARE MEASURED AGAINST MAIN, the base the one commit is cut from, never against
-    // the fold: the fold already carries the previous bump commit, and a rebuild that left those
-    // pins out would undo them.
-    String base =
-        repository.mainBranch == null || repository.mainBranch.isBlank()
-            ? "main"
-            : repository.mainBranch;
-    FoldPins atBase = read(repository, base, false);
-    if (!atBase.found()) {
-      return Plan.unknown(
-          "the manifests at " + base + " could not be read: " + atBase.message());
-    }
-    List<Change> changes = new ArrayList<>();
-    for (ParsedPin pin : atBase.internal()) {
-      if (settings.holds(pin.name())) {
-        continue;
-      }
-      Optional<String> to = newer(pin, latest);
-      if (to.isPresent()) {
-        changes.add(
-            new Change(
-                pin.ecosystem().wireName(),
-                pin.manifestPath(),
-                pin.name(),
-                pin.version(),
-                to.get(),
-                pin.location()));
-      }
-    }
-    if (changes.isEmpty()) {
-      // Behind only on lines the request's own branches added: the base has nothing to move.
-      return Plan.fresh(
-          "behind only on pins the request's own branches declare ("
-              + String.join(", ", behind) + "); the bump writes from " + base + heldNote);
-    }
-    return Plan.runs(List.of(new Plan.Run(null, changes, Map.of())));
-  }
-
-  // --- reads ------------------------------------------------------------------------------------
-
-  /** One fold's pins, cached by sha. */
-  FoldPins read(MtRepository repository, String sha) {
-    return read(repository, sha, true);
-  }
-
-  private FoldPins read(MtRepository repository, String revision, boolean cacheable) {
-    String key = repository.project + "/" + repository.name + "@" + revision;
-    if (cacheable) {
-      FoldPins hit = cache.get(key);
-      if (hit != null) {
-        return hit;
-      }
-    }
-    ManifestScanner.Pins read = manifests.pinsAt(repository.project, repository.name, revision);
-    FoldPins answer;
-    if (read.status() != FileLookup.Status.FOUND) {
-      answer =
-          new FoldPins(
-              read.status(),
-              read.message() == null ? read.status().name() : read.message(),
-              List.of(),
-              List.of());
-    } else {
-      boolean wrapper = wrapper(repository);
-      List<ParsedPin> internal = new ArrayList<>();
-      for (ParsedPin pin : read.pins()) {
-        if (wrapper && pin.ecosystem() == Ecosystem.GITLINK) {
-          continue;
-        }
-        if (config.kindOf(pin) == PinKind.INTERNAL) {
-          internal.add(pin);
-        }
-      }
-      answer =
-          new FoldPins(FileLookup.Status.FOUND, null, List.copyOf(read.pins()), List.copyOf(internal));
-    }
-    // Only a found read is kept: a failed one is asked again on the next fold ask.
-    if (cacheable && answer.found()) {
-      if (cache.size() >= CACHE_SIZE) {
-        cache.clear();
-      }
-      cache.put(key, answer);
-    }
-    return answer;
-  }
-
-  /** The newer version of one pin, by the rules every bump uses. */
-  private static Optional<String> newer(ParsedPin pin, Map<String, MtLatest> latest) {
+  /** A pin read at the fold, in the shape the pending rule judges a stored one in. Never persisted. */
+  private static MtPin asRow(ParsedPin pin, PinKind kind) {
     MtPin row = new MtPin();
     row.ecosystem = pin.ecosystem().wireName();
+    row.manifestPath = pin.manifestPath();
     row.name = pin.name();
     row.version = pin.version();
     row.range = pin.range();
-    row.manifestPath = pin.manifestPath();
+    row.kind = kind.name();
     row.location = pin.location();
-    row.kind = PinKind.INTERNAL.name();
-    return PendingChanges.newerVersion(row, latest);
+    return row;
   }
 
-  /** The manifests of these pins, in order, with the lock beside each {@code package.json}. */
-  static List<String> paths(List<ParsedPin> pins) {
-    Set<String> out = new LinkedHashSet<>();
-    for (ParsedPin pin : pins) {
-      String path = pin.manifestPath();
-      if (path == null || path.isBlank()) {
-        continue;
-      }
-      out.add(path);
-      if (pin.ecosystem() == Ecosystem.NPM && path.endsWith("package.json")) {
-        out.add(path.substring(0, path.length() - "package.json".length()) + PACKAGE_LOCK);
-      }
-    }
-    return List.copyOf(out);
-  }
-
-  private static boolean wrapper(MtRepository repository) {
-    return RepositoryArchetype.of(repository.archetype)
-        .map(archetype -> archetype == RepositoryArchetype.PROJECT)
-        .orElse(false);
+  private static boolean wrapper(AutomationSubject subject) {
+    return RepositoryArchetype.of(subject.repository().archetype)
+        .filter(archetype -> archetype == RepositoryArchetype.PROJECT)
+        .isPresent();
   }
 }

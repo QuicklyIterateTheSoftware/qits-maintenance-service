@@ -101,6 +101,12 @@ class AutomationTriggerTest {
         .orElseThrow(() -> new AssertionError("no screenshot entry in " + answer));
   }
 
+  private List<MtBump> screenshotRows(String fold) {
+    return store.automations(REQUEST, fold).stream()
+        .filter(row -> ScreenshotBaselinesAutomation.KIND.equals(row.automationKind))
+        .toList();
+  }
+
   private MtBump row(AutomationDto entry) {
     return store.bump(UUID.fromString(entry.bumpId())).orElseThrow();
   }
@@ -131,8 +137,12 @@ class AutomationTriggerTest {
     ReleaseRequestAutomationsDto answer = trigger(REQUEST, FOLD_A, null, null);
 
     assertEquals(FOLD_A, answer.foldSha());
-    assertTrue(answer.automations().isEmpty(), "nothing applies: " + answer);
-    assertTrue(store.automations(REQUEST, FOLD_A).isEmpty(), "and nothing was stored");
+    assertTrue(
+        answer.automations().stream().noneMatch(AutomationFixture::screenshots),
+        "screenshots do not apply: " + answer);
+    // The dependency bump ships switched off (qits-1133), so no kind is listed at all.
+    assertEquals(0, answer.automations().size(), answer.toString());
+    assertTrue(screenshotRows(FOLD_A).isEmpty(), "and nothing was stored for screenshots");
     assertEquals(0, triggers(), "and no run was asked for");
   }
 
@@ -144,7 +154,7 @@ class AutomationTriggerTest {
     AutomationDto entry = screenshots(trigger(REQUEST, FOLD_A, null, null));
 
     assertEquals(AutomationState.UNKNOWN.name(), entry.state());
-    assertTrue(store.automations(REQUEST, FOLD_A).isEmpty(), "so the next ask decides again");
+    assertTrue(screenshotRows(FOLD_A).isEmpty(), "so the next ask decides again");
   }
 
   /** A repository that follows the convention gets one row and one run, on the kind's branch. */
@@ -342,66 +352,6 @@ class AutomationTriggerTest {
     assertEquals(BumpStatus.RUNNING.name(), row(entry).status);
   }
 
-  /**
-   * THE INPUTS RULE (qits-1133). A fold that changes nothing the entity diagram reads — no Java, no
-   * Kotlin, no pom — is carried with no run, though the change is not automation output.
-   */
-  @Test
-  void aFoldThatChangesNoInputOfTheEntityDiagramIsCarried() {
-    commitEntityDiagramFoldA();
-    AutomationFixture.scriptFold(peers, FOLD_B, false);
-    AutomationFixture.scriptEntityDiagramApplies(peers, FOLD_B);
-    int before = triggers();
-
-    AutomationDto entry =
-        entityDiagram(trigger(REQUEST, FOLD_B, FOLD_A, List.of("README.md", "src/app/x.ts")));
-
-    assertEquals(AutomationState.FRESH.name(), entry.state(), entry.detail());
-    assertTrue(entry.detail().contains("carried"), entry.detail());
-    assertEquals(before, triggers(), "no run for a fold that changed none of its inputs");
-  }
-
-  /**
-   * THE CAP FOLLOWS QITS-CI (qits-1133): at most half of its slots. Two slots, so one automation
-   * runs and the second waits.
-   */
-  @Test
-  void theCapIsHalfOfQitsCisSlots() {
-    String second = "6e1f0c3a-2b4d-4e6f-8a9b-0c1d2e3f4a5b";
-    AutomationFixture.scriptRequest(peers, second, "PENDING", FOLD_A);
-    Fixture.scriptForeignBranchAt(
-        peers, AutomationFixture.branch(second), AutomationFixture.BEFORE);
-    Fixture.scriptCiQueue(peers, 0, Fixture.runner("r", 2, true, false));
-
-    MtBump one = row(screenshots(trigger(REQUEST, FOLD_A, null, null)));
-    MtBump two = row(screenshots(trigger(second, FOLD_A, null, null)));
-
-    assertEquals(BumpStatus.RUNNING.name(), one.status);
-    assertEquals(BumpStatus.REQUESTED.name(), two.status, "half of two slots is one");
-  }
-
-  /** NOT_APPLICABLE is kept and listed only for a caller that accepts it. */
-  @Test
-  void notApplicableIsListedOnlyForACallerThatAcceptsIt() {
-    AutomationFixture.scriptFold(peers, FOLD_A, false);
-
-    ReleaseRequestAutomationsDto answer =
-        automations.trigger(
-            REQUEST,
-            new AutomationService.Fold(
-                Fixture.REPOSITORY, FOLD_A, null, null, List.of("main", "work"), null,
-                List.of("NOT_APPLICABLE")));
-
-    assertEquals(
-        AutomationState.NOT_APPLICABLE.name(), screenshots(answer).state(), answer.toString());
-    assertTrue(screenshots(answer).detail().contains("test:browser"), screenshots(answer).detail());
-    assertTrue(store.automations(REQUEST, FOLD_A).isEmpty(), "no bump row for it");
-    assertTrue(automations.automations(REQUEST, FOLD_A).automations().isEmpty(), "older reader");
-    assertEquals(
-        AutomationState.NOT_APPLICABLE.name(),
-        screenshots(automations.automations(REQUEST, FOLD_A, List.of("NOT_APPLICABLE"))).state());
-  }
-
   /** The same fold posted twice is answered from the rows the first one wrote. */
   @Test
   void aRepeatedTriggerForTheSameFoldIsIdempotent() {
@@ -410,7 +360,7 @@ class AutomationTriggerTest {
 
     assertEquals(first.bumpId(), again.bumpId());
     assertEquals(AutomationState.RUNNING.name(), again.state());
-    assertEquals(1, store.automations(REQUEST, FOLD_A).size());
+    assertEquals(1, screenshotRows(FOLD_A).size());
     assertEquals(1, triggers(), "one fold, one run");
     assertEquals(
         again.bumpId(),
@@ -501,5 +451,39 @@ class AutomationTriggerTest {
     AutomationDto entry = screenshots(trigger(REQUEST, FOLD_A, null, null));
     assertEquals(AutomationState.REQUESTED.name(), entry.state(), entry.detail());
     assertEquals(1, scansOf(Fixture.REPOSITORY).size(), "and a known repository queues no scan");
+  }
+
+  /**
+   * A dependency-bump row opened before the switch went off (qits-1133) is not run: it ends FRESH
+   * (NOTHING_TO_DO), so it holds no request, and nothing is sent to qits-ci.
+   */
+  @Test
+  void aRowOfASwitchedOffKindEndsFreshWithoutARun() {
+    UUID id =
+        store.openAutomation(
+            new MaintenanceStore.AutomationOpening(
+                Fixture.REPOSITORY,
+                DependencyBumpAutomation.KIND,
+                REQUEST,
+                FOLD_A,
+                null,
+                false,
+                "maintenance/automations/dependency-bump/" + REQUEST,
+                null,
+                "test",
+                BumpTrigger.FOLD,
+                List.of(),
+                java.util.Map.of(),
+                BumpStatus.REQUESTED,
+                null),
+            false,
+            java.time.Instant.now());
+
+    automations.dispatch(id);
+
+    MtBump row = store.bump(id).orElseThrow();
+    assertEquals(BumpStatus.NOTHING_TO_DO.name(), row.status, row.message);
+    assertTrue(row.message.contains("switched off"), row.message);
+    assertEquals(0, triggers(), "and no run was asked for");
   }
 }

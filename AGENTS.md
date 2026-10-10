@@ -249,6 +249,27 @@ run, and that is the estate loop's terminator. The sentinel the commit subject r
 discriminator, so a repository that really does declare a group spelled `targeted` collides with
 nothing.
 
+**THE PRE-RUN HAS TWO STAGES (qits-1133), AND `dependency-bump` IS THE FOURTH KIND.** Every kind
+says its `Stage`: SOURCE (`estate-pins`, `dependency-bump` — build inputs) is settled first, DERIVED
+(`screenshot-baselines`, `entity-diagram` — built from those inputs) is neither planned nor stored
+until every applicable SOURCE kind is FRESH at the fold, and answers WAITING until then. Carry-over is
+per stage: a DERIVED kind's union is its own stage's paths, so a SOURCE commit (a pom the bump moved)
+re-runs it, and a kind that declares `inputPaths()` (`entity-diagram`: `**/*.java`, `**/pom.xml`;
+`dependency-bump`: its manifests, `.gitmodules`, `maintenance.yml`) carries exactly when the fold
+touched none of them. `committablePaths` stay pairwise disjoint across ALL kinds; "no output is
+another's input" holds within a stage and from DERIVED to SOURCE (`AutomationRegistryTest`), and a
+RUN plan naming another applicable kind's path is refused FAILED at run time (`AutomationService.clash`).
+`dependency-bump` plans AT THE FOLD through `ManifestScanner.pinsAt` and the pending rule, minus
+`ignore:` and the new `hold:`, never a wrapper's gitlinks (estate-pins' own), and INTERNAL pins only
+— EXTERNAL ones solely in a MAIN-ONLY request the dispatcher's upstream path opened
+(`mt_release_request.purpose = MAIN_ONLY`, V21) while the switch below is on; a group bump's request
+keeps externals a person's press. Its payload carries `changes` in the `MaintenanceBump` entry shape and `commitPaths`, the
+files they touch; every own-branch join is sent at `LOWEST`. WAITING and NOT_APPLICABLE reach the
+wire only when the trigger body `accepts` them; otherwise the answer is the pre-1133 one. The
+upstream hook (`automation/UpstreamReplan`) and the dispatcher's main-only LOWEST requests are
+behind `qits.maintenance.pre-run.upstream.enabled`, which ships false; off, group dispatch is
+untouched.
+
 **AN OWN-BRANCH AUTOMATION'S BRANCH IS DELETED BY THIS SERVICE ONCE ITS REQUEST IS CLOSED** — the
 one ref this service writes itself, confined to `maintenance/automations/`. A request that releases
 deletes its named sources; one that ends any other way (WITHDRAWN, OBSOLETE, FINALIZED without the
@@ -282,6 +303,17 @@ dispatch whose answer was lost records no second run when it is retried. Never g
 with no run id is FAILED, because qits-ci records a run only if the payload's repository was
 readable in that evaluation; anything else non-2xx is FAILED. Treating an empty `runIds` as success
 would report a branch that was never written.
+
+**A bump proves its changelogs before it is sent (epic qits-893).** `bump/changelog/ChangelogRanges`
+decides, per INTERNAL change, the releases of its source repository after the old pin up to the new
+one, floored at the repository's oldest published changelog, and `ChangelogClient` reads the docs
+store's listing (`PeerTarget.ARTIFACTS_DOCS`, the same bare-host key as the SBOM route). A missing
+changelog, or an internal coordinate `ArtifactGraph.producers()` cannot name a repository for, FAILS
+the bump with the sentence — the owner's rule is "error, not workaround" — and an unreadable store
+is a RETRY. The payload NAMES the changelogs (`changelog: {repository, versions}`) and never carries
+their text: it reaches the step as one environment string, so the step's CLI fetches them. Tests
+that bump the fixture's internal pins seed the producers first (`Fixture.seedProducers`,
+`StoryCatalog.seedProducers`); without them every such bump fails, by design.
 
 **Only the branch HEAD is compared, never a commit count — on a GROUP bump.** One bump is up to two
 commits — the maven step and the node/docker step each clone, commit and push — so a service
