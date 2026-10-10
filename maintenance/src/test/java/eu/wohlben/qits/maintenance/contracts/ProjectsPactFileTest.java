@@ -1,4 +1,4 @@
-package eu.wohlben.qits.maintenance.sbomcheck;
+package eu.wohlben.qits.maintenance.contracts;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -113,6 +113,53 @@ class ProjectsPactFileTest {
                     ProjectsContract.CREATE_WORK,
                     null));
     assertTrue(refused.getMessage().startsWith("trigger"), refused.getMessage());
+  }
+
+  /** A row binds only what it reads: a path the recording does not hold is refused, not dropped. */
+  @Test
+  void aConsumedPathTheRecordingLacksIsRefused() {
+    IllegalArgumentException refused =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                GoldenMasters.interaction(
+                    new PactBuilder(GoldenMasters.CONSUMER, GoldenMasters.PROVIDER, PactSpecVersion.V4),
+                    ProjectsContract.A_MAINTENANCE_TICKET_IN_DETAIL,
+                    ProjectsContract.GET_WORK,
+                    GoldenMasters.Trigger.schedule("SbomCheckService.file"),
+                    null,
+                    List.of("noSuchField")));
+    assertTrue(refused.getMessage().contains("noSuchField"), refused.getMessage());
+  }
+
+  /** A row that reads the status alone binds no body and no Content-Type; one that reads fields
+   * binds those fields and nothing else. */
+  @Test
+  void aResponseHoldsOnlyTheConsumedPaths() throws IOException {
+    JsonNode pact = MAPPER.readTree(normalise(written()));
+    for (JsonNode interaction : pact.path("interactions")) {
+      String operation =
+          interaction.path("comments").path("references").path("qits-call").path("operationId").asText();
+      JsonNode response = interaction.path("response");
+      switch (operation) {
+        case ProjectsContract.ADD_WORK_COMMENT,
+            ProjectsContract.SET_WORK_STATUS,
+            ProjectsContract.WITHDRAW_RELEASE_REQUEST -> {
+          assertTrue(response.path("body").isMissingNode(), operation + " binds a body");
+          assertTrue(response.path("headers").path("Content-Type").isMissingNode(), operation);
+        }
+        case ProjectsContract.GET_WORK ->
+            assertEquals(
+                Set.of("status", "ticketType"), fieldNames(response.path("body").path("content")));
+        default -> assertTrue(response.path("body").path("content").isObject(), operation);
+      }
+    }
+  }
+
+  private static Set<String> fieldNames(JsonNode node) {
+    Set<String> names = new HashSet<>();
+    node.fieldNames().forEachRemaining(names::add);
+    return names;
   }
 
   private static void assertStrings(String description, JsonNode group, String... keys) {

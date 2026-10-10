@@ -255,22 +255,11 @@ public final class GoldenMasters {
     return trigger.value() + ": " + operationId;
   }
 
-  /** {@link #interaction(PactBuilder, String, String, Trigger, DslPart)} with no request body —
-   * a GET, as every one of qits-workspaces' rows is. */
+  /** {@link #interaction(PactBuilder, String, String, Trigger, DslPart, List)} with no request
+   * body and no consumed path: a GET whose caller reads the status alone. */
   public static PactBuilder interaction(
       PactBuilder builder, String state, String operationId, Trigger trigger) {
-    return interaction(builder, state, operationId, trigger, null);
-  }
-
-  /** {@link #interaction(PactBuilder, String, String, Trigger, DslPart, Map)} with no response
-   * override — every row but {@code createWork}'s. */
-  public static PactBuilder interaction(
-      PactBuilder builder,
-      String state,
-      String operationId,
-      Trigger trigger,
-      DslPart requestBody) {
-    return interaction(builder, state, operationId, trigger, requestBody, Map.of());
+    return interaction(builder, state, operationId, trigger, null, List.of());
   }
 
   /**
@@ -278,24 +267,23 @@ public final class GoldenMasters {
    *
    * <p>{@code given(state, params)}; the request path from the index template, each {@code
    * {param}} as a provider-state expression with the frozen example, and {@code requestBody} when
-   * the call carries one (null for a GET); the status exact; the response body from the recording
-   * with the matchers the class javadoc lists; and the per-interaction {@code comments.references}
-   * — {@code qits-call} (the provider operation) and {@code qits-trigger}.
+   * the call carries one (null for a GET); the status exact; the parts of the recorded response
+   * body named in {@code consumes}, with the matchers the class javadoc lists; and the
+   * per-interaction {@code comments.references} — {@code qits-call} (the provider operation) and
+   * {@code qits-trigger}.
+   *
+   * <p><b>The pact binds only what the consumer reads</b> (epic qits-546, ticket qits-1149), the
+   * same rule as {@code @qits/angular/testing}'s {@code addGoldenInteraction}. {@code consumes}
+   * names those body paths: dot-separated keys, {@code []} after a key for the elements of an
+   * array ({@code requests[].gates[].kind}); a path ending in {@code []} reads the elements but
+   * none of their fields. Every other field stays free for the provider to change. An empty list
+   * means the caller reads the status alone: the response then has no body and no {@code
+   * Content-Type}. A path the recording does not hold throws.
    *
    * <p><b>{@code requestBody} is this consumer's OWN expectation, never the recording's request.</b>
    * The index's {@code body} field is what qits-projects' recorder happened to send while filling
-   * that state — useful context, not a contract — so a POST row builds its matcher from what {@link
-   * eu.wohlben.qits.maintenance.sbomcheck.TicketClient} actually sends, which {@code
-   * ProjectsContract} composes per row. Only the recorded RESPONSE is read off the golden master,
-   * because that is the half this consumer has no control over — {@code responseOverrides} is the
-   * one exception, for a top-level response field that is NOT the provider's own to assert because
-   * it just echoes back a value this very request carried (today, only {@code createWork}'s {@code
-   * description}: qits-projects' recorder never sent one, so the golden master holds {@code null}
-   * there, while {@link eu.wohlben.qits.maintenance.sbomcheck.TicketClient#file} always sends one and
-   * qits-projects echoes it verbatim — asserting the recording's {@code null} would fail against the
-   * real provider every time). The override replaces that field's recorded value before the matcher
-   * is built, so the ordinary type-match logic applies to the consumer's own value instead of the
-   * golden master's.
+   * that state — useful context, not a contract — so a POST row builds its matcher from what the
+   * client actually sends. Only the recorded RESPONSE is read off the golden master.
    *
    * @throws NullPointerException when {@code trigger} is null: an interaction nobody can attribute
    *     to an entry point is exactly what the references exist to prevent
@@ -306,10 +294,11 @@ public final class GoldenMasters {
       String operationId,
       Trigger trigger,
       DslPart requestBody,
-      Map<String, JsonNode> responseOverrides) {
+      List<String> consumes) {
     Objects.requireNonNull(trigger, "trigger: every interaction names the entry point that makes it");
+    Objects.requireNonNull(consumes, "consumes: name the body paths the caller reads, or none");
     Operation op = operation(state, operationId);
-    DslPart body = responseBody(op, responseOverrides);
+    DslPart body = responseBody(op, consumes);
     Map<String, Object> references = new LinkedHashMap<>();
     Map<String, String> call = new LinkedHashMap<>();
     call.put("app", PROVIDER);
@@ -332,11 +321,15 @@ public final class GoldenMasters {
                 return requestBody == null ? request : request.body(requestBody);
               });
           http.willRespondWith(
-              response ->
-                  response
-                      .status(op.status())
-                      .header("Content-Type", Matchers.regexp("application/json.*", "application/json"))
-                      .body(body));
+              response -> {
+                response.status(op.status());
+                if (body == null) {
+                  return response; // the status alone: no body, no Content-Type
+                }
+                return response
+                    .header("Content-Type", Matchers.regexp("application/json.*", "application/json"))
+                    .body(body);
+              });
           // pact-jvm 4.6's DSL has no setter for an arbitrary comment group (only `comment(text)`
           // and the test name), but the V4 model's comments map is mutable and written verbatim.
           http.getInteraction().getComments().put("references", Json.toJson(references));
@@ -344,37 +337,134 @@ public final class GoldenMasters {
         });
   }
 
-  /** The recorded body with the index's matchers, built for {@link #interaction}. */
-  static DslPart responseBody(Operation op) {
-    return responseBody(op, Map.of());
-  }
-
-  /** {@link #responseBody(Operation)}, with {@code overrides} replacing named top-level fields'
-   * recorded value first — see {@link #interaction(PactBuilder, String, String, Trigger, DslPart,
-   * Map)}. */
-  static DslPart responseBody(Operation op, Map<String, JsonNode> overrides) {
+  /** The recorded body cut to {@code consumes}, with the index's matchers; null when the caller
+   * reads the status alone. */
+  static DslPart responseBody(Operation op, List<String> consumes) {
     JsonNode recorded = json(op.state(), op.operationId());
     if (!recorded.isObject()) {
       throw new IllegalStateException(
           "golden master " + op.state() + "/" + op.operationId()
               + ": only an object body is supported, got " + recorded.getNodeType());
     }
-    if (!overrides.isEmpty()) {
-      ObjectNode editable = ((ObjectNode) recorded).deepCopy();
-      for (Map.Entry<String, JsonNode> override : overrides.entrySet()) {
-        String field = override.getKey();
-        if (!editable.has(field)) {
-          throw new IllegalArgumentException(
-              "golden master " + op.state() + "/" + op.operationId() + " names no top-level field '"
-                  + field + "' to override");
-        }
-        editable.set(field, override.getValue());
-      }
-      recorded = editable;
+    JsonNode kept = consumed(recorded, consumes, op);
+    if (kept == null) {
+      return null;
     }
     PactDslJsonBody root = new PactDslJsonBody();
-    fillObject(root, Shape.of(recorded), "$", op);
+    fillObject(root, Shape.of(kept), "$", op);
     return root;
+  }
+
+  // --- what the consumer reads ------------------------------------------------------------------
+
+  /** The paths of {@code consumes} as a tree: which keys to keep, and what to keep in elements. */
+  private static final class Pick {
+    boolean whole;
+    final LinkedHashMap<String, Pick> keys = new LinkedHashMap<>();
+    Pick elements;
+  }
+
+  /** One path's steps: a key, or {@code []} for the elements of an array. */
+  static List<String> steps(String path) {
+    List<String> out = new ArrayList<>();
+    for (String segment : path.split("\\.", -1)) {
+      Matcher m = STEP.matcher(segment);
+      if (!m.matches() || (m.group(1).isEmpty() && m.group(2).isEmpty())) {
+        throw new IllegalArgumentException("consumes '" + path + "' is not a path");
+      }
+      if (!m.group(1).isEmpty()) {
+        out.add(m.group(1));
+      }
+      for (int i = 0; i < m.group(2).length() / 2; i++) {
+        out.add("[]");
+      }
+    }
+    return out;
+  }
+
+  private static final Pattern STEP = Pattern.compile("^([^\\[\\]]*)((?:\\[\\])*)$");
+
+  /**
+   * The recorded body cut down to the paths of {@code consumes}, or null when the list is empty.
+   * Throws naming the state, the operation and the path when a path is not in the body.
+   */
+  static JsonNode consumed(JsonNode body, List<String> consumes, Operation op) {
+    if (consumes.isEmpty()) {
+      return null;
+    }
+    Pick root = new Pick();
+    for (String path : consumes) {
+      List<String> walk = steps(path);
+      if (!holds(body, walk)) {
+        throw new IllegalArgumentException(
+            "golden master " + op.state() + "/" + op.operationId() + ": consumes '" + path
+                + "', which the recorded body does not hold");
+      }
+      Pick node = root;
+      for (String step : walk) {
+        if (step.equals("[]")) {
+          node = node.elements == null ? (node.elements = new Pick()) : node.elements;
+        } else {
+          node = node.keys.computeIfAbsent(step, k -> new Pick());
+        }
+      }
+      // `entries[]` reads the elements, not their fields: only a path ending in a key reads it whole.
+      if (!walk.get(walk.size() - 1).equals("[]")) {
+        node.whole = true;
+      }
+    }
+    return project(body, root);
+  }
+
+  /** Whether {@code value} holds the path {@code walk}: in at least one element, across an array. */
+  private static boolean holds(JsonNode value, List<String> walk) {
+    if (walk.isEmpty()) {
+      return true;
+    }
+    String step = walk.get(0);
+    List<String> rest = walk.subList(1, walk.size());
+    if (step.equals("[]")) {
+      if (!value.isArray()) {
+        return false;
+      }
+      if (value.isEmpty()) {
+        return true; // nothing recorded there to bind
+      }
+      for (JsonNode element : value) {
+        if (holds(element, rest)) {
+          return true;
+        }
+      }
+      return false;
+    }
+    return value.isObject() && value.has(step) && holds(value.get(step), rest);
+  }
+
+  /** {@code value} with only what {@code node} keeps. An object element read without fields becomes
+   * {@code {}}. */
+  private static JsonNode project(JsonNode value, Pick node) {
+    if (node.whole || value.isNull()) {
+      return value;
+    }
+    if (value.isArray()) {
+      if (node.elements == null) {
+        return value;
+      }
+      com.fasterxml.jackson.databind.node.ArrayNode out = MAPPER.createArrayNode();
+      value.forEach(element -> out.add(project(element, node.elements)));
+      return out;
+    }
+    if (value.isObject()) {
+      ObjectNode out = MAPPER.createObjectNode();
+      node.keys.forEach(
+          (key, child) -> {
+            if (value.has(key)) {
+              out.set(key, project(value.get(key), child));
+            }
+          });
+      return out;
+    }
+    return value;
   }
 
   // --- the body ---------------------------------------------------------------------------------

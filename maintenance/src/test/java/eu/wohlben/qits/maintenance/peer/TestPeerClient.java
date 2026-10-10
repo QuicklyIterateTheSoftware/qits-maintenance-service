@@ -5,15 +5,15 @@ import java.util.Optional;
 
 /**
  * <b>A REAL {@link PeerClient} for the qits-projects consumer pact</b> ({@code
- * eu.wohlben.qits.maintenance.sbomcheck.ProjectsContract}, epic qits-965/qits-974): every call
+ * eu.wohlben.qits.maintenance.contracts.ProjectsContract}, epics qits-965/qits-546): every call
  * still goes out over HTTP through the inherited {@link PeerClient#send}, exactly the path
  * production takes — only {@link #url} is overridden, to send every call at a pact-jvm mock
  * server's address instead of resolving a {@link PeerTarget}'s configured one. A hand-rolled call
  * would prove a contract for a client that does not ship; {@link TicketClient} knows nothing of
  * this class and is handed one through its ordinary {@code peers} field.
  *
- * <p>It lives in this package rather than in {@code sbomcheck} (where {@code ProjectsContract} and
- * {@code TicketClient} do) because {@link PeerClient#callTimeout} and {@link PeerClient#tokens} are
+ * <p>It lives in this package rather than in {@code contracts} (where {@code ProjectsContract}
+ * does) because {@link PeerClient#callTimeout} and {@link PeerClient#tokens} are
  * package-private test seams — this class sets both directly rather than needing CDI or a running
  * Quarkus application, which is also why the whole pact test is plain JUnit.
  */

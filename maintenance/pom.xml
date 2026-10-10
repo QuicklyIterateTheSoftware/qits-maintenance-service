@@ -110,10 +110,10 @@
             <scope>test</scope>
         </dependency>
         <dependency>
-            <!-- ProjectsConsumerPactTest/ProjectsPactFileTest (sbomcheck/): TicketClient's
-                 consumer pact against qits-projects' /work API (epic qits-965/qits-974). Plain
-                 JUnit 5 — TicketClient talks over the JDK's HttpClient, not a REST client, so
-                 nothing here needs a Quarkus application running to build. -->
+            <!-- ProjectsConsumerPactTest/ProjectsPactFileTest (contracts/): this service's
+                 consumer pact against qits-projects' /work and release-request APIs (epics
+                 qits-965/qits-546). Plain JUnit 5 — the clients talk over the JDK's HttpClient,
+                 not a REST client, so nothing here needs a Quarkus application running. -->
             <groupId>au.com.dius.pact.consumer</groupId>
             <artifactId>junit5</artifactId>
             <scope>test</scope>

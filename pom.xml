@@ -56,7 +56,7 @@
              records what it answers for each provider state and publishes the tree as
              eu.wohlben.qits:qits-projects-golden-masters, read off the classpath by
              maintenance/src/test/.../testing/contracts/GoldenMasters for TicketClient's own
-             consumer pact (ProjectsContract, ProjectsConsumerPactTest, ProjectsPactFileTest). Moves
+             consumer pact (contracts/ProjectsContract, ProjectsConsumerPactTest, ProjectsPactFileTest). Moves
              like every internal pin — a qits-maintenance bump on this property, gated here, where a
              changed answer that breaks the pact goes red before it ships. Do not hand-edit it to
              chase a release.

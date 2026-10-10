@@ -8,6 +8,644 @@
         "references": {
           "qits-call": {
             "app": "qits-projects-service",
+            "operationId": "getReleaseRequest"
+          },
+          "qits-trigger": {
+            "app": "qits-maintenance-service",
+            "kind": "schedule",
+            "schedule": "AutomationBranchSweep.sweep"
+          }
+        }
+      },
+      "description": "AutomationBranchSweep.sweep: getReleaseRequest",
+      "key": "467338fc",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a withdrawn release request",
+          "params": {
+            "mergedSha": "cb9776855921387be1951de5bbbf0914aa54b1bf",
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "repositoryId": "00000000-0000-4000-8000-000000000002",
+            "requestId": "00000000-0000-4000-8000-000000000003"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/projects/api/repositories/${repositoryId}/release-requests/${requestId}",
+            "type": "ProviderState"
+          }
+        },
+        "method": "GET",
+        "path": "/projects/api/repositories/00000000-0000-4000-8000-000000000002/release-requests/00000000-0000-4000-8000-000000000003"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "request": {
+              "detail": "Withdrawn by dana.weber: the export moves to next quarter's release",
+              "mergedSha": "cb9776855921387be1951de5bbbf0914aa54b1bf",
+              "sources": [
+                {
+                  "kind": "BRANCH",
+                  "name": "main"
+                },
+                {
+                  "kind": "BRANCH",
+                  "name": "main"
+                },
+                {
+                  "kind": "BRANCH",
+                  "name": "main"
+                }
+              ],
+              "state": "WITHDRAWN"
+            }
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.request.detail": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.request.mergedSha": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.request.sources": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "max": 3,
+                  "min": 3
+                }
+              ]
+            },
+            "$.request.sources[*].kind": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.request.sources[*].name": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.request.state": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json.*"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-projects-service",
+            "operationId": "listRepositoryReleaseRequests"
+          },
+          "qits-trigger": {
+            "app": "qits-maintenance-service",
+            "kind": "schedule",
+            "schedule": "BumpDispatcher.tick"
+          }
+        }
+      },
+      "description": "BumpDispatcher.tick: listRepositoryReleaseRequests",
+      "key": "a12d5e89",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a release request awaiting approval",
+          "params": {
+            "mergedSha": "bd6360a2c6b42a991c62e3418b7f6d4ac5d89f14",
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "repositoryId": "00000000-0000-4000-8000-000000000002",
+            "requestId": "00000000-0000-4000-8000-000000000003"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/projects/api/repositories/${repositoryId}/release-requests",
+            "type": "ProviderState"
+          }
+        },
+        "method": "GET",
+        "path": "/projects/api/repositories/00000000-0000-4000-8000-000000000002/release-requests"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "requests": [
+              {
+                "gates": [
+                  {
+                    "kind": "CI",
+                    "state": "PASSED"
+                  },
+                  {
+                    "kind": "CI",
+                    "state": "PASSED"
+                  },
+                  {
+                    "kind": "CI",
+                    "state": "PASSED"
+                  }
+                ],
+                "id": "00000000-0000-4000-8000-000000000003",
+                "mergedSha": "bd6360a2c6b42a991c62e3418b7f6d4ac5d89f14",
+                "state": "PENDING"
+              }
+            ]
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.requests": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "max": 1,
+                  "min": 1
+                }
+              ]
+            },
+            "$.requests[*].gates": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "max": 3,
+                  "min": 3
+                }
+              ]
+            },
+            "$.requests[*].gates[*].kind": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.requests[*].gates[*].state": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.requests[*].id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+                }
+              ]
+            },
+            "$.requests[*].mergedSha": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.requests[*].state": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json.*"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-projects-service",
+            "operationId": "getReleaseRequest"
+          },
+          "qits-trigger": {
+            "app": "qits-maintenance-service",
+            "kind": "schedule",
+            "schedule": "BumpService.sweep"
+          }
+        }
+      },
+      "description": "BumpService.sweep: getReleaseRequest",
+      "key": "1da5722d",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a release request awaiting approval",
+          "params": {
+            "mergedSha": "bd6360a2c6b42a991c62e3418b7f6d4ac5d89f14",
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "repositoryId": "00000000-0000-4000-8000-000000000002",
+            "requestId": "00000000-0000-4000-8000-000000000003"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/projects/api/repositories/${repositoryId}/release-requests/${requestId}",
+            "type": "ProviderState"
+          }
+        },
+        "method": "GET",
+        "path": "/projects/api/repositories/00000000-0000-4000-8000-000000000002/release-requests/00000000-0000-4000-8000-000000000003"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "request": {
+              "detail": "Waiting for a person to approve bd6360a2c6",
+              "mergedSha": "bd6360a2c6b42a991c62e3418b7f6d4ac5d89f14",
+              "sources": [
+                {
+                  "kind": "BRANCH",
+                  "name": "main"
+                },
+                {
+                  "kind": "BRANCH",
+                  "name": "main"
+                },
+                {
+                  "kind": "BRANCH",
+                  "name": "main"
+                }
+              ],
+              "state": "PENDING"
+            }
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.request.detail": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.request.mergedSha": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.request.sources": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "max": 3,
+                  "min": 3
+                }
+              ]
+            },
+            "$.request.sources[*].kind": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.request.sources[*].name": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.request.state": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json.*"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-projects-service",
+            "operationId": "withdrawReleaseRequest"
+          },
+          "qits-trigger": {
+            "app": "qits-maintenance-service",
+            "kind": "schedule",
+            "schedule": "BumpService.sweep"
+          }
+        }
+      },
+      "description": "BumpService.sweep: withdrawReleaseRequest",
+      "key": "616dff0b",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a release request awaiting approval",
+          "params": {
+            "mergedSha": "bd6360a2c6b42a991c62e3418b7f6d4ac5d89f14",
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "repositoryId": "00000000-0000-4000-8000-000000000002",
+            "requestId": "00000000-0000-4000-8000-000000000003"
+          }
+        }
+      ],
+      "request": {
+        "body": {
+          "content": {
+            "reason": "nothing is left to bump: every pin the request carried is current"
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/projects/api/repositories/${repositoryId}/release-requests/${requestId}/withdraw",
+            "type": "ProviderState"
+          }
+        },
+        "headers": {
+          "content-type": [
+            "application/json"
+          ]
+        },
+        "method": "POST",
+        "path": "/projects/api/repositories/00000000-0000-4000-8000-000000000002/release-requests/00000000-0000-4000-8000-000000000003/withdraw"
+      },
+      "response": {
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-projects-service",
+            "operationId": "listRepositoryReleaseRequests"
+          },
+          "qits-trigger": {
+            "app": "qits-maintenance-service",
+            "event": "SCMRelease",
+            "kind": "event"
+          }
+        }
+      },
+      "description": "SCMRelease: listRepositoryReleaseRequests",
+      "key": "b2ef4535",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a release request awaiting approval",
+          "params": {
+            "mergedSha": "bd6360a2c6b42a991c62e3418b7f6d4ac5d89f14",
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "repositoryId": "00000000-0000-4000-8000-000000000002",
+            "requestId": "00000000-0000-4000-8000-000000000003"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/projects/api/repositories/${repositoryId}/release-requests",
+            "type": "ProviderState"
+          }
+        },
+        "method": "GET",
+        "path": "/projects/api/repositories/00000000-0000-4000-8000-000000000002/release-requests"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "requests": [
+              {
+                "gates": [
+                  {
+                    "kind": "CI",
+                    "state": "PASSED"
+                  },
+                  {
+                    "kind": "CI",
+                    "state": "PASSED"
+                  },
+                  {
+                    "kind": "CI",
+                    "state": "PASSED"
+                  }
+                ],
+                "id": "00000000-0000-4000-8000-000000000003",
+                "mergedSha": "bd6360a2c6b42a991c62e3418b7f6d4ac5d89f14",
+                "state": "PENDING"
+              }
+            ]
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.requests": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "max": 1,
+                  "min": 1
+                }
+              ]
+            },
+            "$.requests[*].gates": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "max": 3,
+                  "min": 3
+                }
+              ]
+            },
+            "$.requests[*].gates[*].kind": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.requests[*].gates[*].state": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.requests[*].id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+                }
+              ]
+            },
+            "$.requests[*].mergedSha": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.requests[*].state": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json.*"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-projects-service",
             "operationId": "addWorkComment"
           },
           "qits-trigger": {
@@ -55,92 +693,6 @@
         "path": "/projects/api/work/contract-00000001-1/comments"
       },
       "response": {
-        "body": {
-          "content": {
-            "comment": {
-              "author": "dev",
-              "body": "The range 2026-07-01 to 2026-09-30 reproduces it.",
-              "createdAt": "2026-01-01T00:00:00Z",
-              "entityId": "00000000-0000-4000-8000-000000000003",
-              "id": "00000000-0000-4000-8000-000000000004",
-              "updatedAt": "2026-01-01T00:00:00Z"
-            }
-          },
-          "contentType": "application/json",
-          "encoded": false
-        },
-        "headers": {
-          "Content-Type": [
-            "application/json"
-          ]
-        },
-        "matchingRules": {
-          "body": {
-            "$.comment.author": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.comment.body": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.comment.createdAt": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "regex",
-                  "regex": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})$"
-                }
-              ]
-            },
-            "$.comment.entityId": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "regex",
-                  "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-                }
-              ]
-            },
-            "$.comment.id": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "regex",
-                  "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-                }
-              ]
-            },
-            "$.comment.updatedAt": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "regex",
-                  "regex": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})$"
-                }
-              ]
-            }
-          },
-          "header": {
-            "Content-Type": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "regex",
-                  "regex": "application/json.*"
-                }
-              ]
-            }
-          }
-        },
         "status": 200
       },
       "type": "Synchronous/HTTP"
@@ -203,35 +755,8 @@
       "response": {
         "body": {
           "content": {
-            "acceptanceCriteria": [
-              "It does what it says."
-            ],
-            "archetype": "TICKET",
-            "assignee": null,
-            "blocked": false,
-            "changedBy": null,
-            "createdAt": "2026-01-01T00:00:00Z",
-            "createdBy": "contract-seeder",
-            "dependsOn": null,
-            "description": null,
-            "id": "00000000-0000-4000-8000-00000000000c",
-            "impetus": "The release request for billing-service has waited on its gates for 6 hours.",
-            "implementedAt": null,
-            "implementingAt": null,
-            "number": 12,
-            "parent": null,
-            "position": null,
-            "projectId": "00000000-0000-4000-8000-00000000000f",
-            "qualifiedId": "contract-00000001-12",
-            "repositoryId": null,
-            "slug": "release-request-for-billing-service-is-stuck",
-            "slugScope": "00000000-0000-4000-8000-00000000000f",
             "status": "REPORTED",
-            "statusBefore": null,
-            "supersededBy": null,
-            "ticketType": "MAINTENANCE",
-            "title": "Release request for billing-service is stuck",
-            "updatedAt": "2026-01-01T00:00:00Z"
+            "ticketType": "MAINTENANCE"
           },
           "contentType": "application/json",
           "encoded": false
@@ -243,116 +768,6 @@
         },
         "matchingRules": {
           "body": {
-            "$.acceptanceCriteria": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type",
-                  "max": 1,
-                  "min": 1
-                }
-              ]
-            },
-            "$.acceptanceCriteria[*]": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.archetype": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.blocked": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.createdAt": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "regex",
-                  "regex": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})$"
-                }
-              ]
-            },
-            "$.createdBy": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.id": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "regex",
-                  "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-                }
-              ]
-            },
-            "$.impetus": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.number": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "number"
-                }
-              ]
-            },
-            "$.projectId": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "regex",
-                  "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-                }
-              ]
-            },
-            "$.qualifiedId": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.slug": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.slugScope": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "regex",
-                  "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-                }
-              ]
-            },
             "$.status": {
               "combine": "AND",
               "matchers": [
@@ -366,23 +781,6 @@
               "matchers": [
                 {
                   "match": "type"
-                }
-              ]
-            },
-            "$.title": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.updatedAt": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "regex",
-                  "regex": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})$"
                 }
               ]
             }
@@ -454,228 +852,6 @@
         "path": "/projects/api/work/contract-00000001-1/status"
       },
       "response": {
-        "body": {
-          "content": {
-            "acceptanceCriteria": [
-              "It does what it says."
-            ],
-            "archetype": "TICKET",
-            "assignee": null,
-            "blocked": false,
-            "changedBy": "dev",
-            "createdAt": "2026-01-01T00:00:00Z",
-            "createdBy": "contract-seeder",
-            "dependsOn": null,
-            "description": "Raise the database's connection limit, so two pools fit during a rolling deploy. Verify by deploying again.",
-            "id": "00000000-0000-4000-8000-000000000002",
-            "impetus": "A new container fails its migration at boot: the database refuses the connection.",
-            "implementedAt": null,
-            "implementingAt": null,
-            "number": 1,
-            "parent": null,
-            "position": null,
-            "projectId": "00000000-0000-4000-8000-000000000001",
-            "qualifiedId": "contract-00000001-1",
-            "repositoryId": null,
-            "slug": "database-runs-out-of-connection-slots-during-deploys",
-            "slugScope": "00000000-0000-4000-8000-000000000001",
-            "status": "REFINED",
-            "statusBefore": "REPORTED",
-            "supersededBy": null,
-            "ticketType": "BUG",
-            "title": "Database runs out of connection slots during deploys",
-            "updatedAt": "2026-01-01T00:00:00Z"
-          },
-          "contentType": "application/json",
-          "encoded": false
-        },
-        "headers": {
-          "Content-Type": [
-            "application/json"
-          ]
-        },
-        "matchingRules": {
-          "body": {
-            "$.acceptanceCriteria": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type",
-                  "max": 1,
-                  "min": 1
-                }
-              ]
-            },
-            "$.acceptanceCriteria[*]": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.archetype": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.blocked": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.changedBy": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.createdAt": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "regex",
-                  "regex": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})$"
-                }
-              ]
-            },
-            "$.createdBy": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.description": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.id": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "regex",
-                  "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-                }
-              ]
-            },
-            "$.impetus": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.number": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "number"
-                }
-              ]
-            },
-            "$.projectId": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "regex",
-                  "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-                }
-              ]
-            },
-            "$.qualifiedId": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.slug": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.slugScope": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "regex",
-                  "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-                }
-              ]
-            },
-            "$.status": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.statusBefore": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.ticketType": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.title": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.updatedAt": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "regex",
-                  "regex": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})$"
-                }
-              ]
-            }
-          },
-          "header": {
-            "Content-Type": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "regex",
-                  "regex": "application/json.*"
-                }
-              ]
-            }
-          }
-        },
         "status": 200
       },
       "type": "Synchronous/HTTP"
@@ -732,92 +908,6 @@
         "path": "/projects/api/work/contract-00000001-1/comments"
       },
       "response": {
-        "body": {
-          "content": {
-            "comment": {
-              "author": "dev",
-              "body": "The range 2026-07-01 to 2026-09-30 reproduces it.",
-              "createdAt": "2026-01-01T00:00:00Z",
-              "entityId": "00000000-0000-4000-8000-000000000003",
-              "id": "00000000-0000-4000-8000-000000000004",
-              "updatedAt": "2026-01-01T00:00:00Z"
-            }
-          },
-          "contentType": "application/json",
-          "encoded": false
-        },
-        "headers": {
-          "Content-Type": [
-            "application/json"
-          ]
-        },
-        "matchingRules": {
-          "body": {
-            "$.comment.author": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.comment.body": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.comment.createdAt": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "regex",
-                  "regex": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})$"
-                }
-              ]
-            },
-            "$.comment.entityId": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "regex",
-                  "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-                }
-              ]
-            },
-            "$.comment.id": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "regex",
-                  "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-                }
-              ]
-            },
-            "$.comment.updatedAt": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "regex",
-                  "regex": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})$"
-                }
-              ]
-            }
-          },
-          "header": {
-            "Content-Type": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "regex",
-                  "regex": "application/json.*"
-                }
-              ]
-            }
-          }
-        },
         "status": 200
       },
       "type": "Synchronous/HTTP"
@@ -883,33 +973,8 @@
       "response": {
         "body": {
           "content": {
-            "acceptanceCriteria": [],
-            "archetype": "TICKET",
-            "assignee": null,
-            "blocked": false,
-            "changedBy": null,
-            "createdAt": "2026-01-01T00:00:00Z",
-            "createdBy": "dev",
-            "dependsOn": null,
-            "description": "qits-maintenance's daily SBOM check found a software artifact in qits-artifacts without a usable SBOM.",
             "id": "00000000-0000-4000-8000-000000000002",
-            "impetus": "The CSV export answers 500 when the range holds no invoice.",
-            "implementedAt": null,
-            "implementingAt": null,
-            "number": 1,
-            "parent": null,
-            "position": null,
-            "projectId": "00000000-0000-4000-8000-000000000001",
-            "qualifiedId": "contract-00000001-1",
-            "repositoryId": null,
-            "slug": "export-fails-for-an-empty-quarter",
-            "slugScope": "00000000-0000-4000-8000-000000000001",
-            "status": "REPORTED",
-            "statusBefore": null,
-            "supersededBy": null,
-            "ticketType": "BUG",
-            "title": "Export fails for an empty quarter",
-            "updatedAt": "2026-01-01T00:00:00Z"
+            "qualifiedId": "contract-00000001-1"
           },
           "contentType": "application/json",
           "encoded": false
@@ -921,73 +986,7 @@
         },
         "matchingRules": {
           "body": {
-            "$.archetype": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.blocked": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.createdAt": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "regex",
-                  "regex": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})$"
-                }
-              ]
-            },
-            "$.createdBy": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.description": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
             "$.id": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "regex",
-                  "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-                }
-              ]
-            },
-            "$.impetus": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.number": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "number"
-                }
-              ]
-            },
-            "$.projectId": {
               "combine": "AND",
               "matchers": [
                 {
@@ -1001,56 +1000,6 @@
               "matchers": [
                 {
                   "match": "type"
-                }
-              ]
-            },
-            "$.slug": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.slugScope": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "regex",
-                  "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-                }
-              ]
-            },
-            "$.status": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.ticketType": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.title": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.updatedAt": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "regex",
-                  "regex": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})$"
                 }
               ]
             }
@@ -1129,35 +1078,8 @@
       "response": {
         "body": {
           "content": {
-            "acceptanceCriteria": [
-              "It does what it says."
-            ],
-            "archetype": "TICKET",
-            "assignee": null,
-            "blocked": false,
-            "changedBy": null,
-            "createdAt": "2026-01-01T00:00:00Z",
-            "createdBy": "contract-seeder",
-            "dependsOn": null,
-            "description": null,
-            "id": "00000000-0000-4000-8000-00000000000c",
-            "impetus": "The release request for billing-service has waited on its gates for 6 hours.",
-            "implementedAt": null,
-            "implementingAt": null,
-            "number": 12,
-            "parent": null,
-            "position": null,
-            "projectId": "00000000-0000-4000-8000-00000000000f",
-            "qualifiedId": "contract-00000001-12",
-            "repositoryId": null,
-            "slug": "release-request-for-billing-service-is-stuck",
-            "slugScope": "00000000-0000-4000-8000-00000000000f",
             "status": "REPORTED",
-            "statusBefore": null,
-            "supersededBy": null,
-            "ticketType": "MAINTENANCE",
-            "title": "Release request for billing-service is stuck",
-            "updatedAt": "2026-01-01T00:00:00Z"
+            "ticketType": "MAINTENANCE"
           },
           "contentType": "application/json",
           "encoded": false
@@ -1169,116 +1091,6 @@
         },
         "matchingRules": {
           "body": {
-            "$.acceptanceCriteria": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type",
-                  "max": 1,
-                  "min": 1
-                }
-              ]
-            },
-            "$.acceptanceCriteria[*]": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.archetype": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.blocked": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.createdAt": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "regex",
-                  "regex": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})$"
-                }
-              ]
-            },
-            "$.createdBy": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.id": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "regex",
-                  "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-                }
-              ]
-            },
-            "$.impetus": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.number": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "number"
-                }
-              ]
-            },
-            "$.projectId": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "regex",
-                  "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-                }
-              ]
-            },
-            "$.qualifiedId": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.slug": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.slugScope": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "regex",
-                  "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-                }
-              ]
-            },
             "$.status": {
               "combine": "AND",
               "matchers": [
@@ -1294,8 +1106,119 @@
                   "match": "type"
                 }
               ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json.*"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-projects-service",
+            "operationId": "listRepositoryReleaseRequests"
+          },
+          "qits-trigger": {
+            "app": "qits-maintenance-service",
+            "event": "SoftwareRelease",
+            "kind": "event"
+          }
+        }
+      },
+      "description": "SoftwareRelease: listRepositoryReleaseRequests",
+      "key": "4aa9d263",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a release request awaiting approval",
+          "params": {
+            "mergedSha": "bd6360a2c6b42a991c62e3418b7f6d4ac5d89f14",
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "repositoryId": "00000000-0000-4000-8000-000000000002",
+            "requestId": "00000000-0000-4000-8000-000000000003"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/projects/api/repositories/${repositoryId}/release-requests",
+            "type": "ProviderState"
+          }
+        },
+        "method": "GET",
+        "path": "/projects/api/repositories/00000000-0000-4000-8000-000000000002/release-requests"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "requests": [
+              {
+                "gates": [
+                  {
+                    "kind": "CI",
+                    "state": "PASSED"
+                  },
+                  {
+                    "kind": "CI",
+                    "state": "PASSED"
+                  },
+                  {
+                    "kind": "CI",
+                    "state": "PASSED"
+                  }
+                ],
+                "id": "00000000-0000-4000-8000-000000000003",
+                "mergedSha": "bd6360a2c6b42a991c62e3418b7f6d4ac5d89f14",
+                "state": "PENDING"
+              }
+            ]
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.requests": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "max": 1,
+                  "min": 1
+                }
+              ]
             },
-            "$.title": {
+            "$.requests[*].gates": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "max": 3,
+                  "min": 3
+                }
+              ]
+            },
+            "$.requests[*].gates[*].kind": {
               "combine": "AND",
               "matchers": [
                 {
@@ -1303,12 +1226,36 @@
                 }
               ]
             },
-            "$.updatedAt": {
+            "$.requests[*].gates[*].state": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.requests[*].id": {
               "combine": "AND",
               "matchers": [
                 {
                   "match": "regex",
-                  "regex": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})$"
+                  "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+                }
+              ]
+            },
+            "$.requests[*].mergedSha": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.requests[*].state": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
                 }
               ]
             }
