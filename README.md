@@ -382,7 +382,9 @@ release request and one release — not five of each. That is the whole of the s
                "changes": [ {"ecosystem":"maven","manifestPath":"pom.xml",
                              "name":"eu.wohlben.qits:qits-eventstream",
                              "from":"2026.811.1","to":"2026.821.3",
-                             "location":"property:qits.eventstream.version"} ] } }
+                             "location":"property:qits.eventstream.version",
+                             "changelog":{"repository":"qits-eventstream",
+                                          "versions":["2026.815.1","2026.821.3"]}} ] } }
 ```
 
 `location` is honoured for maven only; npm edits whichever section holds the entry, docker anchors on
@@ -392,6 +394,29 @@ the image name, and gitlink restates the path. It is sent anyway. **A gitlink ch
 `to` is a quiet no-op. Every value is validated on this side against what the step enforces, so a
 bad payload is a sentence on the bump row rather than a step log somebody has to read.
 
+**An internal change names the changelogs it pulls in (epic qits-893).** Every release publishes
+`@changelog/<repository>` at its version to qits-artifacts' docs store, and a bump commit carries the
+changelogs of every release it pulls in. Before the trigger, `bump/changelog/ChangelogRanges`
+resolves each INTERNAL change (`MaintenanceConfig.kindOf`; external ones have none and are listed as
+before): its source repository (a gitlink's `name`, otherwise `ArtifactGraph.producers()`), its old
+version (`from`; for a gitlink the sha is mapped through the release ledger, and an unmapped one
+leaves only `to`), and the published versions, `GET /artifacts/docs/docs/@changelog/<repository>`.
+The range is every version of the ledger, the listing and `to` itself with `from < v <= to`, at or
+above the OLDEST published changelog — releases cut before changelogs existed are left out, and a
+repository that never published one (404) has no range. Each change with a range carries
+`changelog: {repository, versions}` (calver order, never empty); one without carries no key. The
+payload NAMES changelogs and never carries one — it reaches the step as one environment string
+capped at about 128 KiB — so the step's `qits changelog bump-message` fetches the texts and composes
+the commit message. **A missing changelog is an error, not a workaround**: a release in the range
+whose changelog was not published, or an internal coordinate with no known source repository, FAILS
+the bump with the sentence naming it and nothing is triggered. A docs store that cannot be read
+(5xx, transport) says nothing about the changelogs, so the bump stays REQUESTED and is sent again,
+exactly as a 503 from the trigger. Group bumps, the source-branch automations (`estate-pins`) and
+the `dependency-bump` automation's `ReleaseRequestAutomation` payload all go through it — the last
+carries the same `changelog` field on its `changes`, spelled by the same `CiClient.changes`, and a
+missing changelog ends its run FAILED with nothing dispatched; `BumpPayload.changelogProblems` holds the field to a catalog name
+(`[a-z0-9][a-z0-9-]{0,127}`) and calver versions (`[0-9]{4}.[0-9]{1,4}.[0-9]+`).
+
 **`baseRef` is main unless a release has not reached it (qits-1081).** qits-projects folds every
 released-but-unmerged tag into each release request, so a branch cut from main that edits a pin line
 such a tag already moved conflicts in every fold. At dispatch `BumpBase` reads `GET
@@ -399,10 +424,19 @@ such a tag already moved conflicts in every fold. At dispatch `BumpBase` reads `
 (calver compared numerically per segment), and asks qits-githost's `GET
 /githost/api/repositories/<catalog id>/contains?commit=<releasedSha>&in=<main head>` — the door is
 storage-id addressed, and the storage id is the catalog id. Not contained: `baseRef` is
-`refs/tags/<version>`, and when `maintenance/<group>` exists without the tag (same door, `in=<branch
-head>`) and is not STALE, its head is sent as `replaceHead`; the step rebuilds the branch on the tag
-under `--force-with-lease` on that head. Anything unreadable is `main` with a WARN — never a failed
-bump. Both are recorded on the row (`base_ref`, `replace_head`, V19) and answered on `GET /bumps`. The
+`refs/tags/<version>`. Anything unreadable is `main` with a WARN — never a failed bump.
+
+**A `maintenance/<group>` branch is always ONE commit on its base (user decision 2026-10-09).** It
+replaced "ff-only, never force", which stacked one commit per bump. Whenever the branch exists and is
+not STALE, its head is sent as `replaceHead`, and the step rebuilds the branch from the base with
+every change in the payload, commits once and pushes under `--force-with-lease`. The changes are
+everything pending in the group against the scanned base, so the pins the old commit carried are in
+the payload again and survive. The step rebuilds only over commits authored `maintenance@qits.local`
+on top of the base; any other commit, or a branch that moved under the lease, ends the run with exit
+42 (`BumpBase.NOT_OURS_EXIT`) and no push, and the branch becomes STALE. A STALE branch is not
+dispatched again (the dispatcher reports it as stalled) until it is deleted. The estate-pins
+automation (group `targeted`) runs the same pipeline against a request's own branch, which the step
+still appends to, ff-only. Both are recorded on the row (`base_ref`, `replace_head`, V19) and answered on `GET /bumps`. The
 dispatcher rebuilds a CONFLICTED release this way too, once per tag; see `BumpDispatcher`.
 
 **Three answers from qits-ci and they mean different things:**
@@ -414,15 +448,15 @@ dispatcher rebuilds a CONFLICTED release this way too, once per tag; see `BumpDi
 | **200 with no run id** | FAILED, `no run recorded for MaintenanceBump (repository unreadable or no platform pipeline)`. A run exists only if the repository was readable in that evaluation, so nothing is running and nothing will be. |
 
 **The branch head is read twice — before the trigger and when the run ends — and only the head is
-compared, never a commit count.** One bump is up to two commits, because the maven step and the
-node/docker step each clone, commit and push.
+compared, never a commit count.** A bump that finds the same single commit already there pushes
+nothing.
 
 | run | branch | bump | `mt_branch` | release ask |
 |---|---|---|---|---|
 | SUCCESS | moved | `SUCCEEDED` | `PUSHED` | **asked** |
 | SUCCESS | unmoved | `NOTHING_TO_DO` | unchanged | not asked — nothing was pushed |
 | red | unmoved | `FAILED` | `FAILED` | not asked |
-| red | **moved** | `FAILED` | `STALE` — the push is ff-only and never forced, so a branch that moved anyway is a person's commit. They own it now. | not asked — releasing somebody else's commits on their behalf is the one thing this must never do |
+| red | **moved**, or step exit 42 | `FAILED` | `STALE` — the branch carries a commit qits maintenance did not write, or moved under the lease. They own it now. | not asked — releasing somebody else's commits on their behalf is the one thing this must never do |
 
 ### The release ask
 
@@ -446,9 +480,8 @@ poll the request, wait for a version, or record a release.
   name and the project cannot address it. A row with no catalog id records a refusal; the next scan
   fills the column and the next bump asks with it.
 - **`summary` is the commit subject shape the bump's own commits carry**, word for word from
-  qits-ci's `ci/src/main/resources/platform-pipelines/maintenance-bump.yml`. The `n` is what was ASKED FOR, and it
-  cannot be what a commit says: one bump is up to two commits and each counts what its own step
-  applied. It doubles as the fold's commit message.
+  qits-ci's `ci/src/main/resources/platform-pipelines/maintenance-bump.yml`. The `n` is what was ASKED FOR; the
+  commit's own `n` counts only the changes that differ from the base, so the two can differ. It doubles as the fold's commit message.
 - **No `expectedSha`, and that is a deliberate loss.** qits-workspaces' door armed a request at the
   instant it was asked, so a head that had moved in between had to be a refusal. A release request
   is re-folded and re-gated on every push to any of its named sources, so a commit landing after the
@@ -927,7 +960,7 @@ environment without a rebuild.
 | `qits.maintenance.targets.projects-url` | `http://qits-projects:8080` | where the catalog is |
 | `qits.maintenance.targets.githost-url` | `http://qits-githost:8080` | where the manifests are |
 | `qits.maintenance.targets.ci-url` | `http://qits-ci:8080` | which CI applies a bump |
-| `qits.maintenance.targets.artifacts-url` | `http://qits-artifacts:8080` | where the SBOM documents are — a bare host, because the route's whole path belongs to the caller |
+| `qits.maintenance.targets.artifacts-url` | `http://qits-artifacts:8080` | where the SBOM documents and the changelog listings are — a bare host, because both routes' whole paths belong to the caller |
 | `qits.maintenance.registries.maven-url` | `http://qits-artifacts:8080/artifacts/maven/maven` | internal maven |
 | `qits.maintenance.registries.npm-url` | `http://qits-artifacts:8080/artifacts/npm/npm` | internal npm |
 | `qits.maintenance.registries.oci-url` | `http://qits-artifacts:8080/v2` | internal images |
@@ -954,12 +987,13 @@ environment without a rebuild.
 | `qits.maintenance.bump.dispatch.quiet-hours` | *(empty)* | hours a branch is unwelcome in: `HH:MM-HH:MM[,…]` in `time-zone`, end exclusive, midnight-wrapping allowed. Suppresses the debt-driven opening only; `POST /bumps/window` overrides it |
 | `qits.maintenance.bump.internal.window` | `6h` | how long one window lasts before it is closed, logged and re-opened if work is still owed. It closes early the moment nothing is owed, and it is also how long a refusal stands |
 | `qits.maintenance.environment` | `dev` | which environment's CI is recorded on a bump row |
+| `qits.maintenance.automations.dependency-bump.enabled` | `true` | **the `dependency-bump` automation (qits-1133), ON since the R2 cutover.** Off (emergency only): the kind is not listed, planned or started, and a row it opened before ends FRESH. The upstream switch below needs it on to do anything — with the upstream switch on and this one off, group bumps are retired and nothing writes the pins |
 | `qits.maintenance.pre-run.upstream.enabled` | `true` | **the upstream half of the pre-run (qits-1133), ON since the R2 cutover; the key stays so an emergency can set it false by environment.** On, nothing writes a `maintenance/<group>` branch (see "The bump") and the legacy sweep retires the ones left. On: a moved `mt_latest` re-plans the `dependency-bump` of every open, not-READY request of its consumers (three restarts without a QA verdict and a request is left alone until it has one), and the dispatcher opens a main-only `LOWEST` request instead of a `maintenance/<group>` branch, withdrawn again when its pre-run finds nothing. Only such a main-only request has the `dependency-bump` automation plan EXTERNAL upgrades; every other request, and every request while the switch is off, gets INTERNAL pins only. Off: group dispatch exactly as before |
 
 **The registry keys carry a PATH as well as a host**, because a registry is mounted under a prefix
 and the prefix names the repository row it serves. Moving a row is then a deployment's decision.
-**`targets.artifacts-url` deliberately does not**: `/artifacts/sboms/…` is qits-artifacts' own API
-rather than a mount, so its whole path belongs to the caller and lives in the code.
+**`targets.artifacts-url` deliberately does not**: `/artifacts/sboms/…` and
+`/artifacts/docs/docs/@changelog/…` are qits-artifacts' own API rather than a mount, so the whole path belongs to the caller and lives in the code.
 
 **The npmjs cache has no key at all.** `qits.maintenance.mirror.npm-url` is gone (qits-472): its
 address is derived in code (`PeerTarget.NPM_MIRROR`) as

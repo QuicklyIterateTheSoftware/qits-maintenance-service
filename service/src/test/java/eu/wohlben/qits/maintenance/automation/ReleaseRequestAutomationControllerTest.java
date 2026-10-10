@@ -78,6 +78,10 @@ class ReleaseRequestAutomationControllerTest {
     return given().contentType(ContentType.JSON).body(body);
   }
 
+  /** The screenshot entry of an answer, wherever the kind order puts it. */
+  private static final String SCREENSHOTS =
+      "automations.find { it.kind == '" + ScreenshotBaselinesAutomation.KIND + "' }";
+
   /** The trigger answers the per-kind states, and the read answers the same. */
   @Test
   void theTriggerAnswersEveryApplicableKindAndTheReadAgrees() {
@@ -91,8 +95,8 @@ class ReleaseRequestAutomationControllerTest {
             .statusCode(200)
             .body("requestId", equalTo(REQUEST))
             .body("foldSha", equalTo(FOLD_A))
-            // The dependency bump applies too (qits-1133) and finds the fold current: FRESH, listed
-            // first by kind order, and it is what lets the DERIVED screenshots go in the same ask.
+            // The dependency bump ships ON since the cutover (qits-1133 R2): listed first and
+            // FRESH, it holds nothing, so the DERIVED screenshots go in the same ask.
             .body("automations", hasSize(2))
             .body("automations[0].kind", equalTo(DependencyBumpAutomation.KIND))
             .body("automations[0].state", equalTo("FRESH"))
@@ -110,9 +114,9 @@ class ReleaseRequestAutomationControllerTest {
         .get(DOOR + "?foldSha=" + FOLD_A)
         .then()
         .statusCode(200)
-        .body("automations[1].bumpId", equalTo(bumpId))
-        .body("automations[1].state", equalTo("RUNNING"))
-        .body("automations[1].runIds[0]", equalTo("run-automation-door"));
+        .body(SCREENSHOTS + ".bumpId", equalTo(bumpId))
+        .body(SCREENSHOTS + ".state", equalTo("RUNNING"))
+        .body(SCREENSHOTS + ".runIds[0]", equalTo("run-automation-door"));
     given().when().get(DOOR).then().statusCode(200).body("foldSha", equalTo(FOLD_A));
     given().when().get("/maintenance/api/bumps/" + bumpId).then().statusCode(200)
         .body("mode", equalTo("AUTOMATION"));

@@ -6,8 +6,8 @@ import java.util.UUID;
  * A bump for that (repository, group) is already going — a 409.
  *
  * <p><b>One bump at a time per branch is a safety property, not a convenience.</b> The bump step
- * pushes ff-only onto one branch; two runs writing the same branch would make the second a non-ff
- * rejection at best, and at worst two commits computed from two different readings of the pins. The
+ * rebuilds one branch under a lease; two runs writing the same branch would make the second a lease
+ * rejection — read as STALE — at best, and at worst two commits from two readings of the pins. The
  * message names the bump that holds the lock so the caller can go and read it.
  */
 public class BumpAlreadyActiveException extends MaintenanceException {

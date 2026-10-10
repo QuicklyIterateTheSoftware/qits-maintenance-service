@@ -1,8 +1,10 @@
 package eu.wohlben.qits.maintenance.bump;
 
+import eu.wohlben.qits.maintenance.bump.changelog.ChangelogRange;
 import eu.wohlben.qits.maintenance.pending.Change;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Pattern;
 
 /**
@@ -36,6 +38,10 @@ import java.util.regex.Pattern;
  *       npm and docker arms rather than in front of all three.
  * </ul>
  *
+ * <p><b>The {@code changelog} field is held apart, by {@link #changelogProblems}</b> (qits-893): its
+ * repository becomes a docs-site segment and a heading in somebody's commit, its versions path
+ * segments, so both are held to the shapes the platform cuts.
+ *
  * <p><b>Nothing below switches on the ecosystem, and that is deliberate.</b> Every rule here is
  * about a value reaching a shell or a ref, and those are the same values whichever step applies
  * them — so a fourth ecosystem is admitted by this validation the day its step exists, and refused
@@ -55,6 +61,12 @@ public final class BumpPayload {
 
   /** A full commit object name, as the step's {@code replaceHead} guard admits one. */
   static final Pattern SHA = Pattern.compile("[0-9a-f]{40}|[0-9a-f]{64}");
+
+  /** A changelog's repository: a catalog name, which becomes a docs-site segment and a heading. */
+  static final Pattern CHANGELOG_REPOSITORY = Pattern.compile("[a-z0-9][a-z0-9-]{0,127}");
+
+  /** A changelog's version: a calver the platform cut, {@code YYYY.MMDD.HHMMSS} unpadded. */
+  static final Pattern CHANGELOG_VERSION = Pattern.compile("[0-9]{4}\\.[0-9]{1,4}\\.[0-9]+");
 
   private BumpPayload() {}
 
@@ -92,10 +104,10 @@ public final class BumpPayload {
   /**
    * The same, for a payload that may carry a {@code replaceHead} (qits-1081).
    *
-   * <p><b>{@code replaceHead} is the one value here that licenses a non-fast-forward push</b> — the
-   * step rebuilds the branch on {@code baseRef} under {@code --force-with-lease} on it — so it is
+   * <p><b>{@code replaceHead} is the head the step is expected to rebuild over</b> — under {@code
+   * --force-with-lease}, as one commit on {@code baseRef} — so it is
    * held to exactly what the step admits: lowercase hex, 40 characters or 64 (a SHA-256 repository's
-   * object name), nothing else. Null is "continue the branch", the ordinary payload.
+   * object name), nothing else. Null when there is no branch to replace.
    */
   public static List<String> problems(
       String group, String branch, String baseRef, String replaceHead, List<Change> changes) {
@@ -122,6 +134,60 @@ public final class BumpPayload {
             "the manifest path of " + change.name() + " must be relative and free of '..': " + path);
       }
     }
+    return List.copyOf(problems);
+  }
+
+  /**
+   * Every reason the {@code changelog} fields of a payload cannot be sent, or an empty list (epic
+   * qits-893).
+   *
+   * <p><b>A separate check rather than a parameter of {@link #problems}</b>, because the two are
+   * asked at different moments: the payload's own fields are checked before anything is read, and
+   * the ranges only exist after the docs store has been asked. Pure, like the other — it is handed
+   * the ranges and reads nothing.
+   *
+   * <p>The step's CLI turns each repository into a docs-site path and a {@code ## } heading, and
+   * each version into a path segment and a {@code # } heading, so both are held to the shapes the
+   * platform actually cuts: a catalog name, and a calver. An empty version list is a range that
+   * says nothing, and {@code ChangelogRanges} never builds one.
+   */
+  public static List<String> changelogProblems(Map<Change, ChangelogRange> changelogs) {
+    List<String> problems = new ArrayList<>();
+    if (changelogs == null) {
+      return List.of();
+    }
+    changelogs.forEach(
+        (change, range) -> {
+          String name = change == null ? null : change.name();
+          if (range == null) {
+            problems.add("the changelog of " + name + " is empty");
+            return;
+          }
+          if (range.repository() == null
+              || !CHANGELOG_REPOSITORY.matcher(range.repository()).matches()) {
+            problems.add(
+                "the changelog repository of "
+                    + name
+                    + " '"
+                    + range.repository()
+                    + "' is not "
+                    + CHANGELOG_REPOSITORY.pattern());
+          }
+          if (range.versions().isEmpty()) {
+            problems.add("the changelog of " + name + " names no version");
+          }
+          for (String version : range.versions()) {
+            if (version == null || !CHANGELOG_VERSION.matcher(version).matches()) {
+              problems.add(
+                  "the changelog version '"
+                      + version
+                      + "' of "
+                      + name
+                      + " is not "
+                      + CHANGELOG_VERSION.pattern());
+            }
+          }
+        });
     return List.copyOf(problems);
   }
 }

@@ -10,6 +10,7 @@ import eu.wohlben.qits.maintenance.entity.MtLatest;
 import eu.wohlben.qits.maintenance.entity.MtPin;
 import eu.wohlben.qits.maintenance.entity.MtRepository;
 import eu.wohlben.qits.maintenance.manifest.GroupConfig;
+import eu.wohlben.qits.maintenance.model.BranchState;
 import eu.wohlben.qits.maintenance.model.BumpStatus;
 import eu.wohlben.qits.maintenance.model.BumpTrigger;
 import eu.wohlben.qits.maintenance.model.RepositoryStatus;
@@ -1018,6 +1019,18 @@ public class BumpDispatcher {
         refusals.add(new Refused(row.name, group, changes.size()));
         continue;
       }
+      // A BRANCH SOMEBODY WROTE BY HAND IS LEFT ALONE. The step refuses to rebuild it, so
+      // dispatching would only be a red run per tick; it is reported until the branch is deleted.
+      // Not after the cutover (qits-1133 R2): no group bump is dispatched at all, and the legacy
+      // sweep deletes the branch.
+      if (!config.preRunUpstreamEnabled() && bases.stale(row, group)) {
+        stalled.add(
+            new Stalled(
+                row.name, group, null, BranchState.STALE.name(),
+                BumpService.BRANCH_PREFIX + group
+                    + " carries a commit qits maintenance did not write; delete it to resume"));
+        continue;
+      }
       // AFTER THE CUTOVER THE GROUP BRANCH IS NOTHING TO WAIT FOR (qits-1133 R2): the group hold
       // reads the newest maintenance/<group> bump and its request, which the legacy sweep withdraws
       // and deletes — a hold on it would keep a repository from its main-only request for ever.
@@ -1149,8 +1162,7 @@ public class BumpDispatcher {
     if (tagRef.equals(bump.baseRef)) {
       return "its newest bump was already cut from " + tagRef;
     }
-    BumpBase.Choice choice = bases.choose(row, group, bump.branch, tag);
-    if (!choice.rebuild()) {
+    if (!bases.lacksTag(row, group, bump.branch, tag)) {
       return "";
     }
     LOG.debugf(

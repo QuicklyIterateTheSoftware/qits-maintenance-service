@@ -16,10 +16,8 @@ import jakarta.inject.Inject;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * <b>HOW FAR ONE RELEASE ACTUALLY GOT — answered from the graph at query time, over the closure
@@ -186,14 +184,14 @@ public class AdoptionEvaluator {
   public Journey of(String spelling, String version) {
     Closure closure = downstream.of(spelling);
     String root = closure.repository();
-    Set<Coordinate> released = coordinates.of(root, version);
+    Map<Coordinate, String> released = coordinates.versionsOf(root, version);
 
     Names names = names();
     // THE REQUIREMENT AT EACH HOP, keyed by the repository that carries it: what a child of that
     // repository has to be shipping. The root's is the release being asked about; a downstream's is
     // its own adopting release, filled in below as the walk decides it.
     Map<String, Requirement> requirements = new LinkedHashMap<>();
-    requirements.put(root, new Requirement(addressedBy(root, released), version));
+    requirements.put(root, new Requirement(addressedBy(root, released, version), version));
 
     List<Adopter> adopters = new ArrayList<>();
     // Depth ascending already, and `via` only ever names the level above — see DownstreamResolver —
@@ -222,7 +220,9 @@ public class AdoptionEvaluator {
           entry.repository(),
           new Requirement(
               addressedBy(
-                  entry.repository(), coordinates.of(entry.repository(), match.version())),
+                  entry.repository(),
+                  coordinates.versionsOf(entry.repository(), match.version()),
+                  match.version()),
               match.version()));
       adopters.add(
           new Adopter(
@@ -238,20 +238,31 @@ public class AdoptionEvaluator {
     }
 
     return new Journey(
-        root, closure.catalogId(), version, List.copyOf(released), List.copyOf(adopters));
+        root,
+        closure.catalogId(),
+        version,
+        List.copyOf(released.keySet()),
+        List.copyOf(adopters));
   }
 
   // --- one repository's verdict -----------------------------------------------------------------
 
   /**
-   * What a child of one repository has to be carrying: its coordinates, at this version.
+   * What a child of one repository has to be carrying: each coordinate at its own version.
    *
-   * <p>The coordinates are what the release put into a registry PLUS the repository's own name in
+   * <p>The coordinates are what the release carries in a registry PLUS the repository's own name in
    * the GITLINK ecosystem — see {@link #addressedBy}. Both halves are needed at every hop, because
    * a service can consume the same upstream twice: a maven pin on the library and a submodule of
    * the frontend that carries it.
+   *
+   * <p><b>Each coordinate has its own version</b> (publish-if-changed): the release's own version
+   * for what it published and for the gitlink, the "unchanged since" version for what it left
+   * alone. See {@link ReleaseCoordinates#versionsOf}.
+   *
+   * @param coordinates every coordinate, with the version a child has to carry at least
+   * @param version the release's own version, null for a PENDING parent
    */
-  private record Requirement(Set<Coordinate> coordinates, String version) {}
+  private record Requirement(Map<Coordinate, String> coordinates, String version) {}
 
   /** The adopting release, as it is reported: the ADOPTER's own version and its moment. */
   private record Match(String version, Instant occurredAt) {}
@@ -280,8 +291,10 @@ public class AdoptionEvaluator {
         // every path says nothing, this repository is PENDING too.
         continue;
       }
-      for (Coordinate coordinate : requirement.coordinates()) {
-        earliest = earlier(earliest, carrying(repository, coordinate, requirement.version(), names));
+      for (Map.Entry<Coordinate, String> coordinate : requirement.coordinates().entrySet()) {
+        earliest =
+            earlier(
+                earliest, carrying(repository, coordinate.getKey(), coordinate.getValue(), names));
       }
     }
     return earliest;
@@ -297,10 +310,12 @@ public class AdoptionEvaluator {
    * registry", which a submodule is not and never will be; it excludes GITLINK on purpose and keeps
    * doing so.
    */
-  private static Set<Coordinate> addressedBy(String repository, Set<Coordinate> published) {
-    Set<Coordinate> addressed = new LinkedHashSet<>(published);
+  private static Map<Coordinate, String> addressedBy(
+      String repository, Map<Coordinate, String> published, String version) {
+    Map<Coordinate, String> addressed = new LinkedHashMap<>(published);
     if (repository != null && !repository.isBlank()) {
-      addressed.add(new Coordinate(Ecosystem.GITLINK, repository));
+      // A gitlink names the release itself: its commit resolves to the release's own version.
+      addressed.put(new Coordinate(Ecosystem.GITLINK, repository), version);
     }
     return addressed;
   }

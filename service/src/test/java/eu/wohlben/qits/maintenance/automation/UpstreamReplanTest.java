@@ -33,6 +33,7 @@ import eu.wohlben.qits.maintenance.work.WorkQueue;
 import io.quarkus.arc.ClientProxy;
 import io.quarkus.test.junit.QuarkusMock;
 import io.quarkus.test.junit.QuarkusTest;
+import io.quarkus.test.junit.TestProfile;
 import jakarta.inject.Inject;
 import java.time.Duration;
 import java.time.Instant;
@@ -50,6 +51,7 @@ import org.junit.jupiter.api.Test;
  * still switches it explicitly, so the off arm is pinned too.
  */
 @QuarkusTest
+@TestProfile(DependencyBumpOn.class)
 class UpstreamReplanTest {
 
   private static final String RUN = "run-upstream";
@@ -86,6 +88,8 @@ class UpstreamReplanTest {
     Fixture.scriptScan(peers);
     Fixture.scriptBranchAbsent(peers);
     Fixture.scriptCiAccepts(peers, RUN);
+    // Who publishes each internal pin: a bump's changelog ranges need a source repository (qits-893).
+    Fixture.seedProducers(store);
     AutomationFixture.scriptFold(peers, FOLD_A, true);
     AutomationFixture.scriptManifests(peers, FOLD_A, STALE_POM, null);
     AutomationFixture.scriptRequest(peers, REQUEST, "PENDING", FOLD_A);

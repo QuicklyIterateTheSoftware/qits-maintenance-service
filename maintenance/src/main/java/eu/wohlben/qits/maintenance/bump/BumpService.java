@@ -1,6 +1,8 @@
 package eu.wohlben.qits.maintenance.bump;
 
 import eu.wohlben.qits.maintenance.automation.AutomationService;
+import eu.wohlben.qits.maintenance.bump.changelog.ChangelogRange;
+import eu.wohlben.qits.maintenance.bump.changelog.ChangelogRanges;
 import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
 import eu.wohlben.qits.maintenance.entity.MtBranch;
 import eu.wohlben.qits.maintenance.entity.MtBump;
@@ -47,22 +49,23 @@ import org.jboss.logging.Logger;
  * found the versions already there: NOTHING_TO_DO, which is a real outcome and reads very
  * differently from SUCCEEDED in a list of nightly bumps.
  *
- * <p><b>Only the head is compared, never a commit count.</b> One bump is up to TWO commits — the
- * maven step and the node/docker step each clone, commit and push — so a bump that moved the branch
- * by two commits is the ordinary case and a service that expected one would report every mixed
- * group as broken.
+ * <p><b>The branch is ONE commit on its base, rebuilt by every bump</b> (user decision 2026-10-09;
+ * it replaced "ff-only, never force"). The step checks out the base — main, or the unmerged tag
+ * {@link BumpBase} picks — applies every pending change of the group, commits once and pushes under
+ * {@code --force-with-lease} on the head it read. The changes are pending against the scanned base,
+ * so the pins the old commit carried are in the payload again and survive the rebuild.
  *
- * <p><b>The push is ff-only and never forced</b> — that rule lives in the pipeline, not here — so a
- * red run against a branch that MOVED is somebody's hand-written commit that this service refused
- * to overwrite. That is the STALE state: they own the branch now, and nothing bumps it again until
- * it is gone.
+ * <p><b>Every changelog a bump pulls in is proved published before the trigger</b> (epic qits-893).
+ * {@link ChangelogRanges} names, per internal change, the releases after the old pin up to the new
+ * one; they ride the payload as each change's {@code changelog}, and the step composes the commit
+ * message from them. A missing one FAILS the bump with the sentence naming it and nothing is sent;
+ * a docs store that cannot be read is a RETRY, like a 503 from the trigger.
  *
- * <p><b>The one exception is a REBUILD, and it is leased</b> (qits-1081). When the repository's
- * newest release has not reached main, the branch is cut from that tag rather than from main — see
- * {@link BumpBase} — and a branch that exists without it is sent as {@code replaceHead}: the step
- * rebuilds it on the tag under {@code --force-with-lease} on exactly that head, so a branch that
- * moved after this service read it is still refused rather than overwritten. A STALE branch is
- * never offered for a rebuild.
+ * <p><b>A hand-written commit is never rebuilt.</b> The step rebuilds only over commits authored
+ * {@code maintenance@qits.local} on top of the base; anything else, or a branch that moved after it
+ * read it, ends the run with {@link BumpBase#NOT_OURS_EXIT} and no push. That exit, or a red run
+ * against a branch that MOVED, is the STALE state: somebody owns the branch now, and nothing bumps
+ * it again until it is deleted.
  *
  * <p><b>A GREEN ENDING ASKS FOR THE RELEASE WHENEVER THE BRANCH IS AHEAD OF MAIN</b> — which is not
  * the same test as "did this run push", and used to be. A branch nobody asks about is a branch that
@@ -145,6 +148,9 @@ public class BumpService {
   @Inject BumpBase bases;
 
   @Inject WorkQueue queue;
+
+  /** Which changelogs each change pulls in, and the proof they exist (qits-893). */
+  @Inject ChangelogRanges changelogRanges;
 
   /** The engine every release-request automation runs on; AUTOMATION rows are its to read. */
   @Inject AutomationService automations;
@@ -244,6 +250,16 @@ public class BumpService {
       return;
     }
     String branch = bump.branch;
+    if (mode.ownsTheBranch() && bases.stale(repository.get(), bump.groupName)) {
+      // The step would refuse it anyway; failing here says why without a run.
+      store.bumpFinished(
+          id,
+          BumpStatus.FAILED,
+          null,
+          branch + " carries a commit qits maintenance did not write; delete it to resume",
+          Instant.now());
+      return;
+    }
     // THE BASE IS CHOSEN AT DISPATCH, NOT FROZEN AT REQUEST (qits-1081). The changes are what the
     // operator saw and must not move; the base is a fact about the repository's releases right now,
     // and a retry after a 503 should cut from the tag that is unmerged THEN. Recorded before the
@@ -272,6 +288,15 @@ public class BumpService {
       return;
     }
 
+    // THE CHANGELOGS, PROVED BEFORE ANYTHING IS SENT (qits-893). A missing one is a failed release
+    // somewhere upstream, and a bump commit written without it is exactly what the owner ruled out:
+    // the row FAILS with the sentence naming it, the same way a refused payload does. A docs store
+    // that could not be read says nothing about the changelogs, so that is a RETRY, as a 503 is.
+    Optional<Map<Change, ChangelogRange>> changelogs = changelogs(id, changes);
+    if (changelogs.isEmpty()) {
+      return;
+    }
+
     if (mode.ownsTheBranch()) {
       // The head BEFORE the run, which is what an unmoved branch is compared against afterwards.
       recordBranchHead(repository.get(), bump.groupName, branch);
@@ -285,9 +310,9 @@ public class BumpService {
             branch,
             baseRef,
             changes,
-            // OMITTED, never sent empty, when the branch is continued: the step reads a missing
-            // `replaceHead` as "continue", which is every bump before qits-1081.
-            base.rebuild() ? Map.of("replaceHead", base.replaceHead()) : Map.of());
+            // OMITTED, never sent empty, when there is no branch to replace.
+            base.rebuild() ? Map.of("replaceHead", base.replaceHead()) : Map.of(),
+            changelogs.get());
     switch (result.outcome()) {
       case ACCEPTED -> {
         store.bumpDispatched(id, result.eventId(), result.runIds());
@@ -321,6 +346,36 @@ public class BumpService {
     LOG.infof("The group bump %s of %s/%s was not sent: %s", bump.id, bump.repository,
         bump.groupName, message);
   }
+
+  /**
+   * The changelog ranges of one bump's changes, or empty when the bump was finished instead.
+   *
+   * <p>Three endings, and only the first sends anything: every range resolved and valid; a problem
+   * — a changelog missing, a source repository unknown, a range that fails {@link
+   * BumpPayload#changelogProblems} — which FAILS the row with the problems joined as its message;
+   * or a docs store that could not be read, which leaves the row REQUESTED with its changes and the
+   * same event id, for the sweep to send again. Nothing is triggered by the last two.
+   */
+  private Optional<Map<Change, ChangelogRange>> changelogs(UUID id, List<Change> changes) {
+    ChangelogRanges.Result resolved = changelogRanges.resolve(changes);
+    List<String> problems = new ArrayList<>(resolved.problems());
+    problems.addAll(BumpPayload.changelogProblems(resolved.ranges()));
+    if (!problems.isEmpty()) {
+      store.bumpFinished(
+          id, BumpStatus.FAILED, null, String.join("; ", problems), Instant.now());
+      LOG.warnf("The bump %s was not sent: %s", id, problems);
+      return Optional.empty();
+    }
+    if (resolved.transientFailure()) {
+      store.bumpFinished(id, BumpStatus.REQUESTED, null, CHANGELOGS_UNREADABLE, Instant.now());
+      return Optional.empty();
+    }
+    return Optional.of(resolved.ranges());
+  }
+
+  /** The message a bump keeps while the docs store cannot be read; it is sent again. */
+  public static final String CHANGELOGS_UNREADABLE =
+      "the changelogs could not be read from qits-artifacts yet; the bump will be sent again";
 
   /**
    * How long a FAILED run is given for qits-ci's automatic retry of it to appear. qits-ci commits
@@ -676,7 +731,7 @@ public class BumpService {
       automations.finish(bump, passed, ciRunStatus, failure);
       return;
     }
-    finishGroup(bump, passed, ciRunStatus);
+    finishGroup(bump, passed, ciRunStatus, failure);
   }
 
   /**
@@ -687,7 +742,8 @@ public class BumpService {
    * commits to {@code maintenance/<group>} — which is precisely what an automation writing a
    * request's own branches cannot assume; see {@code AutomationService.finish}.
    */
-  private void finishGroup(MtBump bump, boolean passed, String ciRunStatus) {
+  private void finishGroup(
+      MtBump bump, boolean passed, String ciRunStatus, CiClient.Failure failure) {
     Instant now = Instant.now();
     Optional<MtRepository> repository = store.repository(bump.repository);
     String branch = bump.branch;
@@ -756,16 +812,21 @@ public class BumpService {
           now);
       return;
     }
-    // Red. A branch that moved anyway is somebody's hand-written commit that the ff-only push
-    // refused to overwrite — they own it now.
-    BranchState state = moved ? BranchState.STALE : BranchState.FAILED;
+    // Red. The step's NOT_OURS exit says the branch carries somebody else's commit, or moved after
+    // the step read it; a branch that moved anyway says the same. They own it now.
+    boolean notOurs =
+        failure != null
+            && failure.exitCode() != null
+            && failure.exitCode() == BumpBase.NOT_OURS_EXIT;
+    BranchState state = moved || notOurs ? BranchState.STALE : BranchState.FAILED;
     store.recordBranch(bump.repository, bump.groupName, branch, state, after, now);
     store.bumpFinished(
         bump.id,
         BumpStatus.FAILED,
         ciRunStatus,
         state == BranchState.STALE
-            ? branch + " was rewritten by hand; nothing will be pushed onto it"
+            ? branch + " carries a commit qits maintenance did not write; nothing will be pushed"
+                + " onto it until it is deleted"
             : "the ci run ended " + ciRunStatus,
         now);
   }
@@ -794,6 +855,10 @@ public class BumpService {
   private void recordBranchHead(MtRepository repository, String group, String branch) {
     String head = branchHead(repository, branch);
     BranchState state = head == null ? BranchState.NONE : BranchState.PUSHED;
+    // STALE stays STALE while the branch is there: only its deletion clears it.
+    if (head != null && bases.stale(repository, group)) {
+      state = BranchState.STALE;
+    }
     store.recordBranch(repository.name, group, branch, state, head, Instant.now());
   }
 

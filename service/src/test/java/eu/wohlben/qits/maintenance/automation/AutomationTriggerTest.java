@@ -140,12 +140,11 @@ class AutomationTriggerTest {
     assertTrue(
         answer.automations().stream().noneMatch(AutomationFixture::screenshots),
         "screenshots do not apply: " + answer);
-    // The one kind that does is the dependency bump, and the fold's manifests are current: FRESH,
-    // with no run (qits-1133).
+    // The dependency bump ships ON since the cutover (qits-1133 R2) and is the one kind listed:
+    // FRESH, because every pin at the fold already names its latest.
     assertEquals(1, answer.automations().size(), answer.toString());
-    assertEquals(
-        AutomationState.FRESH.name(),
-        AutomationFixture.entry(answer, DependencyBumpAutomation.KIND).state());
+    assertEquals(DependencyBumpAutomation.KIND, answer.automations().getFirst().kind());
+    assertEquals(AutomationState.FRESH.name(), answer.automations().getFirst().state());
     assertTrue(screenshotRows(FOLD_A).isEmpty(), "and nothing was stored for screenshots");
     assertEquals(0, triggers(), "and no run was asked for");
   }

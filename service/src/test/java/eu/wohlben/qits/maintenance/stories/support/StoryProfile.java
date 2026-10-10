@@ -158,6 +158,10 @@ public class StoryProfile extends PackagedSurfaceIT.PackagedUnderTarget {
     overrides.put(
         "qits.maintenance.mirror.maven-url",
         url(StoryTarget.MIRROR, StoryTarget.MAVEN_MIRROR_PREFIX));
+    // qits-artifacts' own API — the docs store a bump reads its changelog listings from (qits-893),
+    // and the SBOM route beside it — is a bare host. Left at its default it would leave through the
+    // mirror's proxy below and be drawn as an arrow into the wrong peer.
+    overrides.put("qits.maintenance.targets.artifacts-url", url(StoryTarget.ARTIFACTS));
     // THE npm MIRROR HAS NO KEY TO POINT (qits-472): the launched process derives
     // http://dev-qits-platform-mirror:8080/npm/npmjs itself. So the stand-in is reached the way the
     // derived address really goes out — as the JVM's plain-http proxy, which the JDK HttpClient

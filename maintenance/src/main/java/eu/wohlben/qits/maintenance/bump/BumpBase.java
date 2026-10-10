@@ -30,26 +30,36 @@ import org.jboss.logging.Logger;
  *   <li>Whether main already contains it — the git host's ancestry door, asked at main's head. A
  *       tag main contains is not "unmerged" in any sense that matters, whatever the listing says.
  *       Contained: main. Not contained: {@code refs/tags/<version>}.
- *   <li>Only on a tag base: whether {@code maintenance/<group>} exists and does NOT contain the tag.
- *       Then its head travels as {@code replaceHead}, and the step REBUILDS the branch on the tag
- *       under {@code --force-with-lease} on that head. A branch that already contains the tag is
- *       continued; no branch at all is started from the tag.
  * </ol>
+ *
+ * <h2>Every bump rebuilds the branch (user decision 2026-10-09)</h2>
+ *
+ * <p>A {@code maintenance/<group>} branch is always exactly ONE commit on its base. Whenever the
+ * branch exists, its head travels as {@code replaceHead}, on main and on a tag alike, and the step
+ * rebuilds the branch from the base with every pending change of the group under {@code
+ * --force-with-lease}. The pins already on the branch are not lost: the changes are computed
+ * against the scanned base, so every pin the branch moved is still pending there and is in the
+ * payload again. That replaced "ff-only, never force", which stacked one commit per bump.
  *
  * <p><b>Every unreadable answer is main, said once at WARN, and never a failed bump.</b> The base is
  * an improvement on the bump, not a precondition of it: main is exactly what every bump sent before
- * this existed, so falling back to it costs the conflict this avoids and nothing else. An unreadable
- * BRANCH containment is the same reading one level down — no {@code replaceHead}, so the branch is
- * continued and nothing is force-pushed on a guess.
+ * the tag base existed, so falling back to it costs the conflict this avoids and nothing else.
  *
- * <p><b>A STALE branch is never rebuilt.</b> STALE is a hand-written commit the ff-only push refused
- * to overwrite — somebody owns that branch — and {@code replaceHead} is the one field that would
- * let the step throw it away.
+ * <p><b>A STALE branch is never rebuilt.</b> STALE is a hand-written commit — somebody owns that
+ * branch — so it gets no {@code replaceHead}. The step makes its own check as well: it rebuilds only
+ * over commits authored {@code maintenance@qits.local} on top of the base, and exits {@link
+ * #NOT_OURS_EXIT} otherwise.
  */
 @ApplicationScoped
 public class BumpBase {
 
   private static final Logger LOG = Logger.getLogger(BumpBase.class);
+
+  /**
+   * The step's exit when the branch carries a commit it did not write, or moved after it was read:
+   * nothing was pushed, and the branch is somebody else's now — STALE.
+   */
+  public static final int NOT_OURS_EXIT = 42;
 
   /** A tag base is sent as a full ref; the step fetches a {@code refs/…} base as written. */
   public static final String TAG_PREFIX = "refs/tags/";
@@ -65,7 +75,7 @@ public class BumpBase {
    *
    * @param baseRef the repository's main branch, or {@code refs/tags/<version>}
    * @param tag the unmerged release the base is cut from, or null when it is main
-   * @param replaceHead the branch head the step rebuilds over, or null to continue (or start) it
+   * @param replaceHead the branch head the step rebuilds over, or null when there is no branch
    */
   public record Choice(String baseRef, ReleaseRequestClient.Unmerged tag, String replaceHead) {
 
@@ -114,8 +124,15 @@ public class BumpBase {
   /** {@link #choose(MtRepository, String, String)} with the listing already read. */
   public Choice choose(
       MtRepository repository, String group, String branch, ReleaseRequestClient.Unmerged tag) {
+    String base = baseRef(repository, tag);
+    return new Choice(
+        base, base.startsWith(TAG_PREFIX) ? tag : null, replaceHead(repository, group, branch));
+  }
+
+  /** The base alone: main, or {@code refs/tags/<version>} when main does not contain the tag. */
+  private String baseRef(MtRepository repository, ReleaseRequestClient.Unmerged tag) {
     if (tag == null) {
-      return Choice.main(repository);
+      return mainBranch(repository);
     }
     String main = mainBranch(repository);
     TreeLookup mainHead = gitHost.head(repository.project, repository.name, main);
@@ -124,45 +141,60 @@ public class BumpBase {
           "%s's %s could not be read, so whether it contains the release %s is unknown; the bump"
               + " is cut from %s",
           repository.name, main, tag.version(), main);
-      return Choice.main(repository);
+      return main;
     }
     GitHostReader.Containment onMain =
         gitHost.contains(repository.catalogId, tag.releasedSha(), mainHead.headSha());
     if (!onMain.readable()) {
       LOG.warnf("%s; the bump of %s is cut from %s", onMain.error(), repository.name, main);
-      return Choice.main(repository);
+      return main;
     }
     if (onMain.contains()) {
-      return Choice.main(repository);
+      return main;
     }
-    String baseRef = TAG_PREFIX + tag.version();
-    return new Choice(baseRef, tag, replaceHead(repository, group, branch, tag));
+    return TAG_PREFIX + tag.version();
   }
 
-  /** The branch head to rebuild over, or null to continue the branch (or start it). */
-  private String replaceHead(
-      MtRepository repository, String group, String branch, ReleaseRequestClient.Unmerged tag) {
-    TreeLookup head = gitHost.head(repository.project, repository.name, branch);
-    if (!head.found()) {
-      // No branch: the step starts it from the tag. An unreadable one is the same answer for the
-      // payload — the step makes its own read, and with no replaceHead it never force-pushes.
+  /** The branch head to rebuild over: the head of a branch that exists and is not STALE. */
+  private String replaceHead(MtRepository repository, String group, String branch) {
+    if (stale(repository, group)) {
       return null;
     }
-    boolean stale =
-        store.branch(repository.name, group)
-            .map(row -> BranchState.STALE.name().equals(row.state))
-            .orElse(false);
-    if (stale) {
-      return null;
+    TreeLookup head = gitHost.head(repository.project, repository.name, branch);
+    // No branch: the step starts it. An unreadable one is the same answer for the payload — the
+    // step makes its own read, and its ownership check is what licenses the rebuild.
+    return head.found() ? head.headSha() : null;
+  }
+
+  /** Whether somebody wrote the group's branch by hand, so this service leaves it alone. */
+  public boolean stale(MtRepository repository, String group) {
+    return store.branch(repository.name, group)
+        .map(row -> BranchState.STALE.name().equals(row.state))
+        .orElse(false);
+  }
+
+  /**
+   * Whether the group's branch exists and does NOT contain the tag — the dispatcher's test for
+   * rebuilding a CONFLICTED request on its newest unmerged release (qits-1081). Unreadable answers,
+   * a STALE branch and no branch are all "no".
+   */
+  public boolean lacksTag(
+      MtRepository repository, String group, String branch, ReleaseRequestClient.Unmerged tag) {
+    if (tag == null || stale(repository, group)) {
+      return false;
+    }
+    TreeLookup head = gitHost.head(repository.project, repository.name, branch);
+    if (!head.found()) {
+      return false;
     }
     GitHostReader.Containment onBranch =
         gitHost.contains(repository.catalogId, tag.releasedSha(), head.headSha());
     if (!onBranch.readable()) {
       LOG.warnf(
-          "%s; %s of %s is continued rather than rebuilt on %s",
+          "%s; whether %s of %s carries %s is unknown, so it is not rebuilt on it",
           onBranch.error(), branch, repository.name, tag.version());
-      return null;
+      return false;
     }
-    return onBranch.contains() ? null : head.headSha();
+    return !onBranch.contains();
   }
 }
