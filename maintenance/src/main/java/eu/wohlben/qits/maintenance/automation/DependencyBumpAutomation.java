@@ -4,7 +4,6 @@ import eu.wohlben.qits.maintenance.bump.CiClient;
 import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
 import eu.wohlben.qits.maintenance.entity.MtLatest;
 import eu.wohlben.qits.maintenance.entity.MtPin;
-import eu.wohlben.qits.maintenance.entity.MtReleaseRequest;
 import eu.wohlben.qits.maintenance.githost.FileLookup;
 import eu.wohlben.qits.maintenance.manifest.GitmodulesParser;
 import eu.wohlben.qits.maintenance.manifest.GroupConfig;
@@ -37,8 +36,7 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
  *
  * <ul>
  *   <li><b>Applies</b> when the inventory knows a pin of the repository a bump could move — an
- *       INTERNAL or EXTERNAL one, and in a wrapper not a gitlink (below). One store read, no git
- *       host.
+ *       INTERNAL one, and in a wrapper not a gitlink (below). One store read, no git host.
  *   <li><b>Plans AT THE FOLD</b>, never at main: the fold's manifests are read through the scan's
  *       own discovery ({@link ManifestScanner#pinsAt}, the same parsers and the same {@code ignore:}),
  *       each pin is judged by the pending rule ({@link PendingChanges#newerVersion}) against {@code
@@ -52,21 +50,18 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
  *       like any other, so at dispatch {@link AutomationService} resolves each change's range
  *       through {@link eu.wohlben.qits.maintenance.bump.changelog.ChangelogRanges} and each change
  *       that has one carries {@code "changelog": {"repository": "…", "versions": ["…"]}}, spelled by
- *       {@link CiClient#changes} exactly as the {@code MaintenanceBump} trigger spells it — an
- *       external change, or one whose repository predates changelogs, carries no key. A missing
- *       changelog FAILS the run with the problems joined "; " and triggers nothing; a docs store
+ *       {@link CiClient#changes} exactly as the {@code MaintenanceBump} trigger spells it — a
+ *       change whose repository predates changelogs carries no key. A missing changelog FAILS the run with the problems joined "; " and triggers nothing; a docs store
  *       that could not be read leaves it REQUESTED for the sweep.
  * </ul>
  *
  * <h2>Whose upgrades</h2>
  *
- * <p><b>Only the platform's own releases are planned, with one exception</b> — INTERNAL pins,
+ * <p><b>Only the platform's own releases are planned, in every request</b> — INTERNAL pins,
  * decided by the same name rule the scan stores ({@link MaintenanceConfig#kindOf(ParsedPin)}).
- * Somebody else's framework major in a person's request would be an opinion pushed into their
- * release, and a group bump's request keeps the pre-1133 rule that external upgrades are a person's
- * press. The exception is the MAIN-ONLY request the dispatcher opens on the upstream path ({@code
- * mt_release_request.purpose = MAIN_ONLY}): it exists to carry upgrades and plans EXTERNAL ones
- * too.
+ * Upgrading an EXTERNAL dependency is a person's change (USER RULING 2026-10-10, qits-1164). That
+ * holds for the MAIN-ONLY request the dispatcher opens as well: it plans what a person's request
+ * plans.
  *
  * <h2>Who owns which path</h2>
  *
@@ -132,7 +127,7 @@ public class DependencyBumpAutomation implements ReleaseRequestAutomation {
   public Applicability applicability(AutomationSubject subject) {
     boolean wrapper = wrapper(subject);
     for (MtPin pin : store.pins(subject.repository().name)) {
-      if (!PendingChanges.kindOf(pin).actionable()) {
+      if (PendingChanges.kindOf(pin) != PinKind.INTERNAL) {
         continue;
       }
       if (wrapper && Ecosystem.GITLINK.wireName().equals(pin.ecosystem)) {
@@ -141,7 +136,7 @@ public class DependencyBumpAutomation implements ReleaseRequestAutomation {
       return Applicability.applies();
     }
     return Applicability.notApplicable(
-        "the inventory knows no pin of " + subject.repository().name + " a bump could move"
+        "the inventory knows no internal pin of " + subject.repository().name + " a bump could move"
             + (wrapper ? " (a wrapper's gitlinks are estate-pins')" : ""));
   }
 
@@ -230,7 +225,6 @@ public class DependencyBumpAutomation implements ReleaseRequestAutomation {
     }
 
     boolean wrapper = wrapper(subject);
-    boolean external = plansExternal(subject.requestId());
     Map<String, MtLatest> latest = PendingChanges.index(store.allLatest());
     List<Change> changes = new ArrayList<>();
     List<String> held = new ArrayList<>();
@@ -239,7 +233,7 @@ public class DependencyBumpAutomation implements ReleaseRequestAutomation {
         continue;
       }
       PinKind kind = config.kindOf(pin);
-      if (!kind.actionable() || (!external && kind != PinKind.INTERNAL)) {
+      if (kind != PinKind.INTERNAL) {
         continue;
       }
       MtPin row = asRow(pin, kind);
@@ -257,7 +251,7 @@ public class DependencyBumpAutomation implements ReleaseRequestAutomation {
     }
     if (changes.isEmpty()) {
       return Plan.fresh(
-          "every " + (external ? "" : "internal ") + "pin at the fold names its latest"
+          "every internal pin at the fold names its latest"
               + (held.isEmpty() ? "" : "; held by " + GroupConfig.PATH + ": " + held));
     }
     return Plan.runs(
@@ -282,18 +276,6 @@ public class DependencyBumpAutomation implements ReleaseRequestAutomation {
       }
     }
     return List.copyOf(paths);
-  }
-
-  /**
-   * Whether this request may carry EXTERNAL upgrades: only a MAIN-ONLY request the dispatcher's
-   * upstream path opened. A person's request and a legacy group bump's ({@code maintenance/<group>})
-   * get INTERNAL pins only.
-   */
-  boolean plansExternal(String requestId) {
-    return store
-        .releaseRequest(requestId)
-        .filter(memo -> memo.opened && MtReleaseRequest.MAIN_ONLY.equals(memo.purpose))
-        .isPresent();
   }
 
   /** A pin read at the fold, in the shape the pending rule judges a stored one in. Never persisted. */

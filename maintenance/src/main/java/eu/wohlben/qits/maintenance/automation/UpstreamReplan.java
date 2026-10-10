@@ -5,6 +5,7 @@ import eu.wohlben.qits.maintenance.entity.MtPin;
 import eu.wohlben.qits.maintenance.entity.MtRepository;
 import eu.wohlben.qits.maintenance.model.BumpTrigger;
 import eu.wohlben.qits.maintenance.model.Ecosystem;
+import eu.wohlben.qits.maintenance.model.PinKind;
 import eu.wohlben.qits.maintenance.pending.PendingChanges;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import eu.wohlben.qits.maintenance.work.WorkQueue;
@@ -77,7 +78,11 @@ public class UpstreamReplan {
         () -> replanConsumers(ecosystem, name));
   }
 
-  /** Every consumer of one dependency, each open request of each re-planned. */
+  /**
+   * Every consumer of one dependency, each open request of each re-planned. Only an INTERNAL pin
+   * makes a consumer: the bump never moves an EXTERNAL one (qits-1164), so its latest moving can
+   * change no plan.
+   */
   public void replanConsumers(Ecosystem ecosystem, String name) {
     if (!dependencyBump.enabled()) {
       return;
@@ -86,7 +91,7 @@ public class UpstreamReplan {
     for (MtPin pin : store.allPins()) {
       if (ecosystem.wireName().equals(pin.ecosystem)
           && name.equals(pin.name)
-          && PendingChanges.kindOf(pin).actionable()) {
+          && PendingChanges.kindOf(pin) == PinKind.INTERNAL) {
         consumers.add(pin.repository);
       }
     }

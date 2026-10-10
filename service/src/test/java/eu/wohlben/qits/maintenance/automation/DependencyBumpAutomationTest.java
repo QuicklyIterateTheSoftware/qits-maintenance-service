@@ -5,7 +5,6 @@ import static eu.wohlben.qits.maintenance.automation.AutomationFixture.EVENTSTRE
 import static eu.wohlben.qits.maintenance.automation.AutomationFixture.FOLD_A;
 import static eu.wohlben.qits.maintenance.automation.AutomationFixture.FOLD_B;
 import static eu.wohlben.qits.maintenance.automation.AutomationFixture.FOLD_C;
-import static eu.wohlben.qits.maintenance.automation.AutomationFixture.QUARKUS_BOM;
 import static eu.wohlben.qits.maintenance.automation.AutomationFixture.REQUEST;
 import static eu.wohlben.qits.maintenance.automation.AutomationFixture.STALE_POM;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -146,8 +145,8 @@ class DependencyBumpAutomationTest {
   // --- planning at the fold --------------------------------------------------------------------
 
   /**
-   * A stale INTERNAL pin at the fold is planned and dispatched; the external one is not, because a
-   * person opened this request. The DERIVED screenshots WAIT and store nothing, the kinds that do
+   * A stale INTERNAL pin at the fold is planned and dispatched; the external one is not, because the
+   * bump never moves an external pin (qits-1164). The DERIVED screenshots WAIT and store nothing, the kinds that do
    * not apply are listed with their reason — and the payload carries the MaintenanceBump entry shape
    * and the one file it touches.
    */
@@ -263,11 +262,11 @@ class DependencyBumpAutomationTest {
   }
 
   /**
-   * On a MAIN-ONLY request the external upgrade rides too — and carries
-   * no {@code changelog} key at all, while the internal one beside it names its range.
+   * A MAIN-ONLY request plans what a person's does (qits-1164): the internal upgrade, naming its
+   * changelog range, and never the external one beside it.
    */
   @Test
-  void anExternalChangeCarriesNoChangelog() throws Exception {
+  void aMainOnlyRequestCarriesTheInternalUpgradeOnly() throws Exception {
     Fixture.scriptChangelogs(peers, "qits-eventstream", "2026.821.3", "2026.811.1");
     AutomationFixture.scriptManifests(peers, FOLD_A, STALE_POM, null);
     store.recordOpenedRequest(
@@ -276,17 +275,12 @@ class DependencyBumpAutomationTest {
 
     assertEquals(1, triggers().size(), triggers().toString());
     JsonNode changes = JSON.readTree(triggers().getFirst()).path("payload").path("changes");
-    assertEquals(2, changes.size(), changes.toString());
-    for (JsonNode change : changes) {
-      if (QUARKUS_BOM.equals(change.path("name").asText())) {
-        assertFalse(change.has("changelog"), "an external change names none: " + change);
-      } else {
-        assertEquals(EVENTSTREAM, change.path("name").asText());
-        assertEquals(
-            JSON.readTree("{\"repository\":\"qits-eventstream\",\"versions\":[\"2026.821.3\"]}"),
-            change.get("changelog"));
-      }
-    }
+    assertEquals(1, changes.size(), changes.toString());
+    JsonNode change = changes.get(0);
+    assertEquals(EVENTSTREAM, change.path("name").asText());
+    assertEquals(
+        JSON.readTree("{\"repository\":\"qits-eventstream\",\"versions\":[\"2026.821.3\"]}"),
+        change.get("changelog"));
   }
 
   /**
@@ -313,11 +307,11 @@ class DependencyBumpAutomationTest {
   }
 
   /**
-   * EXTERNAL upgrades are planned only in a MAIN-ONLY request: a legacy group bump's request (a
-   * {@code maintenance/<group>} branch) gets internal pins only, as a person's does.
+   * EXTERNAL upgrades are never planned (qits-1164): not in a legacy group bump's request (a {@code
+   * maintenance/<group>} branch), and not in the MAIN-ONLY request the dispatcher opens.
    */
   @Test
-  void externalUpgradesArePlannedOnlyInAMainOnlyRequest() {
+  void externalUpgradesAreNeverPlanned() {
     AutomationFixture.scriptManifests(peers, FOLD_A, STALE_POM, null);
 
     store.recordOpenedRequest(
@@ -327,7 +321,7 @@ class DependencyBumpAutomationTest {
 
     store.recordOpenedRequest(
         REQUEST, Fixture.REPOSITORY, "main", MtReleaseRequest.MAIN_ONLY, null, Instant.now());
-    assertEquals(List.of(EVENTSTREAM, QUARKUS_BOM), planned(), "main-only: external too");
+    assertEquals(List.of(EVENTSTREAM), planned(), "main-only: internal only");
   }
 
   /** What the bump plans at fold A for the request, without opening anything. */
