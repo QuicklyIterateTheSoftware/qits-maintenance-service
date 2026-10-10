@@ -412,17 +412,24 @@ public class ReleaseRequestClient {
    */
   public record Cut(String id, String version, String state, String publish) {
 
-    /** The states in which a cut request will never run its publish again. */
-    private static final Set<String> CLOSED = Set.of("FINALIZED", "OBSOLETE", "WITHDRAWN");
+    /**
+     * The states in which a cut request closed WITHOUT completing its release, and so will never
+     * run its publish again (qits-1133). FINALIZED is deliberately not one: it is a release that
+     * completed, so a changelog missing after it is a publish that broke — and the 2026-09 requests
+     * that FINALIZED before the pipeline recorded its phases answer no {@code PUBLISH} phase at all
+     * (measured: 17 of qits-maintenance-service's 90), which must not read as "published nothing".
+     */
+    private static final Set<String> CLOSED = Set.of("OBSOLETE", "WITHDRAWN");
 
     /**
-     * <b>Whether this release published nothing, for good.</b> The request is closed, so no retry
-     * can still publish it, and no publish run of it finished: its newest run was CANCELLED (a later
-     * request superseded it mid-run), or none ever began.
+     * <b>Whether this release published nothing, for good.</b> The request closed without completing
+     * (OBSOLETE or WITHDRAWN), so no retry can still publish it, and no publish run of it finished:
+     * its newest run was CANCELLED (a later request superseded it mid-run), or none ever began.
      *
-     * <p>A run that finished, green or red, is not this case. It ran, so a changelog missing after
-     * it is a publish that broke. A RELEASED request is not this case either, cancelled or not: a
-     * retry of its run can still publish.
+     * <p>A run that finished, green or red, is not this case — an OBSOLETE request whose publish
+     * went green is common (three of qits-maintenance-service's, measured 2026-10-10). It ran, so a
+     * changelog missing after it is a publish that broke. A RELEASED request is not this case
+     * either, cancelled or not: a retry of its run can still publish. Nor is a FINALIZED one.
      */
     public boolean publishedNothing() {
       return state != null

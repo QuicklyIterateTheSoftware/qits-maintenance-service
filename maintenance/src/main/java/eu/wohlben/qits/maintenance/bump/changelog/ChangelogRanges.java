@@ -67,7 +67,12 @@ import org.jboss.logging.Logger;
  *       it. qits-projects' history of the repository ({@link ReleaseRequestClient#history}) says so
  *       per version ({@link ReleaseRequestClient.Cut#publishedNothing}), and such a version is left
  *       out of the range: it has no changelog, and nothing can ever publish one (only a CI run of
- *       that release may). The history is read only when a changelog is missing.
+ *       that release may). The history is read only when a changelog is missing. <b>Its commits
+ *       are then in no changelog at all</b>: the next release's changelog lists the commits since
+ *       the previous TAG, not since the previous publish (measured, qits-maintenance-service
+ *       2026.1010.124627 lists none of 2026.1010.120523's). That gap belongs to the composer;
+ *       failing the range for it here would hold every consumer for ever, since nothing can
+ *       publish the missing changelog after the fact.
  *   <li><b>Every other candidate the store did not publish is a PROBLEM</b> naming the repository
  *       and the version: every release publishes one, so that release's publish did not complete.
  *       That covers a publish run that finished, green or red, without the changelog; a release

@@ -493,4 +493,44 @@ class ChangelogRangesTest {
 
     assertTrue(historyAsked.isEmpty(), "asked: " + historyAsked);
   }
+
+  /**
+   * THE WRAPPER'S LIVE CASE (qits-1133): the estate-pins gitlink of qits-maintenance-service moved
+   * from the commit 2026.1010.112716 was cut from to 2026.1010.124627, across 2026.1010.120523,
+   * whose request d9d80cb3 went OBSOLETE with its PUBLISH run CANCELLED.
+   */
+  @Test
+  void aGitlinkRangeAcrossAnObsoleteTagCarriesOnlyThePublishedReleases() {
+    released("qits-ci-frontend", "2026.1010.112716", SHA_A);
+    released("qits-ci-frontend", "2026.1010.120523", SHA_B);
+    released("qits-ci-frontend", "2026.1010.124627", SHA_C);
+    published("qits-ci-frontend", "2026.1010.112716", "2026.1010.124627");
+    cut("qits-ci-frontend", "2026.1010.124627", "FINALIZED", "SUCCESS");
+    cut("qits-ci-frontend", "2026.1010.120523", "OBSOLETE", "CANCELLED");
+    cut("qits-ci-frontend", "2026.1010.112716", "FINALIZED", "SUCCESS");
+
+    Change change = gitlink(SHA_A, "2026.1010.124627");
+    ChangelogRanges.Result result = resolve(change);
+
+    assertEquals(List.of(), result.problems());
+    assertFalse(result.transientFailure());
+    assertEquals(
+        new ChangelogRange("qits-ci-frontend", List.of("2026.1010.124627")),
+        result.ranges().get(change));
+  }
+
+  /**
+   * A FINALIZED request with no PUBLISH phase on record completed its release all the same, so its
+   * missing changelog is a broken publish (qits-893's rule), not a release that published nothing.
+   */
+  @Test
+  void aFinalizedReleaseWithNoPublishPhaseMissingItsChangelogStillFails() {
+    released(REPO, "2026.1002.1", SHA_B);
+    published(REPO, "2026.1001.1", "2026.1003.1");
+    cut(REPO, "2026.1002.1", "FINALIZED", null);
+
+    ChangelogRanges.Result result = resolve(maven("2026.1001.1", "2026.1003.1"));
+
+    assertEquals(List.of(HOLE), result.problems());
+  }
 }

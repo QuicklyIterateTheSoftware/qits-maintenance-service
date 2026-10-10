@@ -53,7 +53,6 @@ class ReleaseRequestHistoryTest {
     assertTrue(new ReleaseRequestClient.Cut("a", "v", "OBSOLETE", "CANCELLED").publishedNothing());
     assertTrue(new ReleaseRequestClient.Cut("a", "v", "WITHDRAWN", null).publishedNothing());
     assertTrue(new ReleaseRequestClient.Cut("a", "v", "OBSOLETE", null).publishedNothing());
-    assertTrue(new ReleaseRequestClient.Cut("a", "v", "FINALIZED", null).publishedNothing());
   }
 
   @Test
@@ -65,5 +64,15 @@ class ReleaseRequestHistoryTest {
     assertFalse(new ReleaseRequestClient.Cut("a", "v", "RELEASED", null).publishedNothing());
     assertFalse(new ReleaseRequestClient.Cut("a", "v", "OBSOLETE", "RUNNING").publishedNothing());
     assertFalse(new ReleaseRequestClient.Cut("a", "v", null, null).publishedNothing());
+  }
+
+  /**
+   * FINALIZED is a release that completed, phases or not: the requests finalized before the
+   * pipeline recorded phases answer none, and a missing changelog after one is a broken publish.
+   */
+  @Test
+  void aFinalizedRequestNeverPublishedNothing() {
+    assertFalse(new ReleaseRequestClient.Cut("a", "v", "FINALIZED", null).publishedNothing());
+    assertFalse(new ReleaseRequestClient.Cut("a", "v", "FINALIZED", "CANCELLED").publishedNothing());
   }
 }
