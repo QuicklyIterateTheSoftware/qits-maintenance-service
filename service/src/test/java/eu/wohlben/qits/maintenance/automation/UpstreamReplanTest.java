@@ -14,8 +14,9 @@ import eu.wohlben.qits.maintenance.api.Fixture;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
 import eu.wohlben.qits.maintenance.bump.BumpDispatcher;
 import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
-import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto;
+import eu.wohlben.qits.maintenance.config.UpstreamSwitch;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto.AutomationDto;
+import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto;
 import eu.wohlben.qits.maintenance.entity.MtBump;
 import eu.wohlben.qits.maintenance.entity.MtReleaseRequest;
 import eu.wohlben.qits.maintenance.model.BumpMode;
@@ -45,7 +46,8 @@ import org.junit.jupiter.api.Test;
  * <b>Upstream publication</b> (qits-1133): the "latest moved" hook re-planning an open request's
  * dependency bump, the starvation guard, the main-only LOWEST request the dispatcher opens where no
  * request is open, and its withdrawal when its pre-run finds nothing — all behind {@code
- * qits.maintenance.pre-run.upstream.enabled}, which ships off and is switched on here per method.
+ * qits.maintenance.pre-run.upstream.enabled}, which ships on since the cutover (R2); every method
+ * still switches it explicitly, so the off arm is pinned too.
  */
 @QuarkusTest
 class UpstreamReplanTest {
@@ -134,6 +136,8 @@ class UpstreamReplanTest {
   /** Off — the shipped default — the hook asks nobody anything and opens nothing. */
   @Test
   void withTheSwitchOffNothingIsReplanned() {
+    // Shipped ON since the cutover (qits-1133 R2); off is the emergency position.
+    UpstreamSwitch.install(config, false);
     listing("PENDING", "PENDING");
 
     latestMoved();

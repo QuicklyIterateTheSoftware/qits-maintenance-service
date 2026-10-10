@@ -7,6 +7,7 @@ import eu.wohlben.qits.maintenance.entity.MtBump;
 import eu.wohlben.qits.maintenance.entity.MtGroup;
 import eu.wohlben.qits.maintenance.entity.MtRepository;
 import eu.wohlben.qits.maintenance.error.BumpDisabledException;
+import eu.wohlben.qits.maintenance.error.GroupBumpsRetiredException;
 import eu.wohlben.qits.maintenance.error.NoSuchGroupException;
 import eu.wohlben.qits.maintenance.error.NoSuchRepositoryException;
 import eu.wohlben.qits.maintenance.githost.GitHostReader;
@@ -104,6 +105,19 @@ import org.jboss.logging.Logger;
  * AutomationService#run} and the {@code POST /release-requests/{id}/automations/{kind}/runs} door
  * are the one address for a manual re-run now. Neither kind writes an {@code mt_branch} row or asks
  * for a release: the request the commit belongs to is already open.
+ *
+ * <h2>Since the cutover the group half writes nothing (qits-1133 R2)</h2>
+ *
+ * <p><b>With {@code qits.maintenance.pre-run.upstream.enabled} on — the shipped default — no path
+ * here writes a {@code maintenance/<group>} branch.</b> {@link #request} refuses 410 (the door, the
+ * ungated 02:00 loop and the dispatcher all come through it), {@link #dispatch} closes a GROUP row
+ * left REQUESTED by the release before without triggering anything, and a group bump's release ask
+ * is closed as converged rather than made — a RUNNING row at the cutover is still followed to its
+ * ending, because its run already left, but nothing asks to release what it pushed: {@link
+ * LegacyGroupBranchSweep} withdraws the bump-only request and deletes the branch instead. The one
+ * MaintenanceBump trigger left is {@code AutomationService}'s {@code estate-pins} write onto a
+ * request's own source branches, under the {@code targeted} label. Turning the key off restores
+ * every path exactly as it was, until R5 removes them.
  */
 @ApplicationScoped
 public class BumpService {
@@ -142,8 +156,12 @@ public class BumpService {
    * @throws NoSuchGroupException that repository declares no such group — a 404
    * @throws eu.wohlben.qits.maintenance.error.BumpAlreadyActiveException one is going — a 409
    * @throws BumpDisabledException {@code qits.maintenance.bump.enabled} is false — a 409
+   * @throws GroupBumpsRetiredException the cutover switch is on — a 410 (qits-1133)
    */
   public UUID request(String repository, String group, BumpTrigger trigger) {
+    if (groupBumpsRetired()) {
+      throw new GroupBumpsRetiredException();
+    }
     if (!config.bumpEnabled()) {
       throw new BumpDisabledException();
     }
@@ -198,6 +216,13 @@ public class BumpService {
       // Its own engine: carry-over asked again, the per-branch and estate-wide caps, and a payload
       // shaped by the kind's target.
       automations.dispatch(bump);
+      return;
+    }
+    if (groupBumpsRetired()) {
+      // A GROUP ROW LEFT REQUESTED ACROSS THE CUTOVER (qits-1133 R2): closed without a trigger, and
+      // closed for good — the converged sentinel keeps the release sweep off it. Its pins are the
+      // dependency-bump automation's now.
+      retire(bump, "it was still waiting to be sent");
       return;
     }
     List<Change> changes = changes(bump);
@@ -276,6 +301,25 @@ public class BumpService {
         LOG.warnf("The bump %s failed at the trigger: %s", id, result.message());
       }
     }
+  }
+
+  /**
+   * Whether group bumps are retired — the cutover switch (qits-1133 R2). One question, asked by
+   * every path that could otherwise write or release a {@code maintenance/<group>} branch.
+   */
+  public boolean groupBumpsRetired() {
+    return config.preRunUpstreamEnabled();
+  }
+
+  /** Closes a group row the cutover reached before it was sent: nothing was written. */
+  private void retire(MtBump bump, String why) {
+    String message =
+        "group bumps are retired (qits-1133) and " + why + "; the dependency-bump automation plans"
+            + " these pins now";
+    store.bumpFinished(bump.id, BumpStatus.NOTHING_TO_DO, null, message, Instant.now());
+    store.bumpReleaseAsked(bump.id, ReleaseRequestClient.CONVERGED, message);
+    LOG.infof("The group bump %s of %s/%s was not sent: %s", bump.id, bump.repository,
+        bump.groupName, message);
   }
 
   /**
@@ -500,6 +544,11 @@ public class BumpService {
       // MAKES the ask should be the one that cannot be talked into it.
       return;
     }
+    if (groupBumpsRetired()) {
+      // Closed as converged without reading a head (qits-1133 R2): see askForRelease.
+      askForRelease(bump);
+      return;
+    }
     Optional<MtBranch> branch = store.branch(bump.repository, bump.groupName);
     String state = branch.map(row -> row.state).orElse(null);
     if (!BranchState.PUSHED.name().equals(state)) {
@@ -553,6 +602,19 @@ public class BumpService {
    * then asks with it.
    */
   private void askForRelease(MtBump bump) {
+    if (groupBumpsRetired()) {
+      // NOTHING ASKS TO RELEASE A GROUP BRANCH AFTER THE CUTOVER (qits-1133 R2). A run that was
+      // already going when the switch flipped still ends and records its head, but what it pushed
+      // is the legacy sweep's to withdraw and delete, never a fresh request's to carry.
+      store.bumpReleaseAsked(
+          bump.id,
+          ReleaseRequestClient.CONVERGED,
+          note(bump, "group bumps are retired (qits-1133); " + bump.branch
+              + " is swept, not released"));
+      LOG.infof("The bump %s asks for no release of %s: group bumps are retired", bump.id,
+          bump.branch);
+      return;
+    }
     Optional<MtRepository> repository = store.repository(bump.repository);
     String repoId = repository.map(row -> row.catalogId).orElse(null);
     if (repoId == null || repoId.isBlank()) {

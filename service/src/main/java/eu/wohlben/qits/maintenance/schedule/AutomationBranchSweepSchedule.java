@@ -1,6 +1,7 @@
 package eu.wohlben.qits.maintenance.schedule;
 
 import eu.wohlben.qits.maintenance.automation.AutomationBranchSweep;
+import eu.wohlben.qits.maintenance.bump.LegacyGroupBranchSweep;
 import eu.wohlben.qits.maintenance.work.WorkQueue;
 import io.quarkus.scheduler.Scheduled;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -17,11 +18,18 @@ import jakarta.inject.Inject;
  * dispatch writes and talks to the git host, and both belong behind the one thread (see "The
  * worker"). A task never throws out of the queue, so a failed pass is a log line and the next hour
  * retries it.
+ *
+ * <p><b>The cutover sweep rides the same clock (qits-1133 R2).</b> {@link LegacyGroupBranchSweep}
+ * withdraws the bump-only requests standing on {@code maintenance/<group>} branches and deletes the
+ * branches; its boot pass is the cutover itself, and every hourly pass after it finds nothing — it is
+ * idempotent by construction, and does nothing with the switch off.
  */
 @ApplicationScoped
 public class AutomationBranchSweepSchedule {
 
   @Inject AutomationBranchSweep sweep;
+
+  @Inject LegacyGroupBranchSweep legacy;
 
   @Inject WorkQueue queue;
 
@@ -31,5 +39,6 @@ public class AutomationBranchSweepSchedule {
       concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
   void onSchedule() {
     queue.submit("sweep the closed requests' automation branches", sweep::sweep);
+    queue.submit("sweep the retired maintenance/<group> branches", legacy::sweep);
   }
 }

@@ -1018,10 +1018,11 @@ public class BumpDispatcher {
         refusals.add(new Refused(row.name, group, changes.size()));
         continue;
       }
-      Hold hold = hold(row, group, changes);
-      if (config.preRunUpstreamEnabled() && hold == Hold.FREE) {
-        hold = upstreamHold(row, changes);
-      }
+      // AFTER THE CUTOVER THE GROUP BRANCH IS NOTHING TO WAIT FOR (qits-1133 R2): the group hold
+      // reads the newest maintenance/<group> bump and its request, which the legacy sweep withdraws
+      // and deletes — a hold on it would keep a repository from its main-only request for ever.
+      Hold hold =
+          config.preRunUpstreamEnabled() ? upstreamHold(row, changes) : hold(row, group, changes);
       if (hold.stalled() != null) {
         stalled.add(hold.stalled());
         continue;

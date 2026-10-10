@@ -267,8 +267,25 @@ keeps externals a person's press. Its payload carries `changes` in the `Maintena
 files they touch; every own-branch join is sent at `LOWEST`. WAITING and NOT_APPLICABLE reach the
 wire only when the trigger body `accepts` them; otherwise the answer is the pre-1133 one. The
 upstream hook (`automation/UpstreamReplan`) and the dispatcher's main-only LOWEST requests are
-behind `qits.maintenance.pre-run.upstream.enabled`, which ships false; off, group dispatch is
-untouched.
+behind `qits.maintenance.pre-run.upstream.enabled`, which ships TRUE since R2 (the cutover); off,
+the emergency position, group dispatch is untouched.
+
+**WITH THE SWITCH ON, NOTHING WRITES A `maintenance/<group>` BRANCH (qits-1133 R2).**
+`BumpService.request` throws `GroupBumpsRetiredException` (410) — the door, the ungated 02:00 loop
+and the dispatcher all come through it; `BumpService.dispatch` closes a GROUP row left REQUESTED
+without a trigger (NOTHING_TO_DO, `converged`); `askForRelease` closes the ask as `converged`, so a
+run going at the cutover ends but is never released; and the dispatcher reads `upstreamHold` only,
+never the group hold. The only `CiClient.trigger` with the MaintenanceBump event left is
+`AutomationService.dispatchSourceBranch` (`estate-pins`, label `targeted`, the request's own source
+branches). `bump/LegacyGroupBranchSweep` rides `AutomationBranchSweepSchedule`: per repository it lists
+the branches, retires `mt_branch` rows whose branch is gone, and for each `maintenance/<group>` (one
+segment — never `automations/` or `baselines/`) withdraws every open request whose BRANCH sources
+are all main or `maintenance/` (reason naming qits-1133), leaves a person's open, deletes the branch
+through `GitHostRefs` and marks the row `RETIRED` — terminal, `recordBranch` never rewrites it. It
+waits rather than guesses: an active group bump, a RELEASED request naming the branch, an unreadable
+read or an untaken withdrawal keeps the branch for the next pass. The legacy group suites pin the
+switch OFF through `config/UpstreamSwitch` (test scope), and `StoryProfile` sets it off too, until R5
+removes the group path and its stories.
 
 **AN OWN-BRANCH AUTOMATION'S BRANCH IS DELETED BY THIS SERVICE ONCE ITS REQUEST IS CLOSED** — the
 one ref this service writes itself, confined to `maintenance/automations/`. A request that releases

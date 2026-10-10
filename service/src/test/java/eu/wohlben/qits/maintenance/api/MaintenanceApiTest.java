@@ -12,6 +12,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.maintenance.bump.BumpService;
+import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
+import eu.wohlben.qits.maintenance.config.UpstreamSwitch;
 import eu.wohlben.qits.maintenance.peer.FakePeers;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import eu.wohlben.qits.maintenance.work.WorkQueue;
@@ -22,6 +24,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -61,8 +64,22 @@ class MaintenanceApiTest {
 
   @Inject WorkQueue queue;
 
+  @Inject MaintenanceConfig config;
+
+  /** The real bean behind the proxy, put back after every method: a mock lives for the run. */
+  private MaintenanceConfig realConfig;
+
+  @AfterEach
+  void restoreTheConfig() {
+    queue.awaitIdle(Duration.ofSeconds(30));
+    UpstreamSwitch.restore(realConfig);
+  }
+
   @BeforeEach
   void scriptThePeers() {
+    // THE LEGACY GROUP PATH, pinned with the cutover switch OFF (qits-1133 R2): it ships on, which
+    // retires group bumps; off is the emergency position that restores this path until R5.
+    realConfig = UpstreamSwitch.install(config, false);
     // The class shares one database, and an active bump row holds its branch's lock — the next
     // test would be answered 409 by the last one's leftovers. Drain the worker first, or the row
     // being deleted is one a task still holds and the delete lands between its read and its write.

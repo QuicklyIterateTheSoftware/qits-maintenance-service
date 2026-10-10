@@ -21,8 +21,9 @@ import eu.wohlben.qits.maintenance.api.InventoryReset;
 import eu.wohlben.qits.maintenance.bump.BumpService;
 import eu.wohlben.qits.maintenance.bump.CiClient;
 import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
-import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto;
+import eu.wohlben.qits.maintenance.config.UpstreamSwitch;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto.AutomationDto;
+import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto;
 import eu.wohlben.qits.maintenance.entity.MtBump;
 import eu.wohlben.qits.maintenance.entity.MtReleaseRequest;
 import eu.wohlben.qits.maintenance.entity.MtRepository;
@@ -30,14 +31,12 @@ import eu.wohlben.qits.maintenance.latest.GitlinkSha;
 import eu.wohlben.qits.maintenance.model.BumpStatus;
 import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.ScanScope;
-import eu.wohlben.qits.maintenance.pending.Change;
 import eu.wohlben.qits.maintenance.peer.FakePeers;
+import eu.wohlben.qits.maintenance.pending.Change;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import eu.wohlben.qits.maintenance.scan.ScanService;
 import eu.wohlben.qits.maintenance.scan.ScanTrigger;
 import eu.wohlben.qits.maintenance.work.WorkQueue;
-import io.quarkus.arc.ClientProxy;
-import io.quarkus.test.junit.QuarkusMock;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import java.time.Duration;
@@ -237,15 +236,15 @@ class DependencyBumpAutomationTest {
 
     store.recordOpenedRequest(
         REQUEST, Fixture.REPOSITORY, "main", MtReleaseRequest.MAIN_ONLY, null, Instant.now());
-    assertEquals(List.of(EVENTSTREAM), planned(), "main-only, switch off: internal only");
+    // Shipped ON since the cutover (qits-1133 R2).
+    assertEquals(
+        List.of(EVENTSTREAM, QUARKUS_BOM), planned(), "main-only, switch on: external too");
 
-    MaintenanceConfig real = ClientProxy.unwrap(config);
-    QuarkusMock.installMockForType(new UpstreamSwitch(real), MaintenanceConfig.class);
+    MaintenanceConfig real = UpstreamSwitch.install(config, false);
     try {
-      assertEquals(
-          List.of(EVENTSTREAM, QUARKUS_BOM), planned(), "main-only, switch on: external too");
+      assertEquals(List.of(EVENTSTREAM), planned(), "main-only, switch off: internal only");
     } finally {
-      QuarkusMock.installMockForType(real, MaintenanceConfig.class);
+      UpstreamSwitch.restore(real);
     }
   }
 

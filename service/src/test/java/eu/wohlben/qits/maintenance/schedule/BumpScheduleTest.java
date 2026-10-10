@@ -1,24 +1,27 @@
 package eu.wohlben.qits.maintenance.schedule;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.maintenance.api.Fixture;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
 import eu.wohlben.qits.maintenance.bump.BumpDispatcher;
 import eu.wohlben.qits.maintenance.bump.BumpService;
+import eu.wohlben.qits.maintenance.bump.CiClient;
 import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
+import eu.wohlben.qits.maintenance.config.UpstreamSwitch;
 import eu.wohlben.qits.maintenance.entity.MtBump;
 import eu.wohlben.qits.maintenance.model.BumpStatus;
 import eu.wohlben.qits.maintenance.model.BumpTrigger;
 import eu.wohlben.qits.maintenance.model.RepositoryStatus;
 import eu.wohlben.qits.maintenance.model.ScanScope;
 import eu.wohlben.qits.maintenance.peer.FakePeers;
+import eu.wohlben.qits.maintenance.peer.PeerTarget;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import eu.wohlben.qits.maintenance.scan.ScanService;
 import eu.wohlben.qits.maintenance.scan.ScanTrigger;
 import eu.wohlben.qits.maintenance.work.WorkQueue;
-import io.quarkus.arc.ClientProxy;
 import io.quarkus.test.junit.QuarkusMock;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
@@ -74,7 +77,9 @@ class BumpScheduleTest {
 
   @BeforeEach
   void scriptThePeers() {
-    realConfig = ClientProxy.unwrap(config);
+    // THE LEGACY GROUP PATH, pinned with the cutover switch OFF (qits-1133 R2): it ships on, which
+    // retires group bumps; off is the emergency position that restores this path until R5.
+    realConfig = UpstreamSwitch.install(config, false);
     queue.awaitIdle(Duration.ofSeconds(30));
     inventory.clear();
     peers.reset();
@@ -295,5 +300,57 @@ class BumpScheduleTest {
     bumps.request(Fixture.REPOSITORY, "dependencies", BumpTrigger.MANUAL);
     assertEquals(
         1, bumpsOf("dependencies").size(), "the gate is about the schedule and never about a press");
+  }
+
+  /**
+   * <b>The ungated loop is a group dispatch, and the cutover closes it (qits-1133 R2).</b> {@code
+   * bump.dispatch.gated=false} brings back the old loop-and-fire — which with the switch on asks
+   * for nothing, while the same night with the switch off still asks for the internal half.
+   */
+  @Test
+  void theUngatedNightAsksForNothingOnceGroupBumpsAreRetired() {
+    scan();
+
+    QuarkusMock.installMockForType(ungated(true), MaintenanceConfig.class);
+    schedule.onInternalSchedule();
+    queue.awaitIdle(Duration.ofSeconds(30));
+    assertTrue(bumpsOf("dependencies").isEmpty(), "switch on: the clock asked for nothing");
+    assertFalse(
+        peers.called(PeerTarget.CI, CiClient.TRIGGER_PATH), "and nothing was sent to qits-ci");
+
+    QuarkusMock.installMockForType(ungated(false), MaintenanceConfig.class);
+    schedule.onInternalSchedule();
+    queue.awaitIdle(Duration.ofSeconds(30));
+    assertEquals(1, bumpsOf("dependencies").size(), "switch off: the old loop is back");
+  }
+
+  /** The ungated clock, with the cutover switch in this position. */
+  private static MaintenanceConfig ungated(boolean upstream) {
+    return new MaintenanceConfig() {
+      @Override
+      public boolean preRunUpstreamEnabled() {
+        return upstream;
+      }
+
+      @Override
+      public boolean bumpDispatchGated() {
+        return false;
+      }
+
+      @Override
+      public boolean bumpInternalAuto() {
+        return true;
+      }
+
+      @Override
+      public boolean bumpEnabled() {
+        return true;
+      }
+
+      @Override
+      public String environment() {
+        return "dev";
+      }
+    };
   }
 }
