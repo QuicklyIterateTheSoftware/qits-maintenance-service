@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sun.net.httpserver.HttpServer;
+import eu.wohlben.qits.maintenance.bump.ReleaseRequestClient;
 import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.pending.Change;
 import eu.wohlben.qits.maintenance.peer.TestPeerClient;
@@ -45,6 +46,15 @@ class ChangelogRangesTest {
   private final Map<String, String> producers = new HashMap<>();
   private final Map<String, List<ChangelogRanges.Release>> ledger = new HashMap<>();
   private ChangelogClient client;
+
+  /** Repository → what qits-projects' history says of its cut requests. */
+  private final Map<String, List<ReleaseRequestClient.Cut>> history = new HashMap<>();
+
+  /** Repositories whose history cannot be read. */
+  private final List<String> historyUnreadable = new ArrayList<>();
+
+  /** Every repository whose history was asked, in order. */
+  private final List<String> historyAsked = new ArrayList<>();
 
   @BeforeEach
   void start() throws Exception {
@@ -122,7 +132,24 @@ class ChangelogRangesTest {
           public ChangelogClient.Result published(String repository) {
             return client.versions(repository);
           }
+
+          @Override
+          public ChangelogRanges.Unpublished unpublished(String repository) {
+            historyAsked.add(repository);
+            if (historyUnreadable.contains(repository)) {
+              return new ChangelogRanges.Unpublished(java.util.Set.of(), "HTTP 503");
+            }
+            return new ChangelogRanges.Unpublished(
+                ChangelogRanges.neverPublished(history.getOrDefault(repository, List.of())), null);
+          }
         });
+  }
+
+  /** A request that cut {@code version}, in {@code state}, whose newest publish run ended {@code publish}. */
+  private void cut(String repository, String version, String state, String publish) {
+    history
+        .computeIfAbsent(repository, key -> new ArrayList<>())
+        .add(new ReleaseRequestClient.Cut("rr-" + version, version, state, publish));
   }
 
   private static Change maven(String from, String to) {
@@ -330,5 +357,140 @@ class ChangelogRangesTest {
 
     assertEquals(2, result.ranges().size());
     assertEquals(1, asked.size());
+  }
+
+  // --- tagged, and published nothing (qits-1156) ------------------------------------------------
+
+  private static final String HOLE =
+      "no changelog for qits-eventstream 2026.1002.1 (@changelog/qits-eventstream): every"
+          + " release publishes one, so this release's publish did not complete";
+
+  /**
+   * THE LIVE CASE: 2026.1002.1 was tagged, then a later request superseded its request mid-publish
+   * and the run was cancelled. It published nothing, so it is skipped rather than reported.
+   */
+  @Test
+  void aTaggedReleaseWhoseRequestWentObsoleteMidPublishIsSkipped() {
+    released(REPO, "2026.1001.1", SHA_A);
+    released(REPO, "2026.1002.1", SHA_B);
+    released(REPO, "2026.1003.1", SHA_C);
+    published(REPO, "2026.1001.1", "2026.1003.1");
+    cut(REPO, "2026.1002.1", "OBSOLETE", "CANCELLED");
+    cut(REPO, "2026.1003.1", "FINALIZED", "SUCCESS");
+
+    Change change = maven("2026.1001.1", "2026.1003.1");
+    ChangelogRanges.Result result = resolve(change);
+
+    assertEquals(List.of(), result.problems());
+    assertFalse(result.transientFailure());
+    assertEquals(new ChangelogRange(REPO, List.of("2026.1003.1")), result.ranges().get(change));
+  }
+
+  /** A request withdrawn after its tag, before any publish run began, published nothing too. */
+  @Test
+  void aTaggedReleaseWithdrawnBeforeItsPublishBeganIsSkipped() {
+    released(REPO, "2026.1002.1", SHA_B);
+    published(REPO, "2026.1001.1", "2026.1003.1");
+    cut(REPO, "2026.1002.1", "WITHDRAWN", null);
+
+    Change change = maven("2026.1001.1", "2026.1003.1");
+    ChangelogRanges.Result result = resolve(change);
+
+    assertEquals(List.of(), result.problems());
+    assertEquals(new ChangelogRange(REPO, List.of("2026.1003.1")), result.ranges().get(change));
+  }
+
+  /** The new pin itself published nothing: no changelog to carry, and no problem. */
+  @Test
+  void aNewPinThatPublishedNothingLeavesNoRange() {
+    published(REPO, "2026.1001.1");
+    cut(REPO, "2026.1002.1", "OBSOLETE", "CANCELLED");
+
+    ChangelogRanges.Result result = resolve(maven("2026.1001.1", "2026.1002.1"));
+
+    assertEquals(List.of(), result.problems());
+    assertTrue(result.ranges().isEmpty());
+  }
+
+  /** A publish run that FINISHED without the changelog broke, whether it went red or green. */
+  @Test
+  void aPublishRunThatFinishedWithoutTheChangelogStillFails() {
+    for (String[] shape :
+        List.of(
+            new String[] {"FINALIZED", "FAILED"},
+            new String[] {"OBSOLETE", "FAILED"},
+            new String[] {"OBSOLETE", "SUCCESS"},
+            new String[] {"FINALIZED", "SUCCESS"})) {
+      history.clear();
+      released(REPO, "2026.1002.1", SHA_B);
+      published(REPO, "2026.1001.1", "2026.1003.1");
+      cut(REPO, "2026.1002.1", shape[0], shape[1]);
+
+      ChangelogRanges.Result result = resolve(maven("2026.1001.1", "2026.1003.1"));
+
+      assertEquals(List.of(HOLE), result.problems(), String.join(" ", shape));
+      assertFalse(result.transientFailure());
+    }
+  }
+
+  /** A RELEASED request whose run was cancelled can still be retried, so its hole stays a problem. */
+  @Test
+  void aCancelledRunOfAStillReleasedRequestStillFails() {
+    released(REPO, "2026.1002.1", SHA_B);
+    published(REPO, "2026.1001.1", "2026.1003.1");
+    cut(REPO, "2026.1002.1", "RELEASED", "CANCELLED");
+
+    ChangelogRanges.Result result = resolve(maven("2026.1001.1", "2026.1003.1"));
+
+    assertEquals(List.of(HOLE), result.problems());
+  }
+
+  /** A version no request is known to have cut is a hole, as it always was. */
+  @Test
+  void aVersionTheHistoryDoesNotNameStillFails() {
+    released(REPO, "2026.1002.1", SHA_B);
+    published(REPO, "2026.1001.1", "2026.1003.1");
+    cut(REPO, "2026.1003.1", "FINALIZED", "SUCCESS");
+
+    ChangelogRanges.Result result = resolve(maven("2026.1001.1", "2026.1003.1"));
+
+    assertEquals(List.of(HOLE), result.problems());
+  }
+
+  /** One request of a version published, another published nothing: the version ran, so it fails. */
+  @Test
+  void aVersionOneOfWhoseRequestsRanStillFails() {
+    released(REPO, "2026.1002.1", SHA_B);
+    published(REPO, "2026.1001.1", "2026.1003.1");
+    cut(REPO, "2026.1002.1", "OBSOLETE", "CANCELLED");
+    cut(REPO, "2026.1002.1", "FINALIZED", "FAILED");
+
+    ChangelogRanges.Result result = resolve(maven("2026.1001.1", "2026.1003.1"));
+
+    assertEquals(List.of(HOLE), result.problems());
+  }
+
+  /** An unreadable qits-projects says nothing about the hole: retry, never fail and never skip. */
+  @Test
+  void anUnreadableHistoryIsATransientFailure() {
+    released(REPO, "2026.1002.1", SHA_B);
+    published(REPO, "2026.1001.1", "2026.1003.1");
+    historyUnreadable.add(REPO);
+
+    ChangelogRanges.Result result = resolve(maven("2026.1001.1", "2026.1003.1"));
+
+    assertTrue(result.transientFailure());
+    assertTrue(result.problems().isEmpty());
+    assertTrue(result.ranges().isEmpty());
+  }
+
+  /** With no changelog missing, qits-projects is never asked. */
+  @Test
+  void theHistoryIsReadOnlyWhenAChangelogIsMissing() {
+    published(REPO, "2026.1001.1", "2026.1002.1");
+
+    resolve(maven("2026.1001.1", "2026.1002.1"));
+
+    assertTrue(historyAsked.isEmpty(), "asked: " + historyAsked);
   }
 }

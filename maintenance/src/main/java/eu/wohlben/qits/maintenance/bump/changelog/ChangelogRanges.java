@@ -1,6 +1,7 @@
 package eu.wohlben.qits.maintenance.bump.changelog;
 
 import eu.wohlben.qits.maintenance.bump.Calver;
+import eu.wohlben.qits.maintenance.bump.ReleaseRequestClient;
 import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
 import eu.wohlben.qits.maintenance.control.ArtifactGraph;
 import eu.wohlben.qits.maintenance.entity.MtRelease;
@@ -14,6 +15,7 @@ import jakarta.inject.Inject;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -59,8 +61,18 @@ import org.jboss.logging.Logger;
  *       when {@code from < v <= to} (only {@code v == to} when the old version is unknown) and {@code
  *       v >= floor}, in {@link Calver#ORDER}. The union matters both ways: the ledger finds a release
  *       whose publish did not complete, and the listing covers a release the ledger never heard of.
- *   <li><b>A candidate the store did not publish is a PROBLEM</b> naming the repository and the
- *       version: every release publishes one, so that release's publish did not complete.
+ *   <li><b>A candidate the store did not publish is asked about once more</b> (qits-1156): a tag
+ *       is cut before its publish runs, so a release can be tagged and still publish NOTHING — its
+ *       request went OBSOLETE or WITHDRAWN before its publish run finished, the run cancelled with
+ *       it. qits-projects' history of the repository ({@link ReleaseRequestClient#history}) says so
+ *       per version ({@link ReleaseRequestClient.Cut#publishedNothing}), and such a version is left
+ *       out of the range: it has no changelog, and nothing can ever publish one (only a CI run of
+ *       that release may). The history is read only when a changelog is missing.
+ *   <li><b>Every other candidate the store did not publish is a PROBLEM</b> naming the repository
+ *       and the version: every release publishes one, so that release's publish did not complete.
+ *       That covers a publish run that finished, green or red, without the changelog; a release
+ *       still RELEASED, whose run a retry can still finish; and a version the history does not
+ *       name at all.
  *   <li>No candidate, no range — the change carries no {@code changelog} field.
  * </ol>
  *
@@ -86,6 +98,8 @@ public class ChangelogRanges {
 
   @Inject ChangelogClient changelogs;
 
+  @Inject ReleaseRequestClient releaseRequests;
+
   /**
    * What the changes of one bump carry.
    *
@@ -107,6 +121,21 @@ public class ChangelogRanges {
   /** One row of a repository's release ledger, as much of it as a range needs. */
   record Release(String version, String sha) {}
 
+  /**
+   * The versions of one repository that were tagged and published nothing (rule 7).
+   *
+   * @param versions those versions; empty when none is known to have published nothing
+   * @param error why qits-projects could not be read, or null — a RETRY, like an unreadable store
+   */
+  record Unpublished(Set<String> versions, String error) {
+
+    Unpublished {
+      versions = versions == null ? Set.of() : Set.copyOf(versions);
+    }
+
+    static final Unpublished NONE = new Unpublished(Set.of(), null);
+  }
+
   /** Everything the rules read, as a seam a plain unit test can replace. */
   interface Sources {
 
@@ -121,6 +150,9 @@ public class ChangelogRanges {
 
     /** Rule 4: the docs store's listing. */
     ChangelogClient.Result published(String repository);
+
+    /** Rule 7: the versions qits-projects says published nothing. */
+    Unpublished unpublished(String repository);
   }
 
   /** The ranges of one bump's changes, read from this deployment's store, graph and docs store. */
@@ -151,6 +183,21 @@ public class ChangelogRanges {
           public ChangelogClient.Result published(String repository) {
             return changelogs.versions(repository);
           }
+
+          @Override
+          public Unpublished unpublished(String repository) {
+            String catalogId = store.repository(repository).map(row -> row.catalogId).orElse(null);
+            if (catalogId == null || catalogId.isBlank()) {
+              // qits-projects is addressed by the catalog id; without one nothing says a release
+              // published nothing, so its missing changelog stays a problem.
+              return Unpublished.NONE;
+            }
+            ReleaseRequestClient.History history = releaseRequests.history(catalogId);
+            if (!history.readable()) {
+              return new Unpublished(Set.of(), history.error());
+            }
+            return new Unpublished(neverPublished(history.cuts()), null);
+          }
         });
   }
 
@@ -164,6 +211,7 @@ public class ChangelogRanges {
     Map<String, String> producers = null;
     Map<String, ChangelogClient.Result> published = new HashMap<>();
     Map<String, List<Release>> ledgers = new HashMap<>();
+    Map<String, Unpublished> unpublished = new HashMap<>();
 
     for (Change change : changes == null ? List.<Change>of() : changes) {
       // 1. Internal only.
@@ -255,7 +303,26 @@ public class ChangelogRanges {
         }
       }
 
-      // 7. Every candidate published.
+      // 7. Every candidate published — or published nothing, for good.
+      List<String> missing =
+          candidates.stream().filter(version -> !publishedVersions.contains(version)).toList();
+      if (!missing.isEmpty()) {
+        Unpublished nothing = unpublished.computeIfAbsent(repository, sources::unpublished);
+        if (nothing.error() != null) {
+          transientFailure = true;
+          LOG.warnf(
+              "The release requests of %s could not be read: %s", repository, nothing.error());
+          continue;
+        }
+        for (String version : missing) {
+          if (nothing.versions().contains(version)) {
+            candidates.remove(version);
+            LOG.infof(
+                "%s %s was tagged and published nothing, so a bump carries no changelog of it",
+                repository, version);
+          }
+        }
+      }
       for (String version : candidates) {
         if (!publishedVersions.contains(version)) {
           problems.add(
@@ -275,6 +342,20 @@ public class ChangelogRanges {
       }
     }
     return new Result(ranges, List.copyOf(problems), transientFailure);
+  }
+
+  /**
+   * The versions whose every cut request published nothing. A version cut by more than one request
+   * is skipped only when none of them published.
+   */
+  static Set<String> neverPublished(List<ReleaseRequestClient.Cut> cuts) {
+    Set<String> nothing = new HashSet<>();
+    Set<String> ran = new HashSet<>();
+    for (ReleaseRequestClient.Cut cut : cuts) {
+      (cut.publishedNothing() ? nothing : ran).add(cut.version());
+    }
+    nothing.removeAll(ran);
+    return nothing;
   }
 
   /**

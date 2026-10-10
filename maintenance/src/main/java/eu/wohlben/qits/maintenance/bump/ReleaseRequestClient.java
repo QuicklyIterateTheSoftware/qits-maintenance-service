@@ -401,6 +401,114 @@ public class ReleaseRequestClient {
     return new Listing(all, null);
   }
 
+  /**
+   * One request that CUT a version, off the repository's whole history (qits-1156).
+   *
+   * @param id the request
+   * @param version the version its tag is named after
+   * @param state its state word
+   * @param publish the state of its newest {@code PUBLISH} run ({@code pipeline.phases[]}), or null
+   *     where no publish run ever began
+   */
+  public record Cut(String id, String version, String state, String publish) {
+
+    /** The states in which a cut request will never run its publish again. */
+    private static final Set<String> CLOSED = Set.of("FINALIZED", "OBSOLETE", "WITHDRAWN");
+
+    /**
+     * <b>Whether this release published nothing, for good.</b> The request is closed, so no retry
+     * can still publish it, and no publish run of it finished: its newest run was CANCELLED (a later
+     * request superseded it mid-run), or none ever began.
+     *
+     * <p>A run that finished, green or red, is not this case. It ran, so a changelog missing after
+     * it is a publish that broke. A RELEASED request is not this case either, cancelled or not: a
+     * retry of its run can still publish.
+     */
+    public boolean publishedNothing() {
+      return state != null
+          && CLOSED.contains(state)
+          && (publish == null || "CANCELLED".equals(publish));
+    }
+  }
+
+  /**
+   * What a repository's whole history said.
+   *
+   * @param cuts every request that cut a version, newest first; empty when unread
+   * @param error why it could not be read, or null
+   */
+  public record History(List<Cut> cuts, String error) {
+
+    public History {
+      cuts = cuts == null ? List.of() : List.copyOf(cuts);
+    }
+
+    public boolean readable() {
+      return error == null;
+    }
+  }
+
+  /** The query that asks for every state, WITHDRAWN and OBSOLETE included. */
+  public static final String HISTORY_QUERY = "?state=all";
+
+  /**
+   * Every request of the repository that cut a version, with how its publish ended — {@code GET
+   * …/release-requests?state=all} (qits-1156). Read by {@code ChangelogRanges} only when a release
+   * has no changelog, to tell a release that published nothing from one whose publish broke.
+   *
+   * <p>A 404 is an empty history and no error: qits-projects knows no such repository, so nothing
+   * says the release published nothing, and the caller keeps its problem. Any other failure is
+   * unreadable, and the caller retries.
+   */
+  public History history(String repoId) {
+    String path = REQUESTS_PATH_PREFIX + encode(repoId) + REQUESTS_PATH_SUFFIX + HISTORY_QUERY;
+    PeerAnswer answer = peers.get(PeerTarget.PROJECTS, path).answer();
+    if (answer.notFound()) {
+      return new History(List.of(), null);
+    }
+    if (!answer.ok()) {
+      return new History(
+          List.of(),
+          "the release requests of " + repoId + " could not be read: " + answer.failure());
+    }
+    List<Cut> cuts = cuts(answer.json());
+    if (cuts == null) {
+      return new History(
+          List.of(), "the release requests of " + repoId + " answered no requests array");
+    }
+    return new History(cuts, null);
+  }
+
+  /** The cut requests off a listing, or null when it is not one. */
+  static List<Cut> cuts(JsonNode body) {
+    if (body == null || !body.hasNonNull("requests") || !body.get("requests").isArray()) {
+      return null;
+    }
+    List<Cut> cuts = new ArrayList<>();
+    for (JsonNode request : body.get("requests")) {
+      String id = text(request, "id");
+      String version = text(request, "version");
+      if (id != null && version != null) {
+        cuts.add(new Cut(id, version.trim(), text(request, "state"), publish(request)));
+      }
+    }
+    return cuts;
+  }
+
+  /** The state of the {@code PUBLISH} phase off {@code pipeline.phases}, or null where it is absent. */
+  private static String publish(JsonNode request) {
+    JsonNode phases = request == null ? null : request.path("pipeline").path("phases");
+    if (phases == null || !phases.isArray()) {
+      return null;
+    }
+    for (JsonNode phase : phases) {
+      if ("PUBLISH".equals(text(phase, "phase"))) {
+        return text(phase, "state");
+      }
+    }
+    return null;
+  }
+
   /** The {@code CI} gate's state off {@code gates}, or off {@code qualityGates} where that is all. */
   private static String ciGate(JsonNode request) {
     for (String field : List.of("gates", "qualityGates")) {

@@ -96,6 +96,18 @@ final class PendingContract {
               "listRepositoryReleaseRequests",
               "GET /projects/api/repositories/{repositoryId}/release-requests?state=all",
               List.of("requests[].version", "requests[].releasedSha", "requests[].mergedToMainAt")),
+          new Row(
+              PROJECTS,
+              Trigger.schedule("BumpDispatcher.tick"),
+              "a repository with a tagged release whose request went obsolete mid-publish",
+              "listRepositoryReleaseRequests",
+              "GET /projects/api/repositories/{repositoryId}/release-requests?state=all",
+              List.of(
+                  "requests[].id",
+                  "requests[].version",
+                  "requests[].state",
+                  "requests[].pipeline.phases[].phase",
+                  "requests[].pipeline.phases[].state")),
           // --- qits-ci-service -------------------------------------------------------------------
           new Row(
               CI,
