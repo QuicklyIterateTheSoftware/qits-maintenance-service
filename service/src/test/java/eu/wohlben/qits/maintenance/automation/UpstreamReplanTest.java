@@ -108,6 +108,16 @@ class UpstreamReplanTest {
                 + "\",\"detail\":null}]}]}"));
   }
 
+  /** What qits-projects answers for the main-only request: PENDING at FOLD_A with these sources. */
+  private void scriptMainRequestSources(String sources) {
+    peers.answer(
+        PeerTarget.PROJECTS,
+        Fixture.RELEASE_REQUESTS_PATH + "/" + MAIN_REQUEST,
+        FakePeers.Scripted.ok(
+            "{\"request\":{\"id\":\"" + MAIN_REQUEST + "\",\"state\":\"PENDING\",\"mergedSha\":\""
+                + FOLD_A + "\",\"sources\":[" + sources + "]}}"));
+  }
+
   private List<MtBump> bumpRows(String requestId) {
     return store.automationHistory(requestId, DependencyBumpAutomation.KIND);
   }
@@ -239,6 +249,7 @@ class UpstreamReplanTest {
         MAIN_REQUEST, Fixture.REPOSITORY, "main", MtReleaseRequest.MAIN_ONLY, List.of(),
         Instant.now());
     AutomationFixture.scriptManifests(peers, FOLD_A, CURRENT_POM, null);
+    scriptMainRequestSources("{\"kind\":\"BRANCH\",\"name\":\"main\"}");
     String withdraw = Fixture.RELEASE_REQUESTS_PATH + "/" + MAIN_REQUEST + "/withdraw";
     peers.answer(
         PeerTarget.PROJECTS,
@@ -267,6 +278,48 @@ class UpstreamReplanTest {
   }
 
   /**
+   * <b>A request that carries more than main is never withdrawn</b> (qits-1166): qits-projects
+   * folded a release tag into the request this service opened for main, so its pre-run finding
+   * nothing to bump leaves the tag still to reach main — the request is kept.
+   */
+  @Test
+  void aMainOnlyRequestThatAlsoCarriesATagIsKept() {
+    store.recordOpenedRequest(
+        MAIN_REQUEST, Fixture.REPOSITORY, "main", MtReleaseRequest.MAIN_ONLY, List.of(),
+        Instant.now());
+    AutomationFixture.scriptManifests(peers, FOLD_A, CURRENT_POM, null);
+    scriptMainRequestSources(
+        "{\"kind\":\"BRANCH\",\"name\":\"main\"},"
+            + "{\"kind\":\"TAG\",\"name\":\"2026.1010.172542\"}");
+    String withdraw = Fixture.RELEASE_REQUESTS_PATH + "/" + MAIN_REQUEST + "/withdraw";
+    peers.answer(
+        PeerTarget.PROJECTS,
+        withdraw,
+        FakePeers.Scripted.ok(
+            "{\"request\":{\"id\":\"" + MAIN_REQUEST + "\",\"state\":\"WITHDRAWN\"}}"));
+
+    ReleaseRequestAutomationsDto answer =
+        automations.trigger(
+            MAIN_REQUEST,
+            new AutomationService.Fold(
+                Fixture.REPOSITORY, FOLD_A, null, null, List.of("main"), null,
+                List.of("WAITING", "NOT_APPLICABLE")));
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    assertEquals(
+        AutomationState.FRESH.name(),
+        AutomationFixture.entry(answer, DependencyBumpAutomation.KIND).state());
+    assertTrue(peers.bodiesFor(withdraw).isEmpty(), "never asked to withdraw");
+    assertTrue(
+        store.releaseRequest(MAIN_REQUEST).orElseThrow().withdrawnAt == null, "and is kept");
+    AutomationDto screenshots =
+        AutomationFixture.entry(answer, ScreenshotBaselinesAutomation.KIND);
+    assertFalse(
+        screenshots.reason() != null && screenshots.reason().contains("withdrawn"),
+        String.valueOf(screenshots.reason()));
+  }
+
+  /**
    * A main-only request whose fold is behind only on an EXTERNAL pin has nothing to release: the
    * bump never moves one (qits-1164), so its pre-run withdraws it like any current fold.
    */
@@ -277,6 +330,7 @@ class UpstreamReplanTest {
         Instant.now());
     AutomationFixture.scriptManifests(
         peers, FOLD_A, STALE_POM.replace("2026.811.1", "2026.821.3"), null);
+    scriptMainRequestSources("{\"kind\":\"BRANCH\",\"name\":\"main\"}");
     String withdraw = Fixture.RELEASE_REQUESTS_PATH + "/" + MAIN_REQUEST + "/withdraw";
     peers.answer(
         PeerTarget.PROJECTS,

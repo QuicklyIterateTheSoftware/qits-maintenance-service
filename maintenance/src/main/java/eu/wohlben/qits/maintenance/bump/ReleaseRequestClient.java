@@ -568,6 +568,8 @@ public class ReleaseRequestClient {
    *     answered
    * @param qualifiedId the request's logical id, {@code <repository>-rr-<n>} (qits-1158), or null
    *     when unread or not answered — a qits-projects that predates it answers none
+   * @param sources every named source of the request, of any kind — branches and tags alike, in
+   *     the order the answer lists them (qits-1166). Empty when unread
    */
   public record ReleaseState(
       String state,
@@ -577,7 +579,22 @@ public class ReleaseRequestClient {
       List<String> branches,
       boolean unknown,
       String backingBranch,
-      String qualifiedId) {
+      String qualifiedId,
+      List<String> sources) {
+
+    /** An answer that lists only its branch sources. */
+    public ReleaseState(
+        String state,
+        String detail,
+        String error,
+        String mergedSha,
+        List<String> branches,
+        boolean unknown,
+        String backingBranch,
+        String qualifiedId) {
+      this(state, detail, error, mergedSha, branches, unknown, backingBranch, qualifiedId,
+          branches);
+    }
 
     /** An answer that names no backing branch and no logical id. */
     public ReleaseState(
@@ -603,6 +620,7 @@ public class ReleaseRequestClient {
 
     public ReleaseState {
       branches = branches == null ? List.of() : List.copyOf(branches);
+      sources = sources == null ? List.of() : List.copyOf(sources);
     }
 
     /** The states in which a release is still on its way. */
@@ -713,7 +731,23 @@ public class ReleaseRequestClient {
         branchSources(request),
         false,
         text(request, "backingBranch"),
-        text(request, "qualifiedId"));
+        text(request, "qualifiedId"),
+        allSources(request));
+  }
+
+  /** Every named source of the request, of any kind (qits-1166). */
+  private static List<String> allSources(JsonNode request) {
+    List<String> names = new ArrayList<>();
+    if (request == null || !request.hasNonNull("sources") || !request.get("sources").isArray()) {
+      return names;
+    }
+    for (JsonNode source : request.get("sources")) {
+      String name = text(source, "name");
+      if (name != null) {
+        names.add(name);
+      }
+    }
+    return names;
   }
 
   /**

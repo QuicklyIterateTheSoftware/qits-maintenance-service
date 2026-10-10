@@ -1288,6 +1288,11 @@ public class AutomationService {
    * exists only to carry the bump its pre-run writes, so a {@code dependency-bump} that ended FRESH
    * with no commit anywhere in the request's history leaves it nothing to release. Any other request
    * is never touched: a person's, a group bump's, or an upstream one whose bump already joined.
+   *
+   * <p><b>The memo is not enough</b> (qits-1166): qits-projects folds other sources into a request
+   * this service opened — a release tag on its way back to main, a person's branch. Such a request
+   * carries work, so it is withdrawn only when qits-projects reports main, and this service's own
+   * automation branches, as its sole sources. An unreadable answer withdraws nothing.
    */
   public boolean withdrawIfNothingToBump(MtRepository repository, String requestId) {
     if (requestId == null) {
@@ -1314,6 +1319,11 @@ public class AutomationService {
     if (repository.catalogId == null || repository.catalogId.isBlank()) {
       return false;
     }
+    if (!carriesOnlyMain(repository, releases.state(repository.catalogId, requestId))) {
+      LOG.infof("Kept the upstream release request %s of %s: it carries more than %s", requestId,
+          repository.name, repository.mainBranchOrDefault());
+      return false;
+    }
     String reason =
         "qits-maintenance opened this request for a dependency bump, and its pre-run found nothing"
             + " to bump at fold " + abbreviate(history.getFirst().foldSha);
@@ -1332,6 +1342,21 @@ public class AutomationService {
         return false;
       }
     }
+  }
+
+  /**
+   * Whether qits-projects reports main, plus this service's own automation branches, as the
+   * request's only sources (qits-1166). Any other source — a tag, a person's branch — or an
+   * unreadable answer is false.
+   */
+  static boolean carriesOnlyMain(
+      MtRepository repository, ReleaseRequestClient.ReleaseState state) {
+    if (!state.readable() || state.sources().isEmpty()) {
+      return false;
+    }
+    String main = repository.mainBranchOrDefault();
+    return state.sources().stream()
+        .allMatch(source -> source.equals(main) || source.startsWith(BRANCH_PREFIX));
   }
 
   /**
