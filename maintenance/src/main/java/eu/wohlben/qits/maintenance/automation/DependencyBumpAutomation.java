@@ -47,6 +47,14 @@ import java.util.Set;
  *   <li><b>Writes</b> through the shared core's {@code automations/dependency-bump.yml}: the payload
  *       carries {@code changes} in exactly the {@code MaintenanceBump} entry shape ({@link Change})
  *       and {@code commitPaths}, the manifests those changes touch.
+ *   <li><b>Proves its changelogs before anything is sent</b> (qits-893): its commit is a bump commit
+ *       like any other, so at dispatch {@link AutomationService} resolves each change's range
+ *       through {@link eu.wohlben.qits.maintenance.bump.changelog.ChangelogRanges} and each change
+ *       that has one carries {@code "changelog": {"repository": "…", "versions": ["…"]}}, spelled by
+ *       {@link CiClient#changes} exactly as the {@code MaintenanceBump} trigger spells it — an
+ *       external change, or one whose repository predates changelogs, carries no key. A missing
+ *       changelog FAILS the run with the problems joined "; " and triggers nothing; a docs store
+ *       that could not be read leaves it REQUESTED for the sweep.
  * </ul>
  *
  * <h2>Whose upgrades</h2>

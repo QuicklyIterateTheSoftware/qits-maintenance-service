@@ -263,7 +263,8 @@ RUN plan naming another applicable kind's path is refused FAILED at run time (`A
 `ignore:` and the new `hold:`, never a wrapper's gitlinks (estate-pins' own), and INTERNAL pins only
 — EXTERNAL ones solely in a MAIN-ONLY request the dispatcher's upstream path opened
 (`mt_release_request.purpose = MAIN_ONLY`, V21) while the switch below is on; a group bump's request
-keeps externals a person's press. Its payload carries `changes` in the `MaintenanceBump` entry shape and `commitPaths`, the
+keeps externals a person's press. Its payload carries `changes` in the `MaintenanceBump` entry shape
+— each internal one with its `changelog` range, proved at dispatch (qits-893) — and `commitPaths`, the
 files they touch; every own-branch join is sent at `LOWEST`. WAITING and NOT_APPLICABLE reach the
 wire only when the trigger body `accepts` them; otherwise the answer is the pre-1133 one. The
 upstream hook (`automation/UpstreamReplan`) and the dispatcher's main-only LOWEST requests are
@@ -310,7 +311,9 @@ one, floored at the repository's oldest published changelog, and `ChangelogClien
 store's listing (`PeerTarget.ARTIFACTS_DOCS`, the same bare-host key as the SBOM route). A missing
 changelog, or an internal coordinate `ArtifactGraph.producers()` cannot name a repository for, FAILS
 the bump with the sentence — the owner's rule is "error, not workaround" — and an unreadable store
-is a RETRY. The payload NAMES the changelogs (`changelog: {repository, versions}`) and never carries
+is a RETRY. Every path that carries changes proves them: group bumps, `estate-pins`' source-branch
+runs and `dependency-bump`'s own-branch payload (`AutomationService.changelogs`, serialized by the
+shared `CiClient.changes`). The payload NAMES the changelogs (`changelog: {repository, versions}`) and never carries
 their text: it reaches the step as one environment string, so the step's CLI fetches them. Tests
 that bump the fixture's internal pins seed the producers first (`Fixture.seedProducers`,
 `StoryCatalog.seedProducers`); without them every such bump fails, by design.

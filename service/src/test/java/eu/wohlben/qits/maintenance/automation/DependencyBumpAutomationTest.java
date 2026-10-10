@@ -32,6 +32,7 @@ import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.ScanScope;
 import eu.wohlben.qits.maintenance.pending.Change;
 import eu.wohlben.qits.maintenance.peer.FakePeers;
+import eu.wohlben.qits.maintenance.peer.PeerTarget;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import eu.wohlben.qits.maintenance.scan.ScanService;
 import eu.wohlben.qits.maintenance.scan.ScanTrigger;
@@ -92,6 +93,8 @@ class DependencyBumpAutomationTest {
     Fixture.scriptScan(peers);
     Fixture.scriptBranchAbsent(peers);
     Fixture.scriptCiAccepts(peers, RUN);
+    // Who publishes each internal pin: a bump's changelog ranges need a source repository (qits-893).
+    Fixture.seedProducers(store);
     for (String fold : List.of(FOLD_A, FOLD_B, FOLD_C)) {
       AutomationFixture.scriptFold(peers, fold, true);
     }
@@ -196,6 +199,103 @@ class DependencyBumpAutomationTest {
     assertEquals("2026.811.1", change.get("from").asText());
     assertEquals("2026.821.3", change.get("to").asText());
     assertFalse(change.get("location").asText().isBlank());
+  }
+
+  // --- the changelogs (qits-893) ------------------------------------------------------------------
+
+  /**
+   * The dependency bump's commit is a bump commit like any other, so its internal change names the
+   * changelogs of the releases it pulls in — the same {@code changelog} field, spelled by the same
+   * code, as the MaintenanceBump trigger's — and is otherwise the entry it always was.
+   */
+  @Test
+  void anInternalChangeCarriesItsChangelogRange() throws Exception {
+    Fixture.scriptChangelogs(peers, "qits-eventstream", "2026.821.3", "2026.811.1", "2026.815.1");
+    AutomationFixture.scriptManifests(peers, FOLD_A, STALE_POM, null);
+
+    MtBump row =
+        row(AutomationFixture.entry(trigger(FOLD_A, null, null, ACCEPTS),
+            DependencyBumpAutomation.KIND));
+
+    assertEquals(BumpStatus.RUNNING.name(), row.status, row.message);
+    assertEquals(1, triggers().size());
+    JsonNode change = JSON.readTree(triggers().getFirst()).path("payload").path("changes").get(0);
+    assertEquals(EVENTSTREAM, change.get("name").asText());
+    assertEquals(
+        JSON.readTree(
+            "{\"repository\":\"qits-eventstream\",\"versions\":[\"2026.815.1\",\"2026.821.3\"]}"),
+        change.get("changelog"));
+  }
+
+  /**
+   * A release between the pins that published no changelog FAILS the bump with the sentence naming
+   * it, and nothing is sent to qits-ci — the same ending a group bump's missing changelog gets.
+   */
+  @Test
+  void aMissingChangelogFailsTheBumpAndDispatchesNothing() {
+    // The floor is 2026.811.1, so 2026.821.3 — the new pin — is a release that published nothing.
+    Fixture.scriptChangelogs(peers, "qits-eventstream", "2026.811.1");
+    AutomationFixture.scriptManifests(peers, FOLD_A, STALE_POM, null);
+
+    MtBump row =
+        row(AutomationFixture.entry(trigger(FOLD_A, null, null, ACCEPTS),
+            DependencyBumpAutomation.KIND));
+
+    assertEquals(BumpStatus.FAILED.name(), row.status, row.message);
+    assertTrue(
+        row.message.contains("no changelog for qits-eventstream 2026.821.3"), row.message);
+    assertTrue(triggers().isEmpty(), "nothing is sent to qits-ci: " + triggers());
+  }
+
+  /** An unreadable docs store says nothing about the changelogs: the bump waits for the sweep. */
+  @Test
+  void anUnreadableDocsStoreLeavesTheBumpRequested() {
+    peers.answer(
+        PeerTarget.ARTIFACTS_DOCS,
+        Fixture.CHANGELOG_PATH + "qits-eventstream",
+        FakePeers.Scripted.status(503, "busy"));
+    AutomationFixture.scriptManifests(peers, FOLD_A, STALE_POM, null);
+
+    MtBump row =
+        row(AutomationFixture.entry(trigger(FOLD_A, null, null, ACCEPTS),
+            DependencyBumpAutomation.KIND));
+
+    assertEquals(BumpStatus.REQUESTED.name(), row.status, row.message);
+    assertEquals(BumpService.CHANGELOGS_UNREADABLE, row.message);
+    assertTrue(triggers().isEmpty());
+  }
+
+  /**
+   * On a MAIN-ONLY request with the upstream switch on the external upgrade rides too — and carries
+   * no {@code changelog} key at all, while the internal one beside it names its range.
+   */
+  @Test
+  void anExternalChangeCarriesNoChangelog() throws Exception {
+    Fixture.scriptChangelogs(peers, "qits-eventstream", "2026.821.3", "2026.811.1");
+    AutomationFixture.scriptManifests(peers, FOLD_A, STALE_POM, null);
+    store.recordOpenedRequest(
+        REQUEST, Fixture.REPOSITORY, "main", MtReleaseRequest.MAIN_ONLY, null, Instant.now());
+    MaintenanceConfig real = ClientProxy.unwrap(config);
+    QuarkusMock.installMockForType(new UpstreamSwitch(real), MaintenanceConfig.class);
+    try {
+      trigger(FOLD_A, null, null, ACCEPTS);
+    } finally {
+      QuarkusMock.installMockForType(real, MaintenanceConfig.class);
+    }
+
+    assertEquals(1, triggers().size(), triggers().toString());
+    JsonNode changes = JSON.readTree(triggers().getFirst()).path("payload").path("changes");
+    assertEquals(2, changes.size(), changes.toString());
+    for (JsonNode change : changes) {
+      if (QUARKUS_BOM.equals(change.path("name").asText())) {
+        assertFalse(change.has("changelog"), "an external change names none: " + change);
+      } else {
+        assertEquals(EVENTSTREAM, change.path("name").asText());
+        assertEquals(
+            JSON.readTree("{\"repository\":\"qits-eventstream\",\"versions\":[\"2026.821.3\"]}"),
+            change.get("changelog"));
+      }
+    }
   }
 
   /**

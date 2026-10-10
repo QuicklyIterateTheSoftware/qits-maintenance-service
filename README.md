@@ -398,8 +398,10 @@ the commit message. **A missing changelog is an error, not a workaround**: a rel
 whose changelog was not published, or an internal coordinate with no known source repository, FAILS
 the bump with the sentence naming it and nothing is triggered. A docs store that cannot be read
 (5xx, transport) says nothing about the changelogs, so the bump stays REQUESTED and is sent again,
-exactly as a 503 from the trigger. Group bumps and the source-branch automations (`estate-pins`)
-both go through it; `BumpPayload.changelogProblems` holds the field to a catalog name
+exactly as a 503 from the trigger. Group bumps, the source-branch automations (`estate-pins`) and
+the `dependency-bump` automation's `ReleaseRequestAutomation` payload all go through it — the last
+carries the same `changelog` field on its `changes`, spelled by the same `CiClient.changes`, and a
+missing changelog ends its run FAILED with nothing dispatched; `BumpPayload.changelogProblems` holds the field to a catalog name
 (`[a-z0-9][a-z0-9-]{0,127}`) and calver versions (`[0-9]{4}.[0-9]{1,4}.[0-9]+`).
 
 **`baseRef` is main unless a release has not reached it (qits-1081).** qits-projects folds every

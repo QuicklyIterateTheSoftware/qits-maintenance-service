@@ -84,6 +84,8 @@ class UpstreamReplanTest {
     Fixture.scriptScan(peers);
     Fixture.scriptBranchAbsent(peers);
     Fixture.scriptCiAccepts(peers, RUN);
+    // Who publishes each internal pin: a bump's changelog ranges need a source repository (qits-893).
+    Fixture.seedProducers(store);
     AutomationFixture.scriptFold(peers, FOLD_A, true);
     AutomationFixture.scriptManifests(peers, FOLD_A, STALE_POM, null);
     AutomationFixture.scriptRequest(peers, REQUEST, "PENDING", FOLD_A);
