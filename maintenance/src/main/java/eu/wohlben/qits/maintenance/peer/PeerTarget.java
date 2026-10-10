@@ -38,6 +38,12 @@ public enum PeerTarget {
   /** qits-ci — the trigger that applies a bump, and the run it names. */
   CI("qits.maintenance.targets.ci-url"),
 
+  /**
+   * qits-deployments — {@code GET /deployments/api/pins}, the versions that serve and the ones a
+   * rollback restores. {@code GET /pins} keeps what those releases declared (qits-1172).
+   */
+  DEPLOYMENTS("qits.maintenance.targets.deployments-url"),
+
   /** qits-artifacts' hosted maven repository: {@code maven-metadata.xml} for internal artifacts. */
   MAVEN_REGISTRY("qits.maintenance.registries.maven-url"),
 

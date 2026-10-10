@@ -727,6 +727,7 @@ environment without a rebuild.
 | `qits.maintenance.targets.projects-url` | `http://qits-projects:8080` | where the catalog is |
 | `qits.maintenance.targets.githost-url` | `http://qits-githost:8080` | where the manifests are |
 | `qits.maintenance.targets.ci-url` | `http://qits-ci:8080` | which CI applies a bump |
+| `qits.maintenance.targets.deployments-url` | `http://${QITS_ENVIRONMENT:dev}-qits-deployments:8080` | which versions serve or would roll back; `GET /pins` keeps what those releases declared |
 | `qits.maintenance.targets.artifacts-url` | `http://qits-artifacts:8080` | where the SBOM documents and the changelog listings are — a bare host, because both routes' whole paths belong to the caller |
 | `qits.maintenance.registries.maven-url` | `http://qits-artifacts:8080/artifacts/maven/maven` | internal maven |
 | `qits.maintenance.registries.npm-url` | `http://qits-artifacts:8080/artifacts/npm/npm` | internal npm |

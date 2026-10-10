@@ -12,6 +12,7 @@ import eu.wohlben.qits.maintenance.entity.MtGitlinkPin;
 import eu.wohlben.qits.maintenance.entity.MtGitlinkTree;
 import eu.wohlben.qits.maintenance.entity.MtGroup;
 import eu.wohlben.qits.maintenance.entity.MtLatest;
+import eu.wohlben.qits.maintenance.entity.MtMainPin;
 import eu.wohlben.qits.maintenance.entity.MtPin;
 import eu.wohlben.qits.maintenance.entity.MtRelease;
 import eu.wohlben.qits.maintenance.entity.MtReleasePin;
@@ -460,6 +461,7 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
           MtGroup.delete("repository in ?1", absent);
           // …and what its gitlinks reached, which is the same cache one hop further out.
           MtGitlinkPin.delete("repository in ?1", absent);
+          MtMainPin.delete("repository in ?1", absent);
           getEntityManager().flush();
           return List.copyOf(dropped);
         });
@@ -2529,6 +2531,107 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
           }
           return List.copyOf(found);
         });
+  }
+
+  // --- the GC's keep-set beyond the last scan (V24, qits-1172) ---------------------------------
+
+  /**
+   * One pin main declared, in the shape {@code GET /pins} serves it.
+   *
+   * @param via provenance, null for a pin a manifest wrote out
+   */
+  public record MainPin(
+      String ecosystem, String name, String version, String manifestPath, String via) {}
+
+  /**
+   * Replaces what one repository's MAIN declared. Only a main scan calls this: a release scan reads
+   * a tag, and a tag is kept through the ledger until it is on main.
+   */
+  @ActivateRequestContext
+  public void replaceMainPins(String repository, String sha, List<MainPin> pins) {
+    DbRetry.runInNewTx(
+        "replace the main pins of " + repository,
+        () -> {
+          MtMainPin.delete("repository", repository);
+          for (MainPin pin : pins) {
+            if (pin.version() == null || pin.version().isBlank()) {
+              continue;
+            }
+            MtMainPin stored = new MtMainPin();
+            stored.id = UUID.randomUUID();
+            stored.repository = repository;
+            stored.sha = sha;
+            stored.ecosystem = pin.ecosystem();
+            stored.name = pin.name();
+            stored.version = pin.version();
+            stored.manifestPath = pin.manifestPath() == null ? "" : pin.manifestPath();
+            stored.via = pin.via();
+            stored.persist();
+          }
+          getEntityManager().flush();
+        });
+  }
+
+  /** Every pin any repository's main declared at its last main scan. */
+  @ActivateRequestContext
+  public List<MtMainPin> allMainPins() {
+    return DbRetry.inNewTx(
+        "read every main pin",
+        () -> MtMainPin.findAll(Sort.by("repository").and("name")).list());
+  }
+
+  /** The releases of one repository whose commit is not known to be on main yet. */
+  @ActivateRequestContext
+  public List<MtRelease> releasesNotOnMain(String repository) {
+    return DbRetry.inNewTx(
+        "read the releases of " + repository + " not on main",
+        () ->
+            MtRelease.<MtRelease>find(
+                    "repository = ?1 and onMain = false", Sort.by("occurredAt"), repository)
+                .list());
+  }
+
+  /** Marks releases as on main. Never undone: a commit on main stays on main. */
+  @ActivateRequestContext
+  public void markReleasesOnMain(Collection<UUID> ids) {
+    if (ids == null || ids.isEmpty()) {
+      return;
+    }
+    List<UUID> list = List.copyOf(ids);
+    DbRetry.runInNewTx(
+        "mark releases as on main",
+        () -> {
+          MtRelease.update("onMain = true where id in ?1", list);
+          getEntityManager().flush();
+        });
+  }
+
+  /**
+   * The releases whose declared pins the GC keeps beyond the last scan: every release not on main
+   * yet, and every release at one of {@code versions} (what serves, and what a rollback restores).
+   */
+  @ActivateRequestContext
+  public List<MtRelease> keptReleases(Collection<String> versions) {
+    List<String> wanted = versions == null ? List.of() : List.copyOf(versions);
+    return DbRetry.inNewTx(
+        "read the releases the GC keeps",
+        () ->
+            wanted.isEmpty()
+                ? MtRelease.<MtRelease>find("onMain = false", Sort.by("repository")).list()
+                : MtRelease.<MtRelease>find(
+                        "onMain = false or version in ?1", Sort.by("repository"), wanted)
+                    .list());
+  }
+
+  /** Every pin the ledger holds for these releases. */
+  @ActivateRequestContext
+  public List<MtReleasePin> releasePins(Collection<UUID> releaseIds) {
+    if (releaseIds == null || releaseIds.isEmpty()) {
+      return List.of();
+    }
+    List<UUID> ids = List.copyOf(releaseIds);
+    return DbRetry.inNewTx(
+        "read the pins of releases", () -> MtReleasePin.<MtReleasePin>find("releaseId in ?1", ids).list());
   }
 
   // --- release requests this service remembers (V21, qits-1133) --------------------------------

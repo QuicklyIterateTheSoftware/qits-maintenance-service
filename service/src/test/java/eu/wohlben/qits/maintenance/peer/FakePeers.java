@@ -70,10 +70,18 @@ public class FakePeers extends PeerClient {
   /** Held before a scripted answer is returned, when a test wants work to stay in flight. */
   private volatile CountDownLatch gate;
 
+  {
+    reset();
+  }
+
   public void reset() {
     script.clear();
     calls.clear();
     gate = null;
+    // Nothing deployed unless a test says so: GET /pins asks qits-deployments on every read and
+    // refuses (503) when it cannot — a default 404 here would turn every pins test into that.
+    script.put(
+        key(PeerTarget.DEPLOYMENTS, "/deployments/api/pins"), Scripted.ok("{\"pins\":[]}"));
   }
 
   /** Scripts one answer. */

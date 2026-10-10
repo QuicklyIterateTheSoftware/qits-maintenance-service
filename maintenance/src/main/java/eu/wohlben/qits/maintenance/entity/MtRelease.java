@@ -53,4 +53,11 @@ public class MtRelease extends PanacheEntityBase {
    */
   @Column(name = "occurred_at", nullable = false)
   public Instant occurredAt;
+
+  /**
+   * Whether this release's commit is on main — an ancestor of, or equal to, main's head at a main
+   * scan. Until then the GC keeps what the release declared (V24). Set by a main scan, never unset.
+   */
+  @Column(name = "on_main", nullable = false)
+  public boolean onMain;
 }

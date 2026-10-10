@@ -9,6 +9,7 @@ import eu.wohlben.qits.maintenance.entity.MtGitlinkPin;
 import eu.wohlben.qits.maintenance.entity.MtGitlinkTree;
 import eu.wohlben.qits.maintenance.entity.MtGroup;
 import eu.wohlben.qits.maintenance.entity.MtLatest;
+import eu.wohlben.qits.maintenance.entity.MtMainPin;
 import eu.wohlben.qits.maintenance.entity.MtPin;
 import eu.wohlben.qits.maintenance.entity.MtRelease;
 import eu.wohlben.qits.maintenance.entity.MtReleasePin;
@@ -60,6 +61,7 @@ public class InventoryReset {
     MtRelease.deleteAll();
     MtPin.deleteAll();
     MtGitlinkPin.deleteAll();
+    MtMainPin.deleteAll();
     MtGitlinkTree.deleteAll();
     MtGroup.deleteAll();
     MtLatest.deleteAll();

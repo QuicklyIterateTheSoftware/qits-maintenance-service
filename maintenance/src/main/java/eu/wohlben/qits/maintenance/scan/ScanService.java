@@ -4,6 +4,8 @@ import eu.wohlben.qits.maintenance.catalog.CatalogEntry;
 import eu.wohlben.qits.maintenance.catalog.CatalogReader;
 import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
 import eu.wohlben.qits.maintenance.entity.MtPin;
+import eu.wohlben.qits.maintenance.githost.GitHostReader;
+import eu.wohlben.qits.maintenance.latest.GitlinkSha;
 import eu.wohlben.qits.maintenance.latest.LatestLookup;
 import eu.wohlben.qits.maintenance.latest.LatestResolver;
 import eu.wohlben.qits.maintenance.manifest.ManifestScanner;
@@ -86,6 +88,9 @@ public class ScanService {
 
   /** The npm pins each repository reaches through its gitlinks, resolved here and stored beside. */
   @Inject GitlinkNpmPins gitlinkNpmPins;
+
+  /** The ancestry door: is a release's commit on main yet. */
+  @Inject GitHostReader gitHost;
 
   /**
    * Opens a scan row, queues the work and answers at once.
@@ -231,6 +236,20 @@ public class ScanService {
           now);
       return;
     }
+    boolean atMain = revision == null || revision.isBlank();
+    if (!atMain && read.status() == RepositoryStatus.ABSENT) {
+      // A TAG THE GIT HOST DOES NOT HOLD SAYS NOTHING ABOUT MAIN (qits-1172). Writing it would
+      // replace every pin of the repository with none — measured live 2026-10-10 on
+      // qits-projects-service, whose pins went and whose pinned versions the GC then deleted.
+      LOG.warnf(
+          "%s is absent at %s; its pins are kept as they were: %s",
+          entry.name(), revision, read.message());
+      return;
+    }
+    // What each gitlink's submodule pins at the recorded commit — read once per (submodule, sha)
+    // and stored, so the GC's pin source can serve it without calling the git host.
+    List<MaintenanceStore.GitlinkPin> gitlinkPins =
+        gitlinkNpmPins.resolve(entry.name(), read.pins(), catalog, now);
     store.replaceInventory(
         entry.name(),
         entry.project(),
@@ -244,10 +263,64 @@ public class ScanService {
         read.groups(),
         read.groupSource(),
         config::kindOf,
-        // What each gitlink's submodule pins at the recorded commit — read once per (submodule,
-        // sha) and stored, so the GC's pin source can serve it without calling the git host.
-        gitlinkNpmPins.resolve(entry.name(), read.pins(), catalog, now),
+        gitlinkPins,
         now);
+    if (atMain && read.headSha() != null && !read.headSha().isBlank()) {
+      keepMain(entry, read, gitlinkPins);
+    }
+  }
+
+  /**
+   * <b>MAIN'S PINS, KEPT APART FROM THE LAST SCAN'S, and the releases main has caught up with.</b>
+   *
+   * <p>A release scan replaces {@code mt_pin} with the TAG's pins, and a tag can run ahead of main
+   * and of the deployment. So the GC's keep-set is a union (qits-1172): what main declares, plus
+   * what every release not yet on main declared. This writes the first half and closes the second:
+   * a release whose commit main now contains is dropped from it, because main declares the same.
+   *
+   * <p>Only a git host answering "yes" marks a release. An unanswered question keeps it, which keeps
+   * more rather than less.
+   */
+  private void keepMain(
+      CatalogEntry entry, ManifestScanner.Read read, List<MaintenanceStore.GitlinkPin> gitlinks) {
+    List<MaintenanceStore.MainPin> pins = new java.util.ArrayList<>();
+    for (eu.wohlben.qits.maintenance.manifest.ParsedPin pin : read.pins()) {
+      if (pin.ecosystem() == Ecosystem.GITLINK || config.kindOf(pin) != PinKind.INTERNAL) {
+        continue;
+      }
+      pins.add(
+          new MaintenanceStore.MainPin(
+              pin.ecosystem().wireName(), pin.name(), pin.version(), pin.manifestPath(), null));
+    }
+    for (MaintenanceStore.GitlinkPin pin : gitlinks == null ? List.<MaintenanceStore.GitlinkPin>of() : gitlinks) {
+      pins.add(
+          new MaintenanceStore.MainPin(
+              pin.ecosystem(),
+              pin.name(),
+              pin.version(),
+              pin.manifestPath(),
+              eu.wohlben.qits.maintenance.control.Inventory.gitlinkVia(
+                  pin.gitlinkPath(), pin.sha())));
+    }
+    store.replaceMainPins(entry.name(), read.headSha(), pins);
+
+    List<UUID> onMain = new java.util.ArrayList<>();
+    for (eu.wohlben.qits.maintenance.entity.MtRelease release :
+        store.releasesNotOnMain(entry.name())) {
+      if (GitlinkSha.same(release.sha, read.headSha())) {
+        onMain.add(release.id);
+        continue;
+      }
+      GitHostReader.Containment contained =
+          gitHost.contains(entry.catalogId(), release.sha, read.headSha());
+      if (contained.readable() && contained.contains()) {
+        onMain.add(release.id);
+      } else if (!contained.readable()) {
+        LOG.debugf(
+            "%s %s is kept: %s", entry.name(), release.version, contained.error());
+      }
+    }
+    store.markReleasesOnMain(onMain);
   }
 
   /**

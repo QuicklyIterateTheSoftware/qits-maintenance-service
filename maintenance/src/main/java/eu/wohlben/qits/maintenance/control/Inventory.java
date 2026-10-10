@@ -15,7 +15,10 @@ import eu.wohlben.qits.maintenance.entity.MtBump;
 import eu.wohlben.qits.maintenance.entity.MtGitlinkPin;
 import eu.wohlben.qits.maintenance.entity.MtGroup;
 import eu.wohlben.qits.maintenance.entity.MtLatest;
+import eu.wohlben.qits.maintenance.entity.MtMainPin;
 import eu.wohlben.qits.maintenance.entity.MtPin;
+import eu.wohlben.qits.maintenance.entity.MtRelease;
+import eu.wohlben.qits.maintenance.entity.MtReleasePin;
 import eu.wohlben.qits.maintenance.entity.MtRepository;
 import eu.wohlben.qits.maintenance.entity.MtScan;
 import eu.wohlben.qits.maintenance.error.EmptyInventoryException;
@@ -65,6 +68,9 @@ public class Inventory {
   @Inject CarriedImages carried;
 
   @Inject CarriedDaemons carriedDaemons;
+
+  /** What serves and what a rollback restores — releases whose pins the GC keeps (qits-1172). */
+  @Inject DeployedVersions deployed;
 
   /** Every repository, with its groups and what each has pending. */
   public List<RepositoryDto> repositories() {
@@ -271,6 +277,18 @@ public class Inventory {
               pin.manifestPath,
               gitlinkVia(pin.gitlinkPath, pin.sha)));
     }
+    // …and the UNION beyond the last scan (qits-1172). A release scan replaces the rows above with
+    // the TAG's pins, and a tag can run ahead of main and of the deployment, so the keep-set also
+    // holds what main declared at its last main scan, what every release not yet on main declared,
+    // and what every release that serves or would be rolled back to declared. Read before the
+    // dedupe, so a version three of these name is one row per provenance and never lost.
+    for (MtMainPin pin : store.allMainPins()) {
+      pins.add(
+          new PinSourceDto.ArtifactPinDto(
+              pin.ecosystem, pin.name, pin.version, pin.repository, pin.manifestPath, pin.via));
+    }
+    pins.addAll(releasePins(deployed.versions()));
+    pins = new ArrayList<>(new java.util.LinkedHashSet<>(pins));
     // …and the images and daemon binaries those maven and npm pins name without spelling out.
     // Derived from the STORED rows — snapshotted here, so the second derivation cannot read the
     // first one's output as if a manifest had written it — rather than from the store again, so the
@@ -281,6 +299,59 @@ public class Inventory {
     pins.addAll(carriedDaemons.resolve(stored));
     pins.sort(PIN_ORDER);
     return new PinSourceDto(Instant.now(), List.copyOf(repositories), List.copyOf(pins));
+  }
+
+  /** The {@code via} of a row the release ledger holds: which release, and why it is kept. */
+  public static String releaseVia(String version, boolean deployedOrRollback) {
+    return "release " + version + (deployedOrRollback ? " (deployed or rollback)" : " (not on main yet)");
+  }
+
+  /**
+   * What the ledger says the kept releases declared: every release not on main yet, and every
+   * release at a version qits-deployments serves or would roll back to. A GITLINK pin is served as
+   * the npm pins the submodule's tree holds at that commit, when a scan has read that tree.
+   */
+  private List<PinSourceDto.ArtifactPinDto> releasePins(java.util.Set<String> deployedVersions) {
+    List<MtRelease> releases = store.keptReleases(deployedVersions);
+    Map<java.util.UUID, MtRelease> byId = new LinkedHashMap<>();
+    for (MtRelease release : releases) {
+      byId.put(release.id, release);
+    }
+    List<PinSourceDto.ArtifactPinDto> rows = new ArrayList<>();
+    // One read per submodule tree, however many releases embed the same commit.
+    Map<String, List<MaintenanceStore.TreePin>> trees = new java.util.HashMap<>();
+    for (MtReleasePin pin : store.releasePins(byId.keySet())) {
+      MtRelease release = byId.get(pin.releaseId);
+      if (release == null || pin.version == null || pin.version.isBlank()) {
+        continue;
+      }
+      String manifest = "refs/tags/" + release.version;
+      String via = releaseVia(release.version, deployedVersions.contains(release.version));
+      Optional<Ecosystem> ecosystem = Ecosystem.of(pin.ecosystem);
+      if (ecosystem.isEmpty()) {
+        continue;
+      }
+      if (ecosystem.get() == Ecosystem.GITLINK) {
+        for (MaintenanceStore.TreePin tree :
+            trees.computeIfAbsent(
+                pin.name + "@" + pin.version,
+                key -> store.gitlinkTree(pin.name, pin.version).orElse(List.of()))) {
+          rows.add(
+              new PinSourceDto.ArtifactPinDto(
+                  Ecosystem.NPM.wireName(),
+                  tree.name(),
+                  tree.version(),
+                  release.repository,
+                  manifest,
+                  via + ", " + gitlinkVia(pin.name, pin.version)));
+        }
+        continue;
+      }
+      rows.add(
+          new PinSourceDto.ArtifactPinDto(
+              pin.ecosystem, pin.name, pin.version, release.repository, manifest, via));
+    }
+    return rows;
   }
 
   /** The {@code via} of an npm row reached through a gitlink: the path, and the commit read. */
