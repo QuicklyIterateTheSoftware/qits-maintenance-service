@@ -3,14 +3,29 @@
   "foldSha": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
   "automations": [
     {
-      "kind": "entity-diagram",
-      "label": "Entity diagram",
+      "kind": "dependency-bump",
+      "label": "Dependency bump",
       "state": "FRESH",
       "detail": "fresh: nothing to regenerate at this fold",
       "bumpId": "00000000-0000-4000-8000-000000000003",
       "runIds": [],
-      "branch": "maintenance/automations/entity-diagram/00000000-0000-4000-8000-000000000002",
+      "branch": "maintenance/automations/dependency-bump/00000000-0000-4000-8000-000000000002",
       "resultSha": null,
+      "updatedAt": "2026-01-01T00:00:00Z",
+      "failure": null,
+      "reason": null
+    },
+    {
+      "kind": "entity-diagram",
+      "label": "Entity diagram",
+      "state": "COMMITTED",
+      "detail": "committed the regenerated output",
+      "bumpId": "00000000-0000-4000-8000-000000000004",
+      "runIds": [
+        "run-contract-3"
+      ],
+      "branch": "maintenance/automations/entity-diagram/00000000-0000-4000-8000-000000000002",
+      "resultSha": "0123456789abcdef0123456789abcdef01234567",
       "updatedAt": "2026-01-01T00:00:00Z",
       "failure": null,
       "reason": null
@@ -18,14 +33,12 @@
     {
       "kind": "estate-pins",
       "label": "Estate pins",
-      "state": "COMMITTED",
-      "detail": "committed the regenerated output",
-      "bumpId": "00000000-0000-4000-8000-000000000004",
-      "runIds": [
-        "run-contract-3"
-      ],
+      "state": "FRESH",
+      "detail": "fresh: nothing to regenerate at this fold",
+      "bumpId": "00000000-0000-4000-8000-000000000005",
+      "runIds": [],
       "branch": "maintenance/automations/estate-pins/00000000-0000-4000-8000-000000000002",
-      "resultSha": "0123456789abcdef0123456789abcdef01234567",
+      "resultSha": null,
       "updatedAt": "2026-01-01T00:00:00Z",
       "failure": null,
       "reason": null
@@ -35,7 +48,7 @@
       "label": "Screenshot baselines",
       "state": "FAILED",
       "detail": "the screenshot baselines run failed at step 2 (exit 1): 3 screenshots differ",
-      "bumpId": "00000000-0000-4000-8000-000000000005",
+      "bumpId": "00000000-0000-4000-8000-000000000006",
       "runIds": [
         "run-contract-1",
         "run-contract-2"
