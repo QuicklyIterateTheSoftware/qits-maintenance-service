@@ -3,6 +3,192 @@
   "provider": "qits-maintenance",
   "states": [
     {
+      "name": "a release request with a failed automation",
+      "slug": "a-release-request-with-a-failed-automation",
+      "params": {
+        "branch": "feature/export",
+        "foldSha": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "kind": "screenshot-baselines",
+        "repoName": "contract-service",
+        "repositoryId": "00000000-0000-4000-8000-000000000001",
+        "requestId": "00000000-0000-4000-8000-000000000002"
+      },
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "runReleaseRequestAutomation",
+          "method": "POST",
+          "path": "/maintenance/api/release-requests/{requestId}/automations/{kind}/runs",
+          "body": {
+            "workItem": null,
+            "repository": "{repoName}"
+          },
+          "status": 202,
+          "file": "a-release-request-with-a-failed-automation/runReleaseRequestAutomation.json",
+          "frozen": {
+            "ids": [
+              "$.id"
+            ],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "a release request with an automation to re-run",
+      "slug": "a-release-request-with-an-automation-to-re-run",
+      "params": {
+        "branch": "feature/export",
+        "foldSha": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "kind": "screenshot-baselines",
+        "repoName": "contract-service",
+        "repositoryId": "00000000-0000-4000-8000-000000000001",
+        "requestId": "00000000-0000-4000-8000-000000000002"
+      },
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "runReleaseRequestAutomation",
+          "method": "POST",
+          "path": "/maintenance/api/release-requests/{requestId}/automations/{kind}/runs",
+          "body": {},
+          "status": 202,
+          "file": "a-release-request-with-an-automation-to-re-run/runReleaseRequestAutomation.json",
+          "frozen": {
+            "ids": [
+              "$.id"
+            ],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "a release request with automations",
+      "slug": "a-release-request-with-automations",
+      "params": {
+        "branch": "feature/export",
+        "foldSha": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "kind": "screenshot-baselines",
+        "repoName": "contract-service",
+        "repositoryId": "00000000-0000-4000-8000-000000000001",
+        "requestId": "00000000-0000-4000-8000-000000000002"
+      },
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "listReleaseRequestAutomations",
+          "method": "GET",
+          "path": "/maintenance/api/release-requests/{requestId}/automations",
+          "query": {
+            "foldSha": "{foldSha}"
+          },
+          "status": 200,
+          "file": "a-release-request-with-automations/listReleaseRequestAutomations.json",
+          "frozen": {
+            "ids": [
+              "$.requestId",
+              "$.automations[*].bumpId"
+            ],
+            "instants": [
+              "$.automations[*].updatedAt"
+            ],
+            "strings": [
+              "$.automations[*].branch"
+            ],
+            "listFilteredTo": null
+          }
+        },
+        {
+          "operationId": "triggerReleaseRequestAutomations",
+          "method": "POST",
+          "path": "/maintenance/api/release-requests/{requestId}/automations",
+          "body": {
+            "repository": "{repoName}",
+            "foldSha": "{foldSha}",
+            "previousFoldSha": null,
+            "changedSincePrevious": null,
+            "sourceBranches": [
+              "{branch}"
+            ],
+            "workItem": null
+          },
+          "status": 200,
+          "file": "a-release-request-with-automations/triggerReleaseRequestAutomations.json",
+          "frozen": {
+            "ids": [
+              "$.requestId",
+              "$.automations[*].bumpId"
+            ],
+            "instants": [
+              "$.automations[*].updatedAt"
+            ],
+            "strings": [
+              "$.automations[*].branch"
+            ],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "a repository with downstream components",
+      "slug": "a-repository-with-downstream-components",
+      "params": {
+        "repoName": "contract-ui-jslib",
+        "repositoryId": "00000000-0000-4000-8000-000000000001"
+      },
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "getRepositoryDownstream",
+          "method": "GET",
+          "path": "/maintenance/api/repositories/{repositoryId}/downstream",
+          "status": 200,
+          "file": "a-repository-with-downstream-components/getRepositoryDownstream.json",
+          "frozen": {
+            "ids": [
+              "$.catalogId",
+              "$.downstream[*].catalogId"
+            ],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "manifests that pin artifacts",
+      "slug": "manifests-that-pin-artifacts",
+      "params": {
+        "repoName": "contract-service"
+      },
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "listDependencyPins",
+          "method": "GET",
+          "path": "/maintenance/api/pins",
+          "status": 200,
+          "file": "manifests-that-pin-artifacts/listDependencyPins.json",
+          "frozen": {
+            "ids": [],
+            "instants": [
+              "$.generatedAt",
+              "$.repositories[*].lastScanAt"
+            ],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
       "name": "no pending bumps",
       "slug": "no-pending-bumps",
       "params": {},
@@ -40,6 +226,26 @@
       },
       "dependsOn": [],
       "operations": [
+        {
+          "operationId": "getBump",
+          "method": "GET",
+          "path": "/maintenance/api/bumps/{releasedBumpId}",
+          "status": 200,
+          "file": "pending-bumps/getBump.json",
+          "frozen": {
+            "ids": [
+              "$.id",
+              "$.releaseRequestId"
+            ],
+            "instants": [
+              "$.startedAt",
+              "$.finishedAt",
+              "$.releaseStateAt"
+            ],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        },
         {
           "operationId": "listPendingBumps",
           "method": "GET",

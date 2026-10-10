@@ -1,0 +1,36 @@
+{
+  "id": "00000000-0000-4000-8000-000000000005",
+  "repository": "contract-frontend",
+  "group": "dependencies",
+  "mode": "GROUP",
+  "branch": "maintenance/dependencies",
+  "environment": "dev",
+  "trigger": "SCHEDULED",
+  "status": "SUCCEEDED",
+  "ciEventId": null,
+  "ciRunId": null,
+  "ciRunIds": [],
+  "configPath": "ci/src/main/resources/platform-pipelines/maintenance-bump.yml",
+  "ciRunStatus": null,
+  "startedAt": "2026-01-01T00:00:00Z",
+  "finishedAt": "2026-01-01T00:00:00Z",
+  "message": null,
+  "resultSha": "0123456789abcdef0123456789abcdef01234567",
+  "releaseRequestId": "00000000-0000-4000-8000-000000000008",
+  "releaseState": "RELEASED",
+  "releaseDetail": null,
+  "releaseStateAt": "2026-01-01T00:00:00Z",
+  "baseRef": null,
+  "replaceHead": null,
+  "changes": [
+    {
+      "ecosystem": "NPM",
+      "manifestPath": "package.json",
+      "name": "@qits/ui-components",
+      "from": "2026.1.1",
+      "to": "2026.2.1",
+      "location": null
+    }
+  ],
+  "failure": null
+}

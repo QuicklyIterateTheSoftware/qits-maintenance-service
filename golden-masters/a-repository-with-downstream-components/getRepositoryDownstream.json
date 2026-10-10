@@ -1,0 +1,24 @@
+{
+  "repository": "contract-ui-jslib",
+  "catalogId": "00000000-0000-4000-8000-000000000001",
+  "downstream": [
+    {
+      "repository": "contract-frontend",
+      "catalogId": "00000000-0000-4000-8000-000000000002",
+      "archetype": "FRONTEND",
+      "depth": 1,
+      "via": [
+        "contract-ui-jslib"
+      ]
+    },
+    {
+      "repository": "contract-service",
+      "catalogId": "00000000-0000-4000-8000-000000000003",
+      "archetype": "SERVICE",
+      "depth": 2,
+      "via": [
+        "contract-frontend"
+      ]
+    }
+  ]
+}

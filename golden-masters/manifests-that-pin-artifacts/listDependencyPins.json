@@ -1,0 +1,53 @@
+{
+  "generatedAt": "2026-01-01T00:00:00Z",
+  "repositories": [
+    {
+      "name": "contract-service",
+      "status": "OK",
+      "lastScanAt": "2026-01-01T00:00:00Z",
+      "headSha": "3f1a9c0b7d2e4f5a6b8c9d0e1f2a3b4c5d6e7f80"
+    }
+  ],
+  "pins": [
+    {
+      "ecosystem": "daemon",
+      "name": "qits-eventstream-daemon",
+      "version": "2026.811.1",
+      "repository": "contract-service",
+      "manifestPath": "pom.xml",
+      "via": "maven eu.wohlben.qits:qits-eventstream"
+    },
+    {
+      "ecosystem": "docker",
+      "name": "qits/build-images/maven-base",
+      "version": "2026.813.1",
+      "repository": "contract-service",
+      "manifestPath": "docker/Dockerfile",
+      "via": null
+    },
+    {
+      "ecosystem": "docker",
+      "name": "qits/eventstream-daemon",
+      "version": "2026.811.1",
+      "repository": "contract-service",
+      "manifestPath": "pom.xml",
+      "via": "maven eu.wohlben.qits:qits-eventstream"
+    },
+    {
+      "ecosystem": "maven",
+      "name": "eu.wohlben.qits:qits-eventstream",
+      "version": "2026.811.1",
+      "repository": "contract-service",
+      "manifestPath": "pom.xml",
+      "via": null
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@qits/ui-components",
+      "version": "2026.8.1",
+      "repository": "contract-service",
+      "manifestPath": "package.json",
+      "via": null
+    }
+  ]
+}

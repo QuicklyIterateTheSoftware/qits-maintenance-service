@@ -57,6 +57,12 @@ class GoldenMasterRecordingTest {
    *     <$.path-to-array>:<field.path in each entry>}, sorted by that field's (seed-fixed) value
    *     before freezing, so ids are numbered in a stable order. Null when the order is the
    *     provider's own.
+   * @param query the query, apart from the path; a value that is exactly {@code {param}} is
+   *     expanded from the state's params and recorded unexpanded
+   * @param requestBody the JSON a write sends, recorded into the index as the operation's {@code
+   *     body}; null for a read and for a write whose operation takes no body (the served openapi
+   *     says which, and the recording fails on a mismatch). A {@code {param}} in it is expanded from
+   *     the state's params, and recorded unexpanded
    */
   record Interaction(
       String state,
@@ -67,9 +73,10 @@ class GoldenMasterRecordingTest {
       int status,
       String listFilteredTo,
       String sortedBy,
-      List<String> dropped) {
+      List<String> dropped,
+      String requestBody) {
 
-    /** An interaction with no query and nothing dropped. */
+    /** An interaction with no query, nothing dropped and no body. */
     Interaction(
         String state,
         String operationId,
@@ -78,13 +85,34 @@ class GoldenMasterRecordingTest {
         int status,
         String listFilteredTo,
         String sortedBy) {
-      this(state, operationId, method, path, Map.of(), status, listFilteredTo, sortedBy, List.of());
+      this(
+          state, operationId, method, path, Map.of(), status, listFilteredTo, sortedBy, List.of(),
+          null);
+    }
+
+    /** A read: no body, nothing dropped. */
+    static Interaction read(
+        String state, String operationId, String path, Map<String, String> query, String filter) {
+      return new Interaction(
+          state, operationId, "GET", path, query, 200, filter, null, List.of(), null);
+    }
+
+    /** A write. */
+    static Interaction write(
+        String state, String operationId, String path, int status, String requestBody) {
+      return new Interaction(
+          state, operationId, "POST", path, Map.of(), status, null, null, List.of(), requestBody);
     }
   }
 
+  private static final String AUTOMATIONS =
+      "/maintenance/api/release-requests/{requestId}/automations";
+
   /**
    * The pending bumps as the bumps menu asks for them: the newest 20, of every repository, filtered
-   * to the state's own bumps.
+   * to the state's own bumps; one of them in full; the estate reads qits-artifacts,
+   * qits-orchestrator and qits-projects make; and a release request's automations as qits-projects
+   * and the CLI settle, read and re-run them.
    */
   static final List<Interaction> INTERACTIONS =
       List.of(
@@ -97,7 +125,8 @@ class GoldenMasterRecordingTest {
               200,
               "$.bumps",
               null,
-              List.of()),
+              List.of(),
+              null),
           new Interaction(
               ProviderStates.NO_PENDING_BUMPS,
               "listPendingBumps",
@@ -107,10 +136,61 @@ class GoldenMasterRecordingTest {
               200,
               "$.bumps",
               null,
-              List.of()));
+              List.of(),
+              null),
+          Interaction.read(
+              ProviderStates.PENDING_BUMPS,
+              "getBump",
+              "/maintenance/api/bumps/{releasedBumpId}",
+              Map.of(),
+              null),
+          Interaction.read(
+              ProviderStates.MANIFESTS_THAT_PIN_ARTIFACTS,
+              "listDependencyPins",
+              "/maintenance/api/pins",
+              Map.of(),
+              null),
+          Interaction.read(
+              ProviderStates.A_REPOSITORY_WITH_DOWNSTREAM_COMPONENTS,
+              "getRepositoryDownstream",
+              "/maintenance/api/repositories/{repositoryId}/downstream",
+              Map.of(),
+              null),
+          // What qits-projects posts on every fold (HttpReleaseRequestAutomations.request).
+          Interaction.write(
+              ProviderStates.A_RELEASE_REQUEST_WITH_AUTOMATIONS,
+              "triggerReleaseRequestAutomations",
+              AUTOMATIONS,
+              200,
+              "{\"repository\":\"{repoName}\",\"foldSha\":\"{foldSha}\","
+                  + "\"previousFoldSha\":null,\"changedSincePrevious\":null,"
+                  + "\"sourceBranches\":[\"{branch}\"],\"workItem\":null}"),
+          Interaction.read(
+              ProviderStates.A_RELEASE_REQUEST_WITH_AUTOMATIONS,
+              "listReleaseRequestAutomations",
+              AUTOMATIONS,
+              Map.of("foldSha", "{foldSha}"),
+              null),
+          // qits-projects' re-run names the repository (HttpReleaseRequestAutomations.rerun)…
+          Interaction.write(
+              ProviderStates.A_RELEASE_REQUEST_WITH_A_FAILED_AUTOMATION,
+              "runReleaseRequestAutomation",
+              AUTOMATIONS + "/{kind}/runs",
+              202,
+              "{\"workItem\":null,\"repository\":\"{repoName}\"}"),
+          // …the CLI's names nothing: the repository is the one the request's rows name.
+          Interaction.write(
+              ProviderStates.A_RELEASE_REQUEST_WITH_AN_AUTOMATION_TO_RERUN,
+              "runReleaseRequestAutomation",
+              AUTOMATIONS + "/{kind}/runs",
+              202,
+              "{}"));
 
   private static final ObjectMapper JSON = new ObjectMapper();
   private static final Pattern TEMPLATE_PARAM = Pattern.compile("\\{([^}]+)}");
+
+  /** A {@code {param}} inside a JSON body: a name in braces, which JSON's own braces never are. */
+  private static final Pattern BODY_PARAM = Pattern.compile("\\{([A-Za-z][A-Za-z0-9]*)}");
 
   @Inject ProviderStates states;
 
@@ -125,7 +205,15 @@ class GoldenMasterRecordingTest {
     Map<String, ObjectNode> indexStates = new TreeMap<>();
     Map<String, Map<String, ObjectNode>> indexOperations = new TreeMap<>();
 
+    Set<String> takesBody = operationsTakingABody();
     for (Interaction interaction : INTERACTIONS) {
+      if ((interaction.requestBody() != null) != takesBody.contains(interaction.operationId())) {
+        failures.add(
+            interaction.operationId()
+                + (interaction.requestBody() != null
+                    ? " takes no request body, but the recording sends one: record null."
+                    : " takes a request body, but the recording sends none."));
+      }
       Recorded recorded = record(interaction);
       String slug = ProviderStates.slug(interaction.state());
       String file = slug + "/" + interaction.operationId() + ".json";
@@ -149,6 +237,9 @@ class GoldenMasterRecordingTest {
       if (!interaction.query().isEmpty()) {
         ObjectNode query = operation.putObject("query");
         new TreeMap<>(interaction.query()).forEach(query::put);
+      }
+      if (interaction.requestBody() != null) {
+        operation.set("body", JSON.readTree(interaction.requestBody()));
       }
       operation.put("status", interaction.status());
       operation.put("file", file);
@@ -226,11 +317,20 @@ class GoldenMasterRecordingTest {
   private Recorded recordIn(Interaction interaction, ProviderStates.Setup setup) throws IOException {
     Map<String, String> params = setup.params();
 
+    Map<String, String> query = new TreeMap<>();
+    interaction.query().forEach((k, v) -> query.put(k, expand(v, params, TEMPLATE_PARAM)));
+    var request = given().queryParams(query);
+    if (interaction.requestBody() != null) {
+      request =
+          request
+              .contentType("application/json")
+              .body(expand(interaction.requestBody(), params, BODY_PARAM));
+    } else {
+      // As a browser sends a body-less call: RestAssured would otherwise add a form content type.
+      request = request.noContentType();
+    }
     Response response =
-        given()
-            .queryParams(interaction.query())
-            .when()
-            .request(interaction.method(), expand(interaction.path(), params));
+        request.when().request(interaction.method(), expand(interaction.path(), params));
     String raw = response.asString();
     if (response.statusCode() != interaction.status()) {
       throw new AssertionError(
@@ -330,7 +430,11 @@ class GoldenMasterRecordingTest {
   }
 
   private static String expand(String template, Map<String, String> params) {
-    Matcher m = TEMPLATE_PARAM.matcher(template);
+    return expand(template, params, TEMPLATE_PARAM);
+  }
+
+  private static String expand(String template, Map<String, String> params, Pattern pattern) {
+    Matcher m = pattern.matcher(template);
     StringBuilder out = new StringBuilder();
     while (m.find()) {
       String value = params.get(m.group(1));
@@ -342,6 +446,30 @@ class GoldenMasterRecordingTest {
     }
     m.appendTail(out);
     return out.toString();
+  }
+
+  /** The operationIds whose operation declares a request body, read off the served openapi. */
+  private static Set<String> operationsTakingABody() throws IOException {
+    JsonNode paths =
+        JSON.readTree(
+                given()
+                    .when()
+                    .get("/maintenance/q/openapi?format=json")
+                    .then()
+                    .statusCode(200)
+                    .extract()
+                    .asString())
+            .path("paths");
+    Set<String> ids = new TreeSet<>();
+    paths.forEach(
+        path ->
+            path.forEach(
+                operation -> {
+                  if (operation.has("operationId") && operation.has("requestBody")) {
+                    ids.add(operation.get("operationId").asText());
+                  }
+                }));
+    return ids;
   }
 
   private static ArrayNode strings(List<String> values) {

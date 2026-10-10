@@ -118,4 +118,29 @@ class ConsumerPactVerificationTest {
   Map<String, String> noPendingBumps() {
     return states.params(ProviderStates.NO_PENDING_BUMPS);
   }
+
+  @State(ProviderStates.MANIFESTS_THAT_PIN_ARTIFACTS)
+  Map<String, String> manifestsThatPinArtifacts() {
+    return states.params(ProviderStates.MANIFESTS_THAT_PIN_ARTIFACTS);
+  }
+
+  @State(ProviderStates.A_REPOSITORY_WITH_DOWNSTREAM_COMPONENTS)
+  Map<String, String> aRepositoryWithDownstreamComponents() {
+    return states.params(ProviderStates.A_REPOSITORY_WITH_DOWNSTREAM_COMPONENTS);
+  }
+
+  @State(ProviderStates.A_RELEASE_REQUEST_WITH_AUTOMATIONS)
+  Map<String, String> aReleaseRequestWithAutomations() {
+    return states.params(ProviderStates.A_RELEASE_REQUEST_WITH_AUTOMATIONS);
+  }
+
+  @State(ProviderStates.A_RELEASE_REQUEST_WITH_A_FAILED_AUTOMATION)
+  Map<String, String> aReleaseRequestWithAFailedAutomation() {
+    return states.params(ProviderStates.A_RELEASE_REQUEST_WITH_A_FAILED_AUTOMATION);
+  }
+
+  @State(ProviderStates.A_RELEASE_REQUEST_WITH_AN_AUTOMATION_TO_RERUN)
+  Map<String, String> aReleaseRequestWithAnAutomationToRerun() {
+    return states.params(ProviderStates.A_RELEASE_REQUEST_WITH_AN_AUTOMATION_TO_RERUN);
+  }
 }
