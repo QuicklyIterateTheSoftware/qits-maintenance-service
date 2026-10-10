@@ -57,7 +57,9 @@ public class AdoptionController {
    */
   @GET
   @Path("/by-release")
-  @Operation(summary = "How far one released repository and version got")
+  @Operation(
+      operationId = "getAdoptionByRelease",
+      summary = "How far one released repository and version got")
   @APIResponse(responseCode = "200", description = "The journey")
   @APIResponse(responseCode = "400", description = "Both repository and version are required")
   @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})

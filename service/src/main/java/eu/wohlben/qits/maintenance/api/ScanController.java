@@ -58,7 +58,9 @@ public class ScanController {
   }
 
   @POST
-  @Operation(summary = "Re-scan the manifests and refresh the latest versions")
+  @Operation(
+      operationId = "requestScan",
+      summary = "Re-scan the manifests and refresh the latest versions")
   @APIResponse(responseCode = "202", description = "Queued")
   @APIResponse(responseCode = "400", description = "Unknown scope")
   @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system"})
@@ -91,7 +93,7 @@ public class ScanController {
    */
   @GET
   @Path("/{id}")
-  @Operation(summary = "One scan and its status")
+  @Operation(operationId = "getScan", summary = "One scan and its status")
   @APIResponse(responseCode = "200", description = "The scan")
   @APIResponse(responseCode = "404", description = "No such scan")
   @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})

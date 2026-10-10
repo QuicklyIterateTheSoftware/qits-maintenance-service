@@ -90,7 +90,9 @@ public class ReleaseRequestAutomationController {
    */
   @POST
   @Path("/{requestId}/automations")
-  @Operation(summary = "Settle a release request's automations at one fold")
+  @Operation(
+      operationId = "triggerReleaseRequestAutomations",
+      summary = "Settle a release request's automations at one fold")
   @APIResponse(responseCode = "200", description = "Every applicable kind's state at the fold")
   @APIResponse(responseCode = "400", description = "Not a request id, not a sha, or not a work item")
   @APIResponse(
@@ -121,7 +123,9 @@ public class ReleaseRequestAutomationController {
    */
   @GET
   @Path("/{requestId}/automations")
-  @Operation(summary = "A release request's automations at one fold")
+  @Operation(
+      operationId = "listReleaseRequestAutomations",
+      summary = "A release request's automations at one fold")
   @APIResponse(responseCode = "200", description = "Every kind with a row at the fold")
   @APIResponse(responseCode = "400", description = "Not a request id, or not a sha")
   @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
@@ -137,7 +141,9 @@ public class ReleaseRequestAutomationController {
    */
   @POST
   @Path("/{requestId}/automations/{kind}/runs")
-  @Operation(summary = "Re-run one automation on a release request's current fold")
+  @Operation(
+      operationId = "runReleaseRequestAutomation",
+      summary = "Re-run one automation on a release request's current fold")
   @APIResponse(responseCode = "202", description = "Requested; poll GET /bumps/{id}")
   @APIResponse(responseCode = "400", description = "Not a request id, or not a work item")
   @APIResponse(responseCode = "404", description = "No such kind, or no such repository")

@@ -37,7 +37,9 @@ public class PinsController {
   @Inject Inventory inventory;
 
   @GET
-  @Operation(summary = "Every internal artifact version the platform's manifests still pin")
+  @Operation(
+      operationId = "listDependencyPins",
+      summary = "Every internal artifact version the platform's manifests still pin")
   @APIResponse(responseCode = "200", description = "The pins, with the inventory's freshness")
   @APIResponse(responseCode = "503", description = "The inventory holds no repository at all")
   @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})

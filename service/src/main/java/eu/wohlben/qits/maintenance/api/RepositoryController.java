@@ -60,7 +60,9 @@ public class RepositoryController {
   public record AcceptedResponse(UUID id) {}
 
   @GET
-  @Operation(summary = "Every repository in the inventory, with its groups and what is pending")
+  @Operation(
+      operationId = "listRepositories",
+      summary = "Every repository in the inventory, with its groups and what is pending")
   @APIResponse(responseCode = "200", description = "The repositories")
   @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
   public List<RepositoryDto> repositories() {
@@ -75,7 +77,7 @@ public class RepositoryController {
    */
   @GET
   @jakarta.ws.rs.Path("/{name}")
-  @Operation(summary = "One repository with every pin it holds")
+  @Operation(operationId = "getRepository", summary = "One repository with every pin it holds")
   @APIResponse(responseCode = "200", description = "The repository")
   @APIResponse(responseCode = "404", description = "No such repository in the inventory")
   @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
@@ -99,7 +101,9 @@ public class RepositoryController {
    */
   @GET
   @jakarta.ws.rs.Path("/{name}/dependents")
-  @Operation(summary = "Who embeds the artifacts this repository publishes")
+  @Operation(
+      operationId = "listRepositoryDependents",
+      summary = "Who embeds the artifacts this repository publishes")
   @APIResponse(responseCode = "200", description = "The dependents, per published artifact")
   @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
   public RepositoryDependentsDto dependents(@PathParam("name") String name) {
@@ -131,7 +135,9 @@ public class RepositoryController {
    */
   @GET
   @jakarta.ws.rs.Path("/{name}/downstream")
-  @Operation(summary = "Everything downstream of this repository, ordered upstream first")
+  @Operation(
+      operationId = "getRepositoryDownstream",
+      summary = "Everything downstream of this repository, ordered upstream first")
   @APIResponse(responseCode = "200", description = "The closure, depth ascending then name")
   @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
   public DownstreamDto downstream(@PathParam("name") String name) {
@@ -159,7 +165,9 @@ public class RepositoryController {
    */
   @POST
   @jakarta.ws.rs.Path("/{name}/groups/{group}/bumps")
-  @Operation(summary = "Put this group's pending changes on its maintenance branch")
+  @Operation(
+      operationId = "requestGroupBump",
+      summary = "Put this group's pending changes on its maintenance branch")
   @APIResponse(responseCode = "202", description = "Requested; poll GET /bumps/{id}")
   @APIResponse(responseCode = "404", description = "No such repository, or no such group")
   @APIResponse(responseCode = "409", description = "One is already active, or bumping is disabled")

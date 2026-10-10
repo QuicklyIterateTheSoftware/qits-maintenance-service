@@ -54,7 +54,9 @@ public class ArtifactController {
   }
 
   @GET
-  @Operation(summary = "Every artifact this platform publishes, with its reach")
+  @Operation(
+      operationId = "listArtifacts",
+      summary = "Every artifact this platform publishes, with its reach")
   @APIResponse(responseCode = "200", description = "The artifacts")
   @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
   public List<ArtifactDto> artifacts() {
@@ -76,7 +78,7 @@ public class ArtifactController {
    */
   @POST
   @Path("/ingest")
-  @Operation(summary = "Read one released artifact's sbom now")
+  @Operation(operationId = "ingestArtifactSbom", summary = "Read one released artifact's sbom now")
   @APIResponse(responseCode = "202", description = "Queued; the id is the artifact row")
   @APIResponse(responseCode = "400", description = "Unknown ecosystem, or no name or version")
   @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system"})

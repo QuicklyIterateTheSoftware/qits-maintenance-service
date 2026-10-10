@@ -670,6 +670,7 @@ paths:
   /maintenance/api/adoption/by-release:
     get:
       summary: How far one released repository and version got
+      operationId: getAdoptionByRelease
       parameters:
       - name: repository
         in: query
@@ -703,6 +704,7 @@ paths:
   /maintenance/api/artifacts:
     get:
       summary: "Every artifact this platform publishes, with its reach"
+      operationId: listArtifacts
       responses:
         "200":
           description: The artifacts
@@ -727,6 +729,7 @@ paths:
   /maintenance/api/artifacts/ingest:
     post:
       summary: Read one released artifact's sbom now
+      operationId: ingestArtifactSbom
       requestBody:
         content:
           application/json:
@@ -840,6 +843,7 @@ paths:
         - qits:agent
     post:
       summary: Open a bump dispatch window now
+      operationId: openBumpWindow
       responses:
         "200":
           description: The window that is now open
@@ -861,6 +865,7 @@ paths:
         - qits:agent
     delete:
       summary: Close the bump dispatch window
+      operationId: closeBumpWindow
       responses:
         "204":
           description: There is no window now
@@ -910,6 +915,7 @@ paths:
   /maintenance/api/dependencies:
     get:
       summary: "Dependencies matching a glob, with every pin of each"
+      operationId: listDependencies
       parameters:
       - name: kind
         in: query
@@ -946,6 +952,7 @@ paths:
   /maintenance/api/dependencies/dependents:
     get:
       summary: Every released artifact of ours that embeds this dependency
+      operationId: listDependencyDependents
       parameters:
       - name: all
         in: query
@@ -984,6 +991,7 @@ paths:
   /maintenance/api/pins:
     get:
       summary: Every internal artifact version the platform's manifests still pin
+      operationId: listDependencyPins
       responses:
         "200":
           description: "The pins, with the inventory's freshness"
@@ -1008,6 +1016,7 @@ paths:
   /maintenance/api/release-requests/{requestId}/automations:
     post:
       summary: Settle a release request's automations at one fold
+      operationId: triggerReleaseRequestAutomations
       parameters:
       - name: requestId
         in: path
@@ -1045,6 +1054,7 @@ paths:
         - qits:agent
     get:
       summary: A release request's automations at one fold
+      operationId: listReleaseRequestAutomations
       parameters:
       - name: requestId
         in: path
@@ -1079,6 +1089,7 @@ paths:
   /maintenance/api/release-requests/{requestId}/automations/{kind}/runs:
     post:
       summary: Re-run one automation on a release request's current fold
+      operationId: runReleaseRequestAutomation
       parameters:
       - name: kind
         in: path
@@ -1121,6 +1132,7 @@ paths:
   /maintenance/api/repositories:
     get:
       summary: "Every repository in the inventory, with its groups and what is pending"
+      operationId: listRepositories
       responses:
         "200":
           description: The repositories
@@ -1145,6 +1157,7 @@ paths:
   /maintenance/api/repositories/{name}:
     get:
       summary: One repository with every pin it holds
+      operationId: getRepository
       parameters:
       - name: name
         in: path
@@ -1175,6 +1188,7 @@ paths:
   /maintenance/api/repositories/{name}/dependents:
     get:
       summary: Who embeds the artifacts this repository publishes
+      operationId: listRepositoryDependents
       parameters:
       - name: name
         in: path
@@ -1203,6 +1217,7 @@ paths:
   /maintenance/api/repositories/{name}/downstream:
     get:
       summary: "Everything downstream of this repository, ordered upstream first"
+      operationId: getRepositoryDownstream
       parameters:
       - name: name
         in: path
@@ -1231,6 +1246,7 @@ paths:
   /maintenance/api/repositories/{name}/groups/{group}/bumps:
     post:
       summary: Put this group's pending changes on its maintenance branch
+      operationId: requestGroupBump
       parameters:
       - name: group
         in: path
@@ -1264,6 +1280,7 @@ paths:
   /maintenance/api/sbom-check:
     get:
       summary: The last SBOM check's report
+      operationId: getSbomCheckReport
       responses:
         "200":
           description: The report
@@ -1288,6 +1305,7 @@ paths:
   /maintenance/api/sbom-check/runs:
     post:
       summary: Run the SBOM check now
+      operationId: runSbomCheck
       responses:
         "202":
           description: Ran; the body is the report it stored
@@ -1307,6 +1325,7 @@ paths:
   /maintenance/api/scans:
     post:
       summary: Re-scan the manifests and refresh the latest versions
+      operationId: requestScan
       requestBody:
         content:
           application/json:
@@ -1332,6 +1351,7 @@ paths:
   /maintenance/api/scans/{id}:
     get:
       summary: One scan and its status
+      operationId: getScan
       parameters:
       - name: id
         in: path

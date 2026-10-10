@@ -87,7 +87,7 @@ public class BumpController {
    */
   @POST
   @jakarta.ws.rs.Path("/window")
-  @Operation(summary = "Open a bump dispatch window now")
+  @Operation(operationId = "openBumpWindow", summary = "Open a bump dispatch window now")
   @APIResponse(responseCode = "200", description = "The window that is now open")
   @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
   public BumpWindowDto openWindow() {
@@ -102,7 +102,7 @@ public class BumpController {
    */
   @DELETE
   @jakarta.ws.rs.Path("/window")
-  @Operation(summary = "Close the bump dispatch window")
+  @Operation(operationId = "closeBumpWindow", summary = "Close the bump dispatch window")
   @APIResponse(responseCode = "204", description = "There is no window now")
   @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
   public void closeWindow() {

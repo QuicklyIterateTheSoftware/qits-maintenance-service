@@ -39,7 +39,9 @@ public class DependencyController {
   @Inject ArtifactGraph graph;
 
   @GET
-  @Operation(summary = "Dependencies matching a glob, with every pin of each")
+  @Operation(
+      operationId = "listDependencies",
+      summary = "Dependencies matching a glob, with every pin of each")
   @APIResponse(responseCode = "200", description = "The dependencies")
   @APIResponse(responseCode = "400", description = "kind is neither INTERNAL nor EXTERNAL")
   @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
@@ -63,7 +65,9 @@ public class DependencyController {
    */
   @GET
   @Path("/dependents")
-  @Operation(summary = "Every released artifact of ours that embeds this dependency")
+  @Operation(
+      operationId = "listDependencyDependents",
+      summary = "Every released artifact of ours that embeds this dependency")
   @APIResponse(responseCode = "200", description = "The dependents")
   @APIResponse(responseCode = "400", description = "Unknown ecosystem, or no name")
   @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
