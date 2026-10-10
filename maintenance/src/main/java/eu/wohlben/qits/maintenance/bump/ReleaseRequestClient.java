@@ -555,7 +555,7 @@ public class ReleaseRequestClient {
     String detail = text(request, "detail");
     return new ReleaseState(
         state,
-        detail == null ? text(request, "conflict") : detail,
+        detail == null ? conflict(request) : detail,
         null,
         text(request, "mergedSha"),
         branchSources(request));
@@ -683,6 +683,37 @@ public class ReleaseRequestClient {
     }
     String flat = body.replace('\n', ' ').trim();
     return flat.length() <= 200 ? flat : flat.substring(0, 200) + "…";
+  }
+
+  /**
+   * The request's merge conflict as one sentence, or null. qits-projects answers it as an object —
+   * {@code target} and {@code conflicts[]} of {@code path} and {@code head} — not as text.
+   */
+  static String conflict(JsonNode request) {
+    JsonNode conflict = request == null ? null : request.get("conflict");
+    if (conflict == null || !conflict.isObject()) {
+      return null;
+    }
+    List<String> paths = new ArrayList<>();
+    JsonNode conflicts = conflict.get("conflicts");
+    if (conflicts != null && conflicts.isArray()) {
+      for (JsonNode one : conflicts) {
+        String path = text(one, "path");
+        if (path != null) {
+          String head = text(one, "head");
+          paths.add(head == null ? path : path + " (" + head + ")");
+        }
+      }
+    }
+    String target = text(conflict, "target");
+    StringBuilder sentence = new StringBuilder("the fold conflicted");
+    if (target != null) {
+      sentence.append(" on ").append(target);
+    }
+    if (!paths.isEmpty()) {
+      sentence.append(": ").append(String.join(", ", paths));
+    }
+    return sentence.toString();
   }
 
   private static String text(JsonNode body, String field) {

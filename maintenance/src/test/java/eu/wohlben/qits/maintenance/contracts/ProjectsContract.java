@@ -52,10 +52,9 @@ import java.util.function.Supplier;
  * target.</b> {@link TicketClient#drop} reads only the status, so any recorded {@code
  * setWorkStatus} 200 proves what it depends on.
  *
- * <p><b>{@code request.conflict} is not bound.</b> {@link ReleaseRequestClient#state} reads it as
- * text, but qits-projects answers an object there ({@code conflict.target}, ...), so the read
- * always comes back empty. Binding it as a string would fail against the provider; the gap is the
- * client's to fix, not the contract's to hide.
+ * <p><b>{@code request.conflict} is not bound.</b> {@link ReleaseRequestClient#state} reads it, as
+ * the object qits-projects answers, only when {@code detail} is null; no recorded state answers a
+ * conflict without a {@code detail}, so no row reaches that read.
  *
  * <p>The calls qits-maintenance makes with no golden master to bind yet are in {@link
  * PendingContract}.
