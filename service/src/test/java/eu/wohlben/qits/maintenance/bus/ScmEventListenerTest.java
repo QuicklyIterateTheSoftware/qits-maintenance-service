@@ -41,8 +41,8 @@ import org.junit.jupiter.api.Test;
  *
  * <p>The stand-ins are a {@link MaintenanceStore} holding rows in maps and a {@link ScanService} that
  * records what it was asked for instead of queueing it. That is the whole seam: what a scan then
- * does is {@code ScanCycleIT}'s and {@code MaintenanceApiTest}'s, and what a branch row means to a
- * bump is {@code BumpIT}'s.
+ * does is {@code ScanCycleIT}'s and {@code MaintenanceApiTest}'s, and what becomes of a retired
+ * group branch is {@code GroupRetirementTest}'s.
  *
  * <p>Every payload is produced by {@link ForeignEventContractTest}'s transcription through the real
  * canonical serializer, so the bytes are the bytes qits-workspaces and qits-githost publish.

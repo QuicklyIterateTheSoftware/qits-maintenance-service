@@ -54,9 +54,9 @@ import org.jboss.logging.Logger;
  * catalog, of every manifest, of half the registries — and its schedule is set by how fast those
  * facts go stale; a bump is a WRITE into somebody else's repository, and its schedule is set by when
  * a branch is welcome. Coupling them meant the external scan's 01:00 read decided when the internal
- * half got a branch, and moving either cron moved the other's meaning. The clock still has standing
- * instructions — they live in {@code schedule/BumpSchedule}, which reads the inventory this service
- * wrote and asks for the bumps on its own cron.
+ * half got a branch, and moving either cron moved the other's meaning. What is owed a bump is read
+ * off the inventory this service wrote by {@code bump.BumpDispatcher}, which opens a release request
+ * whose pre-run writes it (qits-1133).
  */
 @ApplicationScoped
 public class ScanService {
@@ -329,8 +329,8 @@ public class ScanService {
       }
       try {
         if (store.recordLatest(lookup.ecosystem(), lookup.name(), latest, Instant.now())) {
-          // The poll is one of the three places mt_latest advances (qits-1133); a no-op unless
-          // qits.maintenance.pre-run.upstream.enabled is set.
+          // The poll is one of the three places mt_latest advances (qits-1133); a no-op while the
+          // dependency-bump automation is switched off.
           upstream.latestMoved(lookup.ecosystem(), lookup.name());
         }
       } catch (RuntimeException e) {

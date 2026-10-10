@@ -8,7 +8,6 @@ import eu.wohlben.qits.maintenance.entity.MtArtifactComponent;
 import eu.wohlben.qits.maintenance.entity.MtArtifactEdge;
 import eu.wohlben.qits.maintenance.entity.MtBranch;
 import eu.wohlben.qits.maintenance.entity.MtBump;
-import eu.wohlben.qits.maintenance.entity.MtBumpWindow;
 import eu.wohlben.qits.maintenance.entity.MtGitlinkPin;
 import eu.wohlben.qits.maintenance.entity.MtGitlinkTree;
 import eu.wohlben.qits.maintenance.entity.MtGroup;
@@ -407,8 +406,8 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
    * {@code mt_artifact} row written under another context's spelling still needs — survives with it.
    *
    * <p><b>The pins and the groups go</b>, because they are the cache: a repository the catalog
-   * dropped contributes no pending change, offers the clock no group to bump (see {@code
-   * BumpSchedule}, which additionally skips everything that is not OK), and has no line anybody
+   * dropped contributes no pending change, is owed no bump (see {@code BumpDispatcher}, which
+   * additionally skips everything that is not OK), and has no line anybody
    * could edit. <b>{@code mt_branch} is left standing</b>, with {@code mt_scan} and {@code mt_bump}:
    * those three are the LOG of what was asked and what came back, derivable from nothing, and a
    * repository leaving the catalog does not un-push a branch that was pushed.
@@ -910,46 +909,6 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
 
   // --- bumps --------------------------------------------------------------------------------
 
-  /**
-   * Opens a bump.
-   *
-   * <p><b>The active-bump check is INSIDE the transaction</b> rather than a read before it. A
-   * person pressing the button while a scheduled scan asks for the same group is the ordinary case,
-   * and a check outside the write is a race whose prize is two runs pushing one branch.
-   */
-  @ActivateRequestContext
-  public UUID openBump(
-      String repository,
-      String group,
-      String branch,
-      String environment,
-      BumpTrigger trigger,
-      List<?> changes,
-      Instant now) {
-    return DbRetry.inNewTx(
-        "open a bump of " + repository + "/" + group,
-        () -> {
-          MtBump active = activeBumpRow(repository, group);
-          if (active != null) {
-            throw new BumpAlreadyActiveException(repository, group, active.id);
-          }
-          MtBump row = new MtBump();
-          row.id = UUID.randomUUID();
-          row.repository = repository;
-          row.groupName = group;
-          row.mode = BumpMode.GROUP.name();
-          row.branch = branch;
-          row.environment = environment;
-          row.trigger = trigger.name();
-          row.status = BumpStatus.REQUESTED.name();
-          row.changes = writeJson(changes);
-          row.startedAt = now;
-          row.persist();
-          getEntityManager().flush();
-          return row.id;
-        });
-  }
-
   /** Records the branch head a run starts from, so the ending can tell whether it moved. */
   @ActivateRequestContext
   public void bumpStartHead(UUID id, String head) {
@@ -1250,43 +1209,6 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
         });
   }
 
-  /**
-   * Every bump that pushed a branch and has not settled its release ask — what the sweep re-attempts.
-   *
-   * <p>Bounded by construction rather than by a limit: every outcome of the ask writes the column, so
-   * a row leaves this listing after one tick. The rows that stay are the ones whose ask is genuinely
-   * owed, and the branch-state check the caller makes is what ends even those.
-   *
-   * <p><b>GROUP mode only, and that is what keeps the boundedness true.</b> A targeted bump never
-   * asks for a release — the caller already has the request its pins are for — so its {@code
-   * release_request_id} is null for ever by design. Without the term every targeted row would join
-   * this listing the moment it succeeded and be re-attempted once per poll tick for the life of the
-   * row: not an ask that is owed, but one that will never be made.
-   *
-   * <p><b>NOTHING_TO_DO is here too, and it is what makes a stranded branch self-heal.</b> That
-   * ending means "this run pushed nothing", which is not "this branch has nothing unreleased" — a
-   * head read that raced the step's own push is enough to separate the two, and the branch then sat
-   * unreleased while the dispatcher held its repository for a release nobody had asked for
-   * (qits-mirror-platform-service, 2026-09-16, a day on an old qits-integrations). {@code
-   * BumpService.finishGroup} now makes the ask at the ending when the branch is ahead of main; this
-   * term is what reaches the rows that ended before it did, and what re-attempts an ask that did not
-   * land. The caller's branch-state check is still what ends them: a NOTHING_TO_DO whose branch is
-   * genuinely main writes {@code CONVERGED} on the first tick and leaves, so the listing stays
-   * bounded exactly as the paragraph above describes.
-   */
-  @ActivateRequestContext
-  public List<MtBump> bumpsOwedARelease() {
-    return DbRetry.inNewTx(
-        "read the bumps owed a release ask",
-        () ->
-            MtBump.find(
-                    "status in ?1 and releaseRequestId is null and mode = ?2",
-                    Sort.by("startedAt"),
-                    List.of(BumpStatus.SUCCEEDED.name(), BumpStatus.NOTHING_TO_DO.name()),
-                    BumpMode.GROUP.name())
-                .list());
-  }
-
   @ActivateRequestContext
   public Optional<MtBump> bump(UUID id) {
     return DbRetry.inNewTx(
@@ -1354,87 +1276,38 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
                 .list());
   }
 
-  /** The group bump holding one group's branch, if there is one. */
-  @ActivateRequestContext
-  public Optional<MtBump> activeBump(String repository, String group) {
-    return DbRetry.inNewTx(
-        "read the active bump of one group",
-        () -> Optional.ofNullable(activeBumpRow(repository, group)));
-  }
-
   /**
-   * The newest bump of one group, whatever became of it.
-   *
-   * <p><b>Newest, not newest-ended</b> — the dispatcher asks this to find out whether the last thing
-   * it did to a repository is still standing, and a row that is REQUESTED or RUNNING is an answer to
-   * that question too (it is not a bump that ended without failing, so it holds nothing back). One
-   * row per repository per tick, which is why this exists rather than {@link #bumps(String, int)}:
-   * that one reads a page of history for a listing, and the gate wants a single row.
-   */
-  @ActivateRequestContext
-  public Optional<MtBump> newestBump(String repository, String group) {
-    return DbRetry.inNewTx(
-        "read the newest bump of one group",
-        () ->
-            Optional.ofNullable(
-                (MtBump)
-                    MtBump.find(
-                            // GROUP MODE ONLY. The question is whether this group's nightly branch is
-                            // waiting on a release; a targeted bump onto somebody's workspace branch
-                            // is not an answer to it, and letting one be the newest row would hold —
-                            // or free — a group on the strength of work done to a different ref for a
-                            // different caller.
-                            "repository = ?1 and groupName = ?2 and mode = ?3",
-                            Sort.by("startedAt").descending(),
-                            repository,
-                            group,
-                            BumpMode.GROUP.name())
-                        .firstResult()));
-  }
-
-  /**
-   * WHEN THE CLOCK LAST REACHED EACH REPOSITORY — the newest {@code started_at} of its SCHEDULED
-   * bumps, one entry per repository that has ever had one.
+   * WHEN THE DISPATCHER LAST REACHED EACH REPOSITORY — the newest {@code opened_at} of the MAIN-ONLY
+   * release requests it opened there, one entry per repository that has ever had one.
    *
    * <p><b>It exists to break a tie, and the tie used to be broken by the alphabet.</b> The
    * dispatcher builds its candidates by walking {@link #repositories()}, which sorts by name, and
    * {@code BumpOrder} then hands out the first free candidate in the order it was given — so among
-   * repositories that are equally ready, the arbiter was the first letter of the name. One bump goes
-   * at a time and each is held until its own release lands, so a fan-out of the whole estate drains
-   * at roughly one repository every five to fifteen minutes and the end of the alphabet is always
-   * last. Measured 2026-09-13: {@code qits-projects-daemon} and {@code qits-workspace-daemon}
-   * consume the identical two jars from one {@code qits-coding-agents} release; the first was bumped
-   * at 19:53 and the second at 21:28, nine repositories later, for no reason but its name. That is
-   * permanent starvation rather than jitter — the same repositories lose every single time — which
-   * is what makes it worth a query. Ordering the candidates by this map ascending puts the
-   * least-recently-bumped first, and a repository can no longer be permanently last.
+   * repositories that are equally ready, the arbiter was the first letter of the name, and a fan-out
+   * of the whole estate always ended with the same repositories (measured 2026-09-13: {@code
+   * qits-workspace-daemon} nine repositories after {@code qits-projects-daemon} for the same two
+   * jars). Ordering the candidates by this map ascending puts the least-recently-reached first.
    *
-   * <p><b>SCHEDULED rows only, and the term is load-bearing.</b> A targeted bump is a caller's press
-   * on a branch that caller owns, and a MANUAL group bump is somebody pressing the button; neither
-   * is the clock reaching this repository, and counting either would let a person asking for one
-   * favour push that repository to the back of the queue this map drains — exactly the starvation
-   * the tiebreak is here to end.
+   * <p><b>MAIN-ONLY requests only.</b> A person's request is not the dispatcher reaching a
+   * repository. Until R5 this read the SCHEDULED group bumps; those are history now, and a map built
+   * from them would freeze the order at the cutover.
    *
-   * <p>A repository with no scheduled bump at all is simply ABSENT rather than carrying a sentinel:
-   * "never" is not a timestamp, and the caller is the one that decides what never ranks as (it ranks
-   * as the oldest, which is the honest reading — nothing has ever been handed to it).
-   *
-   * <p>One grouped query per tick over {@code mt_bump}, not a row per candidate: the table holds
-   * every bump this service has ever dispatched, so a scan folded into a map in Java would grow
-   * without bound while the answer stays one row per repository.
+   * <p>A repository never reached is simply ABSENT: "never" is not a timestamp, and the caller
+   * decides what it ranks as (the oldest).
    */
   @ActivateRequestContext
-  public Map<String, Instant> lastScheduledBumpAt() {
+  public Map<String, Instant> lastDispatchedAt() {
     return DbRetry.inNewTx(
-        "read when the clock last reached each repository",
+        "read when the dispatcher last reached each repository",
         () -> {
           List<Object[]> rows =
               getEntityManager()
                   .createQuery(
-                      "select bump.repository, max(bump.startedAt) from MtBump bump"
-                          + " where bump.trigger = :trigger group by bump.repository",
+                      "select request.repository, max(request.openedAt) from MtReleaseRequest"
+                          + " request where request.opened = true and request.purpose = :purpose"
+                          + " and request.openedAt is not null group by request.repository",
                       Object[].class)
-                  .setParameter("trigger", BumpTrigger.SCHEDULED.name())
+                  .setParameter("purpose", MtReleaseRequest.MAIN_ONLY)
                   .getResultList();
           Map<String, Instant> newest = new LinkedHashMap<>();
           for (Object[] row : rows) {
@@ -1774,81 +1647,6 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
 
   private static final List<String> ACTIVE =
       List.of(BumpStatus.REQUESTED.name(), BumpStatus.RUNNING.name());
-
-  // --- the dispatch window --------------------------------------------------------------------
-
-  /**
-   * When the open dispatch window ends, or empty when there is no window.
-   *
-   * <p><b>A read per tick rather than a field read.</b> Outside a window this is the whole cost of
-   * the dispatch schedule — one primary-key lookup of one row every fifteen seconds, four thousand
-   * a day, which is less than the poller beside it does in an hour. What it buys is the window
-   * surviving the redeploy that this service's own bump causes; see {@link MtBumpWindow}.
-   */
-  @ActivateRequestContext
-  public Optional<Instant> bumpWindow() {
-    return bumpWindowRow().map(row -> row.closesAt);
-  }
-
-  /** The same row whole, for the API — {@code openedAt} is for people rather than for the gate. */
-  @ActivateRequestContext
-  public Optional<MtBumpWindow> bumpWindowRow() {
-    return DbRetry.inNewTx(
-        "read the bump dispatch window",
-        () -> Optional.ofNullable((MtBumpWindow) MtBumpWindow.findById(MtBumpWindow.INTERNAL)));
-  }
-
-  /** Opens the window, or replaces the one that is open. An upsert on the singleton key. */
-  @ActivateRequestContext
-  public void openBumpWindow(Instant now, Instant closes) {
-    DbRetry.runInNewTx(
-        "open the bump dispatch window",
-        () -> {
-          MtBumpWindow row = MtBumpWindow.findById(MtBumpWindow.INTERNAL);
-          boolean fresh = row == null;
-          if (fresh) {
-            row = new MtBumpWindow();
-            row.id = MtBumpWindow.INTERNAL;
-          }
-          row.openedAt = now;
-          row.closesAt = closes;
-          if (fresh) {
-            row.persist();
-          }
-          getEntityManager().flush();
-        });
-  }
-
-  /**
-   * Closes it. Deleting the row is what "no window" means, and calling this with none open is not
-   * an error — every one of the dispatcher's closing conditions may be reached twice.
-   */
-  @ActivateRequestContext
-  public void closeBumpWindow() {
-    DbRetry.runInNewTx(
-        "close the bump dispatch window",
-        () -> {
-          MtBumpWindow.deleteById(MtBumpWindow.INTERNAL);
-          getEntityManager().flush();
-        });
-  }
-
-  /**
-   * The GROUP bump holding one group's branch, if there is one.
-   *
-   * <p>The mode term is not a tidiness: a targeted row carries a sentinel in {@code group_name}, and
-   * without the term a repository that declared a group spelled like the sentinel would find its
-   * nightly bump held up by somebody else's workspace branch.
-   */
-  private static MtBump activeBumpRow(String repository, String group) {
-    return MtBump.find(
-            "repository = ?1 and groupName = ?2 and mode = ?3 and status in ?4",
-            repository,
-            group,
-            BumpMode.GROUP.name(),
-            List.of(BumpStatus.REQUESTED.name(), BumpStatus.RUNNING.name()))
-        .firstResult();
-  }
 
   // --- the sbom graph -------------------------------------------------------------------------
 

@@ -103,11 +103,8 @@ public class InventoryIT {
             equalTo(StoryCatalog.ARCHETYPE))
         .body(
             "find { it.name == '" + StoryCatalog.SECOND_REPOSITORY + "' }.archetype", nullValue())
-        // A group's name is also its branch, and its state is what this service last knew of it —
-        // NONE until something has been pushed there.
-        .body(
-            "find { it.name == '" + StoryCatalog.REPOSITORY + "' }.groups.branch",
-            hasItem("maintenance/" + StoryCatalog.ANGULAR_GROUP))
+        // The two kind groups, whatever the repository's file still says: its retired `groups:`
+        // key is ignored (qits-1133 R5).
         .body(
             "find { it.name == '" + StoryCatalog.REPOSITORY + "' }.groups.branch",
             hasItem(StoryCatalog.BRANCH));

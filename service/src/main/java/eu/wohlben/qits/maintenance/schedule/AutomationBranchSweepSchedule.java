@@ -22,7 +22,7 @@ import jakarta.inject.Inject;
  * <p><b>The cutover sweep rides the same clock (qits-1133 R2).</b> {@link LegacyGroupBranchSweep}
  * withdraws the bump-only requests standing on {@code maintenance/<group>} branches and deletes the
  * branches; its boot pass is the cutover itself, and every hourly pass after it finds nothing — it is
- * idempotent by construction, and does nothing with the switch off.
+ * idempotent by construction, and it outlives R5 to clean up a group branch pushed by hand.
  */
 @ApplicationScoped
 public class AutomationBranchSweepSchedule {

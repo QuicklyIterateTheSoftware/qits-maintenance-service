@@ -11,9 +11,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import eu.wohlben.qits.maintenance.bump.BumpService;
-import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
-import eu.wohlben.qits.maintenance.config.UpstreamSwitch;
 import eu.wohlben.qits.maintenance.peer.FakePeers;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import eu.wohlben.qits.maintenance.work.WorkQueue;
@@ -58,28 +55,17 @@ class MaintenanceApiTest {
 
   @Inject MaintenanceStore store;
 
-  @Inject BumpService bumps;
-
   @Inject InventoryReset inventory;
 
   @Inject WorkQueue queue;
 
-  @Inject MaintenanceConfig config;
-
-  /** The real bean behind the proxy, put back after every method: a mock lives for the run. */
-  private MaintenanceConfig realConfig;
-
   @AfterEach
-  void restoreTheConfig() {
+  void drain() {
     queue.awaitIdle(Duration.ofSeconds(30));
-    UpstreamSwitch.restore(realConfig);
   }
 
   @BeforeEach
   void scriptThePeers() {
-    // THE LEGACY GROUP PATH, pinned with the cutover switch OFF (qits-1133 R2): it ships on, which
-    // retires group bumps; off is the emergency position that restores this path until R5.
-    realConfig = UpstreamSwitch.install(config, false);
     // The class shares one database, and an active bump row holds its branch's lock — the next
     // test would be answered 409 by the last one's leftovers. Drain the worker first, or the row
     // being deleted is one a task still holds and the delete lands between its read and its write.
@@ -181,8 +167,13 @@ class MaintenanceApiTest {
         .body("message", containsString("INTERNAL, EXTERNAL or ALL"));
   }
 
+  /**
+   * The fixture's {@code maintenance.yml} still declares {@code groups:} — an {@code angular} group
+   * from before qits-1133 R5. It is IGNORED, not refused: the repository scans OK and every pin
+   * splits into the two kind groups.
+   */
   @Test
-  void aScanFillsTheInventoryAndTheGroupingIsTheRepositorysOwn() {
+  void aScanFillsTheInventoryAndARetiredGroupsKeyIsIgnored() {
     scan();
     given()
         .when()
@@ -192,24 +183,16 @@ class MaintenanceApiTest {
         .body("name", hasItem(Fixture.REPOSITORY))
         .body("find { it.name == '" + Fixture.REPOSITORY + "' }.status", equalTo("OK"))
         .body("find { it.name == '" + Fixture.REPOSITORY + "' }.headSha", equalTo(Fixture.HEAD_SHA))
-        // The repository declares `angular`; the two kind groups are appended after it, so no pin
-        // is unclaimed and what the repository did not group still splits internal from external.
         .body("find { it.name == '" + Fixture.REPOSITORY + "' }.groups.name",
-            equalTo(java.util.List.of("angular", "dependencies", "external")))
-        .body("find { it.name == '" + Fixture.REPOSITORY + "' }.groups[0].branch",
-            equalTo("maintenance/angular"))
+            equalTo(java.util.List.of("dependencies", "external")))
         .body("find { it.name == '" + Fixture.REPOSITORY + "' }.groups[0].state", equalTo("NONE"))
-        .body("find { it.name == '" + Fixture.REPOSITORY + "' }.groups[2].branch",
+        .body("find { it.name == '" + Fixture.REPOSITORY + "' }.groups[1].branch",
             equalTo("maintenance/external"));
   }
 
-  /**
-   * THE SPLIT, ON THE ROUTE THAT SERVES IT. A group says HOW it claims — by kind, or by the globs
-   * the repository wrote — and that is a different question from whether the repository asked for
-   * the grouping at all, which is what `source` answers.
-   */
+  /** THE SPLIT, ON THE ROUTE THAT SERVES IT: each group says which kind it claims. */
   @Test
-  void aGroupSaysWhetherItClaimsByKindOrByTheRepositorysOwnGlobs() {
+  void aGroupSaysWhichKindItClaims() {
     scan();
     String repository = BASE + "/repositories/" + Fixture.REPOSITORY;
     given()
@@ -217,56 +200,22 @@ class MaintenanceApiTest {
         .get(repository)
         .then()
         .statusCode(200)
-        .body("groups.find { it.name == 'angular' }.kind", nullValue())
-        .body("groups.find { it.name == 'angular' }.source", equalTo("CONFIG"))
+        .body("groups.find { it.name == 'angular' }", nullValue())
+        .body("groups.find { it.name == 'dependencies' }.source", equalTo("DEFAULT"))
         .body("groups.find { it.name == 'dependencies' }.kind", equalTo("INTERNAL"))
         .body("groups.find { it.name == 'external' }.kind", equalTo("EXTERNAL"))
         .body("groups.find { it.name == 'external' }.branch", equalTo("maintenance/external"))
         .body("groups.find { it.name == 'external' }.state", equalTo("NONE"))
         // The internal half claims the five internal pins that are behind; the external half claims
-        // the quarkus BOM, and @angular/core went to the group this repository declared for it.
+        // the quarkus BOM and @angular/core.
         .body("groups.find { it.name == 'dependencies' }.pending", equalTo(5))
-        .body("groups.find { it.name == 'external' }.pending", equalTo(1))
-        .body("groups.find { it.name == 'angular' }.pending", equalTo(1))
-        // …and a pin names the group whose branch would carry it.
+        .body("groups.find { it.name == 'external' }.pending", equalTo(2))
+        // …and a pin names the group that claims it.
         .body("pins.find { it.name == 'io.quarkus.platform:quarkus-bom' }.group", equalTo("external"))
         .body("pins.find { it.name == 'eu.wohlben.qits:qits-eventstream' }.group",
             equalTo("dependencies"))
         .body("pins.find { it.name == 'qits/build-images/maven-base' }.group", equalTo("dependencies"))
         .body("pins.find { it.name == '@qits/ui-components' }.group", equalTo("dependencies"));
-  }
-
-  @Test
-  void anExternalBumpIsItsOwnBranchAndCarriesNoInternalChange() {
-    scan();
-    Fixture.scriptCiAccepts(peers, "run-external");
-    String id =
-        given()
-            .contentType(ContentType.JSON)
-            .body("{}")
-            .when()
-            .post(BASE + "/repositories/" + Fixture.REPOSITORY + "/groups/external/bumps")
-            .then()
-            .statusCode(202)
-            .extract()
-            .path("id");
-    awaitField("/bumps/" + id, "ciRunId");
-
-    given()
-        .when()
-        .get(BASE + "/bumps/" + id)
-        .then()
-        .statusCode(200)
-        .body("group", equalTo("external"))
-        .body("branch", equalTo("maintenance/external"))
-        .body("changes.size()", equalTo(1))
-        .body("changes[0].name", equalTo("io.quarkus.platform:quarkus-bom"));
-
-    String payload = peers.bodiesFor("/ci/api/events/trigger").get(0);
-    assertTrue(payload.contains("\"branch\":\"maintenance/external\""), payload);
-    // Nothing of ours rides along on somebody else's branch.
-    assertTrue(!payload.contains("eu.wohlben.qits"), payload);
-    assertTrue(!payload.contains("qits/build-images"), payload);
   }
 
   /**
@@ -314,7 +263,7 @@ class MaintenanceApiTest {
         .body("pins.find { it.name == '@angular/core' }.version", equalTo("21.0.4"))
         .body("pins.find { it.name == '@angular/core' }.range", equalTo("^21.0.0"))
         .body("pins.find { it.name == '@angular/core' }.kind", equalTo("EXTERNAL"))
-        .body("pins.find { it.name == '@angular/core' }.group", equalTo("angular"))
+        .body("pins.find { it.name == '@angular/core' }.group", equalTo("external"))
         // docker, by line number
         .body("pins.find { it.name == 'qits/build-images/maven-base' }.version", equalTo("2026.813.1"))
         .body("pins.find { it.name == 'qits/build-images/maven-base' }.location", equalTo("line:2"))
@@ -591,513 +540,7 @@ class MaintenanceApiTest {
         .body("message", containsString("nothing-like-this"));
   }
 
-  // --- the bump -------------------------------------------------------------------------------
-
-  /** Requests a bump of the catch-all group and waits until qits-ci has been told. */
-  private String requestBump() {
-    String id =
-        given()
-            .contentType(ContentType.JSON)
-            .body("{}")
-            .when()
-            .post(BASE + "/repositories/" + Fixture.REPOSITORY + "/groups/dependencies/bumps")
-            .then()
-            .statusCode(202)
-            .extract()
-            .path("id");
-    awaitField("/bumps/" + id, "ciRunId");
-    return id;
-  }
-
-  @Test
-  void aBumpSendsExactlyThePendingChangesOfItsGroup() {
-    scan();
-    Fixture.scriptCiAccepts(peers, "run-1");
-    String id = requestBump();
-
-    String payload = peers.bodiesFor("/ci/api/events/trigger").get(0);
-    assertTrue(payload.contains("\"name\":\"MaintenanceBump\""), payload);
-    assertTrue(payload.contains("\"eventId\":\"" + id + "\""), payload);
-    assertTrue(payload.contains("\"repository\":\"" + Fixture.REPOSITORY + "\""), payload);
-    assertTrue(payload.contains("\"branch\":\"" + Fixture.BRANCH + "\""), payload);
-    assertTrue(payload.contains("\"baseRef\":\"main\""), payload);
-    assertTrue(payload.contains("\"location\":\"property:qits.eventstream.version\""), payload);
-    assertTrue(payload.contains("\"from\":\"2026.811.1\""), payload);
-    assertTrue(payload.contains("\"to\":\"2026.821.3\""), payload);
-    // @angular/core belongs to the `angular` group and must not ride along on this branch.
-    assertTrue(!payload.contains("@angular/core"), payload);
-  }
-
-  @Test
-  void aGreenRunThatMovedTheBranchSucceedsAndRecordsTheHead() {
-    scan();
-    Fixture.scriptCiAccepts(peers, "run-1");
-    String id = requestBump();
-
-    // The run ends and the branch moved — the step wrote something.
-    Fixture.scriptRun(peers, "run-1", "SUCCESS");
-    Fixture.scriptBranchAt(peers, Fixture.BUMPED_SHA);
-    bumps.sweep();
-
-    assertEquals("SUCCEEDED", awaitTerminal("/bumps/" + id, "SUCCEEDED", "FAILED", "NOTHING_TO_DO"));
-    given()
-        .when()
-        .get(BASE + "/bumps/" + id)
-        .then()
-        .statusCode(200)
-        .body("group", equalTo("dependencies"))
-        .body("branch", equalTo(Fixture.BRANCH))
-        .body("environment", equalTo("dev"))
-        .body("trigger", equalTo("MANUAL"))
-        .body("ciRunId", equalTo("run-1"))
-        .body("ciRunStatus", equalTo("SUCCESS"))
-        .body("configPath", containsString("platform-pipelines/maintenance-bump.yml"))
-        // The `dependencies` group is the INTERNAL half: the eventstream property, the outside
-        // parent, qits-arch-rules, the @qits npm package and the internal build image. The quarkus
-        // BOM is external and rides on its own branch; @angular/core belongs to `angular`; and the
-        // sibling module, the unresolved expression and the external base image are pins nothing
-        // can bump at all.
-        .body("changes.size()", equalTo(5))
-        .body("finishedAt", notNullValue());
-
-    given()
-        .when()
-        .get(BASE + "/repositories")
-        .then()
-        .statusCode(200)
-        .body("find { it.name == '" + Fixture.REPOSITORY + "' }.groups.find { it.name == 'dependencies' }.state",
-            equalTo("PUSHED"))
-        .body("find { it.name == '" + Fixture.REPOSITORY + "' }.groups.find { it.name == 'dependencies' }.headSha",
-            equalTo(Fixture.BUMPED_SHA));
-  }
-
-  @Test
-  void aGreenRunThatDidNotMoveTheBranchIsNothingToDoRatherThanSuccess() {
-    scan();
-    Fixture.scriptCiAccepts(peers, "run-2");
-    String id = requestBump();
-
-    Fixture.scriptRun(peers, "run-2", "SUCCESS");
-    // The branch is still absent: the step found the versions already there and wrote nothing.
-    bumps.sweep();
-
-    assertEquals(
-        "NOTHING_TO_DO", awaitTerminal("/bumps/" + id, "SUCCEEDED", "FAILED", "NOTHING_TO_DO"));
-    given()
-        .when()
-        .get(BASE + "/bumps/" + id)
-        .then()
-        .body("message", containsString("did not move"));
-  }
-
-  @Test
-  void aRedRunAgainstAMovedBranchMeansSomebodyRewroteItByHand() {
-    scan();
-    Fixture.scriptCiAccepts(peers, "run-3");
-    String id = requestBump();
-
-    // The ff-only push was rejected — and the branch moved anyway, which is a person's commit.
-    Fixture.scriptRun(peers, "run-3", "FAILED");
-    Fixture.scriptBranchAt(peers, Fixture.BUMPED_SHA);
-    bumps.sweep();
-
-    assertEquals("FAILED", awaitTerminal("/bumps/" + id, "SUCCEEDED", "FAILED", "NOTHING_TO_DO"));
-    given().when().get(BASE + "/bumps/" + id).then().body("message", containsString("qits maintenance did not write"));
-    given()
-        .when()
-        .get(BASE + "/repositories")
-        .then()
-        .body("find { it.name == '" + Fixture.REPOSITORY + "' }.groups.find { it.name == 'dependencies' }.state",
-            equalTo("STALE"));
-  }
-
-  @Test
-  void aTriggerAnsweredWithNoRunIsAFailureBecauseNothingIsRunning() {
-    scan();
-    peers.answer(
-        eu.wohlben.qits.maintenance.peer.PeerTarget.CI,
-        "/ci/api/events/trigger",
-        FakePeers.Scripted.ok(
-            "{\"eventId\":\"e1\",\"runIds\":[],\"repositoriesRead\":0,\"repositoriesSkipped\":[]}"));
-
-    String id =
-        given()
-            .contentType(ContentType.JSON)
-            .body("{}")
-            .when()
-            .post(BASE + "/repositories/" + Fixture.REPOSITORY + "/groups/dependencies/bumps")
-            .then()
-            .statusCode(202)
-            .extract()
-            .path("id");
-
-    assertEquals("FAILED", awaitTerminal("/bumps/" + id, "SUCCEEDED", "FAILED", "NOTHING_TO_DO"));
-    given()
-        .when()
-        .get(BASE + "/bumps/" + id)
-        .then()
-        .body("message", containsString("no run recorded for MaintenanceBump"));
-  }
-
-  @Test
-  void a503LeavesTheBumpRequestedAndTheNextSweepSendsItAgain() {
-    scan();
-    peers.answer(
-        eu.wohlben.qits.maintenance.peer.PeerTarget.CI,
-        "/ci/api/events/trigger",
-        FakePeers.Scripted.status(503, "{\"runIds\":[]}"));
-
-    String id =
-        given()
-            .contentType(ContentType.JSON)
-            .body("{}")
-            .when()
-            .post(BASE + "/repositories/" + Fixture.REPOSITORY + "/groups/dependencies/bumps")
-            .then()
-            .statusCode(202)
-            .extract()
-            .path("id");
-
-    awaitField("/bumps/" + id, "message");
-    given()
-        .when()
-        .get(BASE + "/bumps/" + id)
-        .then()
-        .body("status", equalTo("REQUESTED"))
-        .body("finishedAt", nullValue())
-        .body("changes.size()", equalTo(5));
-
-    // qits-ci is back. The sweep sends the SAME payload under the SAME event id.
-    Fixture.scriptCiAccepts(peers, "run-4");
-    bumps.sweep();
-    awaitField("/bumps/" + id, "ciRunId");
-    assertEquals(
-        2, peers.bodiesFor("/ci/api/events/trigger").size(), "the trigger should have been retried");
-    assertTrue(peers.bodiesFor("/ci/api/events/trigger").get(1).contains("\"eventId\":\"" + id + "\""));
-  }
-
-  @Test
-  void aSecondBumpOfOneBranchIsRefusedWhileTheFirstIsInFlight() {
-    scan();
-    Fixture.scriptCiAccepts(peers, "run-5");
-    CountDownLatch held = peers.hold();
-    try {
-      given()
-          .contentType(ContentType.JSON)
-          .body("{}")
-          .when()
-          .post(BASE + "/repositories/" + Fixture.REPOSITORY + "/groups/dependencies/bumps")
-          .then()
-          .statusCode(202);
-
-      given()
-          .contentType(ContentType.JSON)
-          .body("{}")
-          .when()
-          .post(BASE + "/repositories/" + Fixture.REPOSITORY + "/groups/dependencies/bumps")
-          .then()
-          .statusCode(409)
-          .body("message", containsString("already active"));
-    } finally {
-      peers.release();
-      assertEquals(0, held.getCount());
-    }
-  }
-
-  @Test
-  void bumpingAGroupTheRepositoryDoesNotDeclareIsAFourOhFour() {
-    scan();
-    given()
-        .contentType(ContentType.JSON)
-        .body("{}")
-        .when()
-        .post(BASE + "/repositories/" + Fixture.REPOSITORY + "/groups/invented/bumps")
-        .then()
-        .statusCode(404)
-        .body("message", containsString("invented"));
-  }
-
-  @Test
-  void theBumpListingCarriesTheChangesTooBecauseTheyAreSmall() {
-    scan();
-    Fixture.scriptCiAccepts(peers, "run-6");
-    String id = requestBump();
-    given()
-        .when()
-        .get(BASE + "/bumps?limit=5")
-        .then()
-        .statusCode(200)
-        .body("id", hasItem(id))
-        .body("find { it.id == '" + id + "' }.changes.size()", equalTo(5));
-    given()
-        .when()
-        .get(BASE + "/bumps?repository=" + Fixture.REPOSITORY)
-        .then()
-        .statusCode(200)
-        .body("id", hasItem(id));
-  }
-
-  // --- the release ask --------------------------------------------------------------------------
-
-  /** Drives one bump to SUCCEEDED with the branch moved, which is the only ending that asks. */
-  private String bumpToSucceeded(String runId) {
-    scan();
-    Fixture.scriptCiAccepts(peers, runId);
-    String id = requestBump();
-    Fixture.scriptRun(peers, runId, "SUCCESS");
-    Fixture.scriptBranchAt(peers, Fixture.BUMPED_SHA);
-    bumps.sweep();
-    assertEquals("SUCCEEDED", awaitTerminal("/bumps/" + id, "SUCCEEDED", "FAILED", "NOTHING_TO_DO"));
-    // The status is written BEFORE the release is asked for, on the same worker task — so a test
-    // that read the row the instant it turned SUCCEEDED would be racing the ask it is about to
-    // assert on.
-    queue.awaitIdle(Duration.ofSeconds(30));
-    return id;
-  }
-
-  /** Polls the bump until its release ask has settled, whichever way. */
-  private void awaitReleaseAsked(String id) {
-    awaitField("/bumps/" + id, "releaseRequestId");
-  }
-
-  /**
-   * THE HAND-OFF THIS SERVICE NOW MAKES ITSELF. A branch nobody asks about sits there; the bump that
-   * pushed one opens a release request in qits-projects, addressed by the repository's CATALOG id —
-   * qits-projects' own row id, which is the only thing that route resolves.
-   */
-  @Test
-  void aPushedBranchOpensAReleaseRequestAddressedByTheCatalogId() {
-    String id = bumpToSucceeded("run-door-1");
-    awaitReleaseAsked(id);
-
-    // The path itself is the assertion the id is right: FakePeers keys on target AND path, so an
-    // ask addressed by the name or the project would have gone to an unscripted 404 instead.
-    List<String> asks = peers.bodiesFor(Fixture.RELEASE_REQUESTS_PATH);
-    assertEquals(1, asks.size(), "the release request is asked for exactly once per pushed branch");
-    String ask = asks.get(0);
-    assertTrue(ask.contains("\"branch\":\"" + Fixture.BRANCH + "\""), ask);
-    // The subject shape the bump's own commits carry, so the request, the branch and the commits
-    // all read the same in a listing.
-    assertTrue(ask.contains("\"summary\":\"bump(dependencies): 5 dependencies\""), ask);
-    // AND NOTHING ELSE. The door took an expectedSha to pin the ask to what was built; a release
-    // request is re-folded and re-gated on every push to a named source, so the pin is replaced by
-    // continuous re-gating and sending one would be a field nobody reads.
-    assertFalse(ask.contains("expectedSha"), ask);
-    assertFalse(ask.contains("projectId"), ask);
-
-    given()
-        .when()
-        .get(BASE + "/bumps/" + id)
-        .then()
-        .statusCode(200)
-        .body("status", equalTo("SUCCEEDED"))
-        .body("releaseRequestId", equalTo(RELEASE_REQUEST))
-        .body("message", containsString(RELEASE_REQUEST));
-  }
-
-  /**
-   * THE FAILURE POLICY, AND IT IS THE POINT OF THE WHOLE DESIGN. The bump succeeded — a green run and
-   * a branch that moved, both facts about this service's own work. A qits-projects that is not there
-   * says nothing about either, so the status must not move; the ask is simply still owed, and the
-   * sweep is what owes it.
-   */
-  @Test
-  void aProjectsThatIsDownLeavesTheBumpSucceededAndTheNextSweepAsksAgain() {
-    Fixture.scriptReleaseRequestUnreachable(peers);
-    String id = bumpToSucceeded("run-door-2");
-    awaitField("/bumps/" + id, "message");
-
-    given()
-        .when()
-        .get(BASE + "/bumps/" + id)
-        .then()
-        .statusCode(200)
-        // The verdict is untouched, and so is the sentence the verdict wrote.
-        .body("status", equalTo("SUCCEEDED"))
-        .body("message", containsString("dependencies on " + Fixture.BRANCH))
-        .body("message", containsString("next sweep asks again"))
-        // NULL is what "work is owed" means, and it is what the sweep selects on.
-        .body("releaseRequestId", nullValue());
-
-    // qits-projects is back.
-    Fixture.scriptReleaseRequestAccepted(peers, RELEASE_REQUEST);
-    bumps.sweep();
-    awaitReleaseAsked(id);
-    given()
-        .when()
-        .get(BASE + "/bumps/" + id)
-        .then()
-        .body("status", equalTo("SUCCEEDED"))
-        .body("releaseRequestId", equalTo(RELEASE_REQUEST));
-    assertEquals(
-        2,
-        peers.bodiesFor(Fixture.RELEASE_REQUESTS_PATH).size(),
-        "qits-projects should have been asked again");
-  }
-
-  /**
-   * A 2xx WITH NO ID IS SETTLED, NOT RETRIED. qits-projects answered, so nothing is owed by it;
-   * asking again would get the same empty answer. The column carries the word that stops the
-   * retrying, because leaving it null would have the sweep re-ask every fifteen seconds for ever.
-   */
-  @Test
-  void anAnswerWithNoRequestIdIsConvergenceRatherThanAFailure() {
-    Fixture.scriptReleaseRequestAnswers(peers, 200, "{\"request\":null}");
-    String id = bumpToSucceeded("run-door-3");
-    awaitReleaseAsked(id);
-
-    given()
-        .when()
-        .get(BASE + "/bumps/" + id)
-        .then()
-        .body("status", equalTo("SUCCEEDED"))
-        .body("releaseRequestId", equalTo("converged"))
-        .body("message", containsString("without an id"));
-
-    bumps.sweep();
-    queue.awaitIdle(Duration.ofSeconds(30));
-    assertEquals(
-        1,
-        peers.bodiesFor(Fixture.RELEASE_REQUESTS_PATH).size(),
-        "a converged ask must not be re-sent by the sweep");
-  }
-
-  /**
-   * A 4xx IS A REFUSAL A RETRY CANNOT FIX, and the sentinel is what stops the sweep. The next
-   * nightly bump of the group opens a fresh row and asks again from scratch, which is the recovery —
-   * not this row's sweep hammering a service that has already given its answer.
-   */
-  @Test
-  void aRefusedAskStopsTheSweepAndSaysWhy() {
-    Fixture.scriptReleaseRequestAnswers(
-        peers, 400, "{\"message\":\"A release request carries a summary\"}");
-    String id = bumpToSucceeded("run-door-6");
-    awaitReleaseAsked(id);
-
-    given()
-        .when()
-        .get(BASE + "/bumps/" + id)
-        .then()
-        .body("status", equalTo("SUCCEEDED"))
-        .body("releaseRequestId", equalTo("refused"))
-        .body("message", containsString("HTTP 400"));
-
-    bumps.sweep();
-    queue.awaitIdle(Duration.ofSeconds(30));
-    assertEquals(
-        1,
-        peers.bodiesFor(Fixture.RELEASE_REQUESTS_PATH).size(),
-        "a refused ask must not be re-sent by the sweep");
-  }
-
-  /**
-   * A 403 IS RETRYABLE, and deliberately not a refusal: it is this service's credential not being
-   * admitted, which is a deployment grant rather than anything a bump can fix — so the ask heals the
-   * moment the grant lands, instead of needing the bump run again.
-   */
-  @Test
-  void anAuthRefusalIsRetriedRatherThanRecorded() {
-    Fixture.scriptReleaseRequestAnswers(peers, 403, "{\"message\":\"forbidden\"}");
-    String id = bumpToSucceeded("run-door-7");
-    awaitField("/bumps/" + id, "message");
-
-    given()
-        .when()
-        .get(BASE + "/bumps/" + id)
-        .then()
-        .body("status", equalTo("SUCCEEDED"))
-        .body("releaseRequestId", nullValue())
-        .body("message", containsString("would not admit this service"));
-  }
-
-  /** A green run over an unmoved branch pushed nothing, so there is nothing to release. */
-  @Test
-  void nothingToDoAsksForNoReleaseBecauseNoBranchWasPushed() {
-    scan();
-    Fixture.scriptCiAccepts(peers, "run-door-4");
-    String id = requestBump();
-    Fixture.scriptRun(peers, "run-door-4", "SUCCESS");
-    bumps.sweep();
-
-    assertEquals(
-        "NOTHING_TO_DO", awaitTerminal("/bumps/" + id, "SUCCEEDED", "FAILED", "NOTHING_TO_DO"));
-    queue.awaitIdle(Duration.ofSeconds(30));
-    assertTrue(
-        peers.bodiesFor(Fixture.RELEASE_REQUESTS_PATH).isEmpty(),
-        "no branch was pushed, so no ask");
-    given().when().get(BASE + "/bumps/" + id).then().body("releaseRequestId", nullValue());
-  }
-
-  /**
-   * A STALE branch is somebody's hand-written commit that the ff-only push refused to overwrite. They
-   * own it now — and asking for THEIR commits to be released is precisely the thing this service must
-   * never do on their behalf.
-   */
-  @Test
-  void aStaleBranchAsksForNoReleaseBecauseSomebodyElseOwnsIt() {
-    scan();
-    Fixture.scriptCiAccepts(peers, "run-door-5");
-    String id = requestBump();
-    Fixture.scriptRun(peers, "run-door-5", "FAILED");
-    Fixture.scriptBranchAt(peers, Fixture.BUMPED_SHA);
-    bumps.sweep();
-
-    assertEquals("FAILED", awaitTerminal("/bumps/" + id, "SUCCEEDED", "FAILED", "NOTHING_TO_DO"));
-    queue.awaitIdle(Duration.ofSeconds(30));
-    assertTrue(
-        peers.bodiesFor(Fixture.RELEASE_REQUESTS_PATH).isEmpty(),
-        "a branch somebody rewrote by hand is not this service's to release");
-  }
-
-  /**
-   * <b>The window has a door, and the door is the reason the row is worth having.</b> Before it, the
-   * only way to make the estate bump outside 02:00 was to override the cron in the deployment config
-   * and redeploy — which restarts the very service whose window you are opening.
-   *
-   * <p>The three verbs in one method because they are one fact's lifecycle: none, opened, none
-   * again. The DELETE is asserted twice on purpose — closing a window that is not there is the
-   * caller asking for a state, not for a transition.
-   *
-   * <p><b>The GET is 200 in all three states, and the 404 it used to give with no window open was a
-   * real cost.</b> The question this door is opened with is "why has nothing been dispatched", and
-   * answering it with "there is no window" said only that the first gate was shut — while the bump
-   * listing beside it holds only bumps that were dispatched. Fifteen repositories owed since the
-   * morning and a dead scheduler were the same picture from every surface. With no window the two
-   * timestamps are null and the reasoning is answered anyway.
-   */
-  @Test
-  void theDispatchWindowIsOpenedClosedAndReadThroughItsOwnDoor() {
-    given().when().delete(BASE + "/bumps/window").then().statusCode(204);
-    given()
-        .when()
-        .get(BASE + "/bumps/window")
-        .then()
-        .statusCode(200)
-        .body("open", equalTo(false))
-        .body("openedAt", nullValue())
-        .body("closesAt", nullValue())
-        .body("outcome", notNullValue())
-        .body("summary", notNullValue());
-
-    given()
-        .when()
-        .post(BASE + "/bumps/window")
-        .then()
-        .statusCode(200)
-        .body("open", equalTo(true))
-        .body("openedAt", notNullValue())
-        .body("closesAt", notNullValue());
-    given().when().get(BASE + "/bumps/window").then().statusCode(200).body("open", equalTo(true));
-
-    given().when().delete(BASE + "/bumps/window").then().statusCode(204);
-    given().when().delete(BASE + "/bumps/window").then().statusCode(204);
-    given()
-        .when()
-        .get(BASE + "/bumps/window")
-        .then()
-        .statusCode(200)
-        .body("open", equalTo(false));
-  }
+  // --- the bump log -----------------------------------------------------------------------------
 
   @Test
   void anIdThatIsNotAUuidIsAnUnknownRowRatherThanAnError() {

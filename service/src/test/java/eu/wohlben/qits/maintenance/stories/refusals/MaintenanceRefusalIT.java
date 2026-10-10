@@ -6,8 +6,7 @@ import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.nullValue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import eu.wohlben.qits.maintenance.stories.bump.BumpIT;
-import eu.wohlben.qits.maintenance.stories.support.StoryCatalog;
+import eu.wohlben.qits.maintenance.stories.inventory.InventoryIT;
 import eu.wohlben.qits.maintenance.stories.support.StoryIdentities;
 import eu.wohlben.qits.maintenance.stories.support.StoryNetwork;
 import eu.wohlben.qits.maintenance.stories.support.StoryProfile;
@@ -40,8 +39,8 @@ import org.junit.jupiter.api.TestMethodOrder;
 /**
  * <b>The doors, and what is behind each of them.</b>
  *
- * <p>What this service's write surface can do is push a branch into every repository on the
- * platform, and what its read surface shows is every pin every one of them holds. So there is no
+ * <p>What this service's write surface can do is start a run that writes a commit onto a release
+ * request's branch, and what its read surface shows is every pin every one of them holds. So there is no
  * anonymous route here and there must never be one — and the two stories below are the two ways a
  * request fails to become work:
  *
@@ -55,9 +54,9 @@ import org.junit.jupiter.api.TestMethodOrder;
  *       them starts anything: {@code mt_scan} and {@code mt_bump} are where they were.
  * </ul>
  *
- * <p><b>It runs last</b>, after the bump stories, and that is not tidiness: this class posts to the
- * very bump route those stories drive, and a refusal landing while somebody else's bump was in
- * flight would be a 409 wearing a 401's clothes.
+ * <p>The write door asked here is the automation re-run, {@code POST
+ * /release-requests/{id}/automations/{kind}/runs}. It used to be the group bump door, which
+ * qits-1133 R5 retired together with the bump stories that drove it.
  */
 @QuarkusIntegrationTest
 @TestProfile(StoryProfile.class)
@@ -76,13 +75,14 @@ public class MaintenanceRefusalIT {
 
   static final String MALFORMED_SLUG = Slugs.slug(MALFORMED);
 
-  private static final String BUMP_ROUTE =
-      StoryTarget.REPOSITORIES
-          + "/"
-          + StoryCatalog.REPOSITORY
-          + "/groups/"
-          + StoryCatalog.DEFAULT_GROUP
-          + "/bumps";
+  /** The write door that starts a run: an automation's re-run on a release request. */
+  private static final String RUN_ROUTE =
+      StoryTarget.API
+          + "/release-requests/0d0a15ac-5e67-4e03-ad00-ff25d9bbcfea/automations/estate-pins/runs";
+
+  /** …as the report labels it: the tap scrubs a generated id to {@code {id}}. */
+  private static final String RUN_ROUTE_LABEL =
+      StoryTarget.API + "/release-requests/{id}/automations/estate-pins/runs";
 
   @BeforeAll
   static void tapEverySideOfThisService() {
@@ -96,15 +96,14 @@ public class MaintenanceRefusalIT {
       Authorization header is a PERSON: the platform edge performed the login, stripped every
       client-supplied X-Qits-* header and asserted the one it decided on. A request with a bearer
       is a MACHINE, validated against qits-idp. Both land as roles, which is why every
-      route names the same pair — an operator presses Bump in a browser and a scheduled machine may
-      ask for the same thing, so a machine-only guard would lock the operator out of the button
-      this service exists to offer. What is NOT negotiable is that something has to arrive: with no
+      route names the same pair — an operator presses Re-run in a browser and a machine may ask for
+      the same thing, so a machine-only guard would lock the operator out of the button. What is NOT negotiable is that something has to arrive: with no
       identity the answer is 401, and with a real platform role that is neither of the two the
       answer is 403. Neither ever reaches a resource method, which is why nothing leaves this
       process while they are being refused — no store read, no peer call, and no branch pushed
       anywhere.
       """)
-  @UserflowRunsAfter(BumpIT.class)
+  @UserflowRunsAfter(InventoryIT.class)
   @Order(1)
   void nothingHereIsAnonymousAndNoThirdRoleOpensIt(Interactions story) {
     // The tap sees a request and never a narrative role, so each caller is named before it acts.
@@ -117,11 +116,11 @@ public class MaintenanceRefusalIT {
         .post(StoryTarget.SCANS)
         .then()
         .statusCode(401);
-    given().contentType(ContentType.JSON).post(BUMP_ROUTE).then().statusCode(401);
+    given().contentType(ContentType.JSON).post(RUN_ROUTE).then().statusCode(401);
     story
         .note("with no identity at all, the read is 401 — and so are both of the calls that queue"
             + " work, which is the half that matters: one reads every repository on the platform"
-            + " and the other asks for a branch to be pushed into one")
+            + " and the other starts a run that writes a commit")
         .as("no-identity-no-surface");
 
     // The other answer, and the one that proves the roles→guard mapping ran rather than being waved
@@ -140,7 +139,7 @@ public class MaintenanceRefusalIT {
         .statusCode(403);
     StoryIdentities.withRole(given(), StoryIdentities.READER_ROLE)
         .contentType(ContentType.JSON)
-        .post(BUMP_ROUTE)
+        .post(RUN_ROUTE)
         .then()
         .statusCode(403);
     story
@@ -155,13 +154,13 @@ public class MaintenanceRefusalIT {
       The operator is who they say they are and the request still cannot be honoured. A scope that
       is not one of the three is refused rather than treated as everything — quietly widening a
       scan to ALL would be this service deciding what somebody meant. A repository the inventory
-      does not hold has no pins to show and no coordinate to name in a payload; a group that
-      repository never declared has no branch; and an id that is not a uuid is the same question
+      does not hold has no pins to show and no coordinate to name in a payload; and an id that is
+      not a uuid is the same question
       from the caller's side as an id that names nothing. Every one is the platform's one-key
       envelope with the sentence in it, and — this is the half that is worth asserting — every one
       of them starts NOTHING. A 202 is what queues work here, and none of these was one.
       """)
-  @UserflowRunsAfter(BumpIT.class)
+  @UserflowRunsAfter(InventoryIT.class)
   @Order(2)
   void aMalformedRequestIsRefusedByNameAndQueuesNothing(Interactions story, Network network) {
     NetworkCapture.actor(StoryIdentities.OPERATOR);
@@ -189,21 +188,9 @@ public class MaintenanceRefusalIT {
         .statusCode(404)
         .contentType(ContentType.JSON)
         .body("message", containsString("nothing-like-this"));
-    StoryIdentities.operator(given())
-        .contentType(ContentType.JSON)
-        .post(
-            StoryTarget.REPOSITORIES
-                + "/"
-                + StoryCatalog.REPOSITORY
-                + "/groups/invented/bumps")
-        .then()
-        .statusCode(404)
-        .contentType(ContentType.JSON)
-        .body("message", containsString("invented"));
     story
-        .note("a repository the inventory does not hold and a group a repository never declared are"
-            + " both 404 by name — the second one covers 'never scanned' as well as 'not in the"
-            + " catalog', because neither has anything to bump")
+        .note("a repository the inventory does not hold is 404 by name — 'never scanned' as well"
+            + " as 'not in the catalog', because neither has anything to show")
         .as("named-in-the-refusal");
 
     StoryIdentities.operator(given())
@@ -217,7 +204,7 @@ public class MaintenanceRefusalIT {
             + " that names nothing: 404, not a 500 about parsing")
         .as("a-malformed-id-is-just-unknown");
 
-    // THE HALF THAT IS WORTH ASSERTING. A 202 is what queues work here, and none of the four
+    // THE HALF THAT IS WORTH ASSERTING. A 202 is what queues work here, and none of the three
     // answers above was one — so the two tables a scan and a bump each land in before they do
     // anything are exactly where they were.
     assertEquals(scansBefore, rows("mt_scan"), "a refused request must not have opened a scan");
@@ -227,7 +214,7 @@ public class MaintenanceRefusalIT {
             + " their work begins, and both tables are where they were")
         .as("nothing-was-queued");
 
-    // Two of the four refusals DID reach the store — that is how "no such repository" is answered —
+    // One of the three refusals DID reach the store — that is how "no such repository" is answered —
     // so the edge is declared rather than pretended away. What the story claims is the five arrows
     // that are absent, not this one.
     network.declare(
@@ -265,13 +252,13 @@ public class MaintenanceRefusalIT {
 
     in(CREDENTIAL_SLUG, StoryIdentities.ANONYMOUS, "GET " + StoryTarget.REPOSITORIES + " -> 401");
     in(CREDENTIAL_SLUG, StoryIdentities.ANONYMOUS, "POST " + StoryTarget.SCANS + " -> 401");
-    in(CREDENTIAL_SLUG, StoryIdentities.ANONYMOUS, "POST " + BUMP_ROUTE + " -> 401");
+    in(CREDENTIAL_SLUG, StoryIdentities.ANONYMOUS, "POST " + RUN_ROUTE_LABEL + " -> 401");
     in(CREDENTIAL_SLUG, StoryIdentities.WRONG_ROLE, "GET " + StoryTarget.REPOSITORIES + " -> 403");
     in(CREDENTIAL_SLUG, StoryIdentities.WRONG_ROLE, "POST " + StoryTarget.SCANS + " -> 403");
-    in(CREDENTIAL_SLUG, StoryIdentities.WRONG_ROLE, "POST " + BUMP_ROUTE + " -> 403");
+    in(CREDENTIAL_SLUG, StoryIdentities.WRONG_ROLE, "POST " + RUN_ROUTE_LABEL + " -> 403");
 
     // THE STORY'S TITLE, ASSERTED AS A SHAPE. Six requests in — two of them at the route that
-    // pushes a branch into somebody else's tree — and NOT ONE ARROW OUT. No store read, because no
+    // starts a run — and NOT ONE ARROW OUT. No store read, because no
     // resource method ran; no peer call, because nothing got as far as deciding to make one.
     ReportAssertions.assertNoEdgesFrom(CATEGORY_SLUG, CREDENTIAL_SLUG, StoryTarget.SERVICE);
     ReportAssertions.assertNoEdgesTo(CATEGORY_SLUG, CREDENTIAL_SLUG, StoryTarget.CI);
@@ -295,14 +282,6 @@ public class MaintenanceRefusalIT {
         MALFORMED_SLUG,
         StoryIdentities.OPERATOR,
         "GET " + StoryTarget.REPOSITORIES + "/nothing-like-this -> 404");
-    in(
-        MALFORMED_SLUG,
-        StoryIdentities.OPERATOR,
-        "POST "
-            + StoryTarget.REPOSITORIES
-            + "/"
-            + StoryCatalog.REPOSITORY
-            + "/groups/invented/bumps -> 404");
     in(MALFORMED_SLUG, StoryIdentities.OPERATOR, "GET " + StoryTarget.BUMPS + "/not-a-uuid -> 404");
 
     ReportAssertions.assertDeclaredEdge(
@@ -313,10 +292,9 @@ public class MaintenanceRefusalIT {
         StoryTarget.STORE,
         "a name that is not in the inventory is looked up and is not there");
 
-    // Four refusals, one lookup that found nothing, and five arrows that are not here. The one that
-    // pays most is qits-ci: a group that does not exist must be refused on THIS side rather than
-    // discovered by a pipeline that already cloned somebody's repository.
-    ReportAssertions.assertEdgeCount(CATEGORY_SLUG, MALFORMED_SLUG, 5);
+    // Three refusals, one lookup that found nothing, and five arrows that are not here. The one
+    // that pays most is qits-ci: nothing refused here may reach a pipeline.
+    ReportAssertions.assertEdgeCount(CATEGORY_SLUG, MALFORMED_SLUG, 4);
     ReportAssertions.assertNoEdgesTo(CATEGORY_SLUG, MALFORMED_SLUG, StoryTarget.CI);
     ReportAssertions.assertNoEdgesTo(CATEGORY_SLUG, MALFORMED_SLUG, StoryTarget.GITHOST);
     ReportAssertions.assertNoEdgesTo(CATEGORY_SLUG, MALFORMED_SLUG, StoryTarget.PROJECTS);

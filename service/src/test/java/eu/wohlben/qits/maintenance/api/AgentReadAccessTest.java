@@ -83,8 +83,8 @@ class AgentReadAccessTest {
 
   @Test
   void anAgentReadsTheBumps() {
-    agent().get(BASE + "/bumps/window").then().statusCode(200);
     agent().get(BASE + "/bumps").then().statusCode(200);
+    agent().get(BASE + "/bumps/pending").then().statusCode(200);
     readable("/bumps/" + UUID.randomUUID());
   }
 
@@ -102,45 +102,6 @@ class AgentReadAccessTest {
         .post(BASE + "/artifacts/ingest")
         .then()
         .statusCode(403);
-  }
-
-  /**
-   * <b>The bump doors are open to an agent</b>, which is the whole of what this file used to assert
-   * the opposite of.
-   *
-   * <p>They are asserted by what they are NOT — never 401, never 403 — because what an agent may do
-   * here is the question, and whether this suite has seeded a repository to bump is not. A 404 for a
-   * repository nobody scanned is the door having opened.
-   *
-   * <p>The window pair is opened and closed again in one breath, so this test leaves the dispatcher
-   * where it found it.
-   *
-   * <p>{@code /branches/bumps} used to be asserted here too. It is retired (qits-1006) and answers a
-   * plain 404 to every role alike now, which is pinned in {@code MaintenanceApiTest}, not here.
-   */
-  @Test
-  void anAgentWorksTheBumpDoors() {
-    allowed(agent().contentType(ContentType.JSON).post(BASE + "/bumps/window"));
-    allowed(agent().delete(BASE + "/bumps/window"));
-    allowed(
-        agent()
-            .contentType(ContentType.JSON)
-            .post(BASE + "/repositories/qits-ci-service/groups/default/bumps"));
-  }
-
-  @Test
-  void aRoleOutsideTheBoundaryIsRefusedTheBumpDoorsToo() {
-    as("qits:reader")
-        .contentType(ContentType.JSON)
-        .post(BASE + "/repositories/qits-ci-service/groups/default/bumps")
-        .then()
-        .statusCode(403);
-    as("qits:reader")
-        .contentType(ContentType.JSON)
-        .post(BASE + "/bumps/window")
-        .then()
-        .statusCode(403);
-    as("qits:reader").delete(BASE + "/bumps/window").then().statusCode(403);
   }
 
   @Test

@@ -30,7 +30,9 @@ import org.junit.jupiter.api.Test;
 
 /**
  * <b>The {@code dependency-bump} switch in its emergency position</b> (qits-1133). It ships ON since
- * the R2 cutover; this class is the one launch that turns it off, to pin what off means.
+ * the R2 cutover, and since R5 removed the upstream switch it is the one kill switch of the whole
+ * bump path; this class is the one launch that turns it off, to pin what off means — the kind is not
+ * listed or run, the upstream hook re-plans nothing, and the dispatcher opens no main-only request.
  */
 @QuarkusTest
 @TestProfile(DependencyBumpSwitchedOffTest.DependencyBumpOff.class)
@@ -45,6 +47,10 @@ class DependencyBumpSwitchedOffTest {
   }
 
   @Inject AutomationService automations;
+
+  @Inject eu.wohlben.qits.maintenance.bump.BumpDispatcher dispatcher;
+
+  @Inject UpstreamReplan upstream;
 
   @Inject ScanService scans;
 
@@ -119,6 +125,31 @@ class DependencyBumpSwitchedOffTest {
     queue.awaitIdle(Duration.ofSeconds(30));
 
     assertEquals(0, answer.automations().size(), answer.toString());
+    assertEquals(0, triggers());
+  }
+
+  /** Off, the dispatcher opens no main-only request: nothing would write its bump. */
+  @Test
+  void theDispatcherIsDisabled() {
+    Fixture.scriptCiQueueEmpty(peers);
+
+    var decision = dispatcher.explain(java.time.Instant.now());
+    assertEquals("DISABLED", decision.outcome());
+    assertTrue(decision.summary().contains(DependencyBumpAutomation.SWITCH), decision.summary());
+    assertTrue(dispatcher.tick().isEmpty());
+  }
+
+  /** Off, an upstream release re-plans nothing and reads no listing. */
+  @Test
+  void theUpstreamHookIsANoOp() {
+    upstream.latestMoved(
+        eu.wohlben.qits.maintenance.model.Ecosystem.MAVEN, AutomationFixture.EVENTSTREAM);
+    upstream.replanConsumers(
+        eu.wohlben.qits.maintenance.model.Ecosystem.MAVEN, AutomationFixture.EVENTSTREAM);
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    assertTrue(
+        peers.bodiesFor(Fixture.RELEASE_REQUESTS_PATH).isEmpty(), "no listing was read");
     assertEquals(0, triggers());
   }
 }

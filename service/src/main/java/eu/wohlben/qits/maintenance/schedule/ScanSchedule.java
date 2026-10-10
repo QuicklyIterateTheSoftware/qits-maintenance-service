@@ -11,8 +11,8 @@ import java.util.UUID;
 import org.jboss.logging.Logger;
 
 /**
- * The clock's reading half: the two scans. The writing half — the nightly internal bump — is
- * {@link BumpSchedule}, on a cron of its own.
+ * The clock's reading half: the two scans. What is owed a bump is {@link BumpDispatchSchedule}'s,
+ * on a timer of its own.
  *
  * <p><b>Two crons, one per scope, and they are far apart on purpose.</b> An internal release lands
  * many times a day and is one hop away, so six hours is a cheap question. An external index is
@@ -23,7 +23,7 @@ import org.jboss.logging.Logger;
  *
  * <p><b>{@code enabled} is whether the clock may scan at all</b>, and that is the whole of what it
  * decides. A scan asks for no bumps at all any more, whoever triggered it; what the clock does about
- * what a scan found is {@link BumpSchedule}'s, at 02:00, gated by its own keys.
+ * what a scan found is the dispatcher's ({@link BumpDispatchSchedule}), gated by its own keys.
  *
  * <p><b>{@code SKIP} on a concurrent execution</b>, and the work queue behind it. A scan that
  * outlives its own schedule is never joined by a second one — and even if SKIP let one through, the

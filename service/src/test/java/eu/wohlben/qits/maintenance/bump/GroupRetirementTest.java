@@ -1,19 +1,15 @@
 package eu.wohlben.qits.maintenance.bump;
 
 import static io.restassured.RestAssured.given;
-import static org.hamcrest.Matchers.containsString;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import eu.wohlben.qits.maintenance.api.Fixture;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
-import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
-import eu.wohlben.qits.maintenance.config.UpstreamSwitch;
 import eu.wohlben.qits.maintenance.entity.MtBump;
 import eu.wohlben.qits.maintenance.entity.MtReleaseRequest;
-import eu.wohlben.qits.maintenance.error.GroupBumpsRetiredException;
 import eu.wohlben.qits.maintenance.model.BranchState;
 import eu.wohlben.qits.maintenance.model.BumpMode;
 import eu.wohlben.qits.maintenance.model.BumpStatus;
@@ -26,6 +22,7 @@ import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import eu.wohlben.qits.maintenance.scan.ScanService;
 import eu.wohlben.qits.maintenance.scan.ScanTrigger;
 import eu.wohlben.qits.maintenance.work.WorkQueue;
+import io.quarkus.narayana.jta.QuarkusTransaction;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
 import jakarta.inject.Inject;
@@ -38,15 +35,14 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * <b>The cutover (qits-1133 R2)</b>: with {@code qits.maintenance.pre-run.upstream.enabled} on —
- * the shipped default — nothing writes a {@code maintenance/<group>} branch. No path sends a group
- * bump to qits-ci (the door answers 410, the service refuses, a row left REQUESTED is closed
- * unsent, the dispatcher opens no group bump), a run already going ends without a release ask, and
- * the legacy sweep withdraws the bump-only requests standing on group branches, leaves a person's
- * open, deletes the branches, retires their rows — and does nothing at all the second time.
+ * <b>Group bumps are retired (qits-1133 R2 switched them off, R5 removed them)</b>: nothing writes
+ * a {@code maintenance/<group>} branch. The group door is gone (404), the dispatcher opens no group
+ * bump, a GROUP row found active is closed unsent and unreleased, and the legacy sweep withdraws the
+ * bump-only requests standing on group branches, leaves a person's open, deletes the branches,
+ * retires their rows — and does nothing at all the second time.
  */
 @QuarkusTest
-class GroupCutoverTest {
+class GroupRetirementTest {
 
   private static final String BASE = "/maintenance/api";
 
@@ -86,15 +82,8 @@ class GroupCutoverTest {
 
   @Inject WorkQueue queue;
 
-  @Inject MaintenanceConfig config;
-
-  private MaintenanceConfig realConfig;
-
   @BeforeEach
   void scriptThePeers() {
-    // Explicitly ON, so this class says what it pins whatever ran before it; the shipped default is
-    // asserted separately below.
-    realConfig = UpstreamSwitch.install(config, true);
     queue.awaitIdle(Duration.ofSeconds(30));
     inventory.clear();
     peers.reset();
@@ -104,57 +93,41 @@ class GroupCutoverTest {
     Fixture.scriptCiQueueEmpty(peers);
     scans.request(ScanScope.ALL, null, ScanTrigger.MANUAL);
     queue.awaitIdle(Duration.ofSeconds(60));
-    dispatcher.close("a fresh test");
   }
 
   @AfterEach
-  void restoreTheConfig() {
+  void drain() {
     queue.awaitIdle(Duration.ofSeconds(30));
-    UpstreamSwitch.restore(realConfig);
-  }
-
-  // --- the switch -------------------------------------------------------------------------------
-
-  @Test
-  void theSwitchShipsOn() {
-    assertTrue(realConfig.preRunUpstreamEnabled(), "R2 is the release that turns it on");
   }
 
   // --- no group trigger from any path -------------------------------------------------------------
 
-  /** The manual door: 410 Gone, pointing at the dependency-bump automation, and nothing sent. */
+  /** The group door and the window doors are gone: nothing answers them, and nothing is sent. */
   @Test
-  void theGroupDoorIsGone() {
+  void theGroupDoorAndTheWindowAreGone() {
     given()
         .contentType(ContentType.JSON)
         .body("{}")
         .when()
         .post(BASE + "/repositories/" + Fixture.REPOSITORY + "/groups/dependencies/bumps")
         .then()
-        .statusCode(410)
-        .body("message", containsString("dependency-bump"))
-        .body("message", containsString("qits-1133"));
+        .statusCode(org.hamcrest.Matchers.oneOf(404, 405));
+    given().when().get(BASE + "/bumps/window").then().statusCode(404);
+    given().when().post(BASE + "/bumps/window").then().statusCode(org.hamcrest.Matchers.oneOf(404, 405));
 
     queue.awaitIdle(Duration.ofSeconds(30));
     assertTrue(store.bumps(Fixture.REPOSITORY, 10).isEmpty(), "no bump row was opened");
     assertFalse(triggered(), "nothing was sent to qits-ci");
   }
 
-  /** Every caller of the group path — the door, the ungated night, the dispatcher — meets this. */
-  @Test
-  void theServiceRefusesAGroupBump() {
-    GroupBumpsRetiredException refused =
-        assertThrows(
-            GroupBumpsRetiredException.class,
-            () -> bumps.request(Fixture.REPOSITORY, "dependencies", BumpTrigger.SCHEDULED));
-    assertEquals(410, refused.statusCode());
-  }
-
-  /** The dispatcher, owed a bump, opens a request instead and never a group bump. */
+  /** The dispatcher, owed a bump, opens a main-only request and never a group bump. */
   @Test
   void theDispatcherCutsNoGroupBranch() {
     peers.answer(
-        PeerTarget.PROJECTS, Fixture.RELEASE_REQUESTS_PATH, FakePeers.Scripted.ok("{\"requests\":[]}"));
+        PeerTarget.PROJECTS,
+        Fixture.RELEASE_REQUESTS_PATH,
+        FakePeers.Scripted.ok(
+            "{\"requests\":[],\"request\":{\"id\":\"" + BUMP_ONLY + "\",\"state\":\"PENDING\"}}"));
 
     for (int tick = 0; tick < 3; tick++) {
       dispatcher.tick();
@@ -166,12 +139,15 @@ class GroupCutoverTest {
             .noneMatch(row -> BumpMode.of(row.mode) == BumpMode.GROUP),
         "no group bump row");
     assertFalse(triggered(), "nothing was sent to qits-ci");
+    assertTrue(
+        store.newestOpenedRequest(Fixture.REPOSITORY, MtReleaseRequest.MAIN_ONLY).isPresent(),
+        "a main-only request was opened instead");
   }
 
-  /** A group row the release before left REQUESTED is closed unsent — and for good. */
+  /** A GROUP row found REQUESTED is closed unsent — and for good. */
   @Test
   void aGroupRowLeftRequestedIsClosedWithoutATrigger() {
-    UUID id = openGroupBump();
+    UUID id = legacyGroupBump("REQUESTED", null);
 
     bumps.dispatch(id);
     bumps.sweep();
@@ -186,26 +162,23 @@ class GroupCutoverTest {
   }
 
   /**
-   * A group run already going at the cutover is followed to its end — its run left before the
-   * switch flipped — but what it pushed is never asked to be released: the legacy sweep withdraws
-   * and deletes instead.
+   * A GROUP row found RUNNING is not followed: its run is not read, nothing is triggered and
+   * nothing asks to release what it may have pushed — the legacy sweep deletes the branch instead.
    */
   @Test
-  void aRunningGroupBumpEndsButAsksForNoRelease() {
-    UUID id = openGroupBump();
-    store.bumpDispatched(id, "e1", List.of(RUN));
+  void aRunningGroupRowIsClosedWithoutReadingItsRun() {
+    UUID id = legacyGroupBump("RUNNING", RUN);
     Fixture.scriptRun(peers, RUN, "SUCCESS");
-    Fixture.scriptBranchAt(peers, Fixture.BUMPED_SHA);
 
-    bumps.poll(id);
     bumps.sweep();
     queue.awaitIdle(Duration.ofSeconds(30));
 
     MtBump row = store.bump(id).orElseThrow();
-    assertEquals(BumpStatus.SUCCEEDED.name(), row.status, row.message);
+    assertEquals(BumpStatus.NOTHING_TO_DO.name(), row.status, row.message);
     assertEquals(ReleaseRequestClient.CONVERGED, row.releaseRequestId);
+    assertFalse(peers.called(PeerTarget.CI, "/ci/api/runs/" + RUN), "its run was not read");
     assertFalse(releaseAsked(), "nothing asked for a release");
-    assertFalse(triggered(), "no trigger was sent by the ending either");
+    assertFalse(triggered(), "nothing was triggered");
   }
 
   // --- the legacy sweep ---------------------------------------------------------------------------
@@ -220,8 +193,7 @@ class GroupCutoverTest {
     store.recordBranch(
         Fixture.REPOSITORY, "legacy", "maintenance/legacy", BranchState.PUSHED, Fixture.BUMPED_SHA,
         Instant.now());
-    UUID owed = openGroupBump();
-    store.bumpFinished(owed, BumpStatus.SUCCEEDED, "SUCCESS", "pushed", Instant.now());
+    UUID owed = legacyGroupBump("SUCCEEDED", null);
     store.recordOpenedRequest(
         BUMP_ONLY, Fixture.REPOSITORY, DEPENDENCIES, MtReleaseRequest.GROUP_BUMP, null,
         Instant.now());
@@ -311,34 +283,6 @@ class GroupCutoverTest {
     assertTrue(peers.deleted(PeerTarget.GITHOST, deletePath(DEPENDENCIES)));
   }
 
-  /** A group branch a run is still writing is left for the pass after the run ends. */
-  @Test
-  void aBranchWithARunningGroupBumpIsLeftAlone() {
-    scriptTheEstate();
-    UUID id = openGroupBump();
-    store.bumpDispatched(id, "e1", List.of(RUN));
-
-    LegacyGroupBranchSweep.Result result = sweep.sweep();
-
-    assertFalse(peers.deleted(PeerTarget.GITHOST, deletePath(DEPENDENCIES)));
-    assertFalse(peers.called(PeerTarget.PROJECTS, withdrawPath(BUMP_ONLY)));
-    assertTrue(peers.deleted(PeerTarget.GITHOST, deletePath(EXTERNAL)), "the other one goes");
-    assertTrue(result.waiting().stream().anyMatch(line -> line.contains(DEPENDENCIES)));
-  }
-
-  /** The emergency position: the sweep does nothing at all. */
-  @Test
-  void withTheSwitchOffTheSweepDoesNothing() {
-    scriptTheEstate();
-    UpstreamSwitch.install(config, false);
-
-    LegacyGroupBranchSweep.Result result = sweep.sweep();
-
-    assertTrue(result.idle());
-    assertFalse(peers.called(PeerTarget.GITHOST, DESCRIBE));
-    assertEquals(0, peers.deleteCount());
-  }
-
   @Test
   void onlyAOneSegmentMaintenanceBranchIsAGroupBranch() {
     assertEquals("dependencies", LegacyGroupBranchSweep.groupOf(DEPENDENCIES));
@@ -415,30 +359,57 @@ class GroupCutoverTest {
         + Fixture.REPOSITORY;
   }
 
-  /** A group row opened straight in the store, the way the release before the cutover left it. */
-  private UUID openGroupBump() {
-    return store.openBump(
-        Fixture.REPOSITORY,
-        "dependencies",
-        DEPENDENCIES,
-        "dev",
-        BumpTrigger.SCHEDULED,
-        List.of(
-            new Change(
-                "maven", "pom.xml", "eu.wohlben.qits:qits-eventstream", "1.0.0", "1.1.0",
-                "property:qits.eventstream.version")),
-        Instant.now());
+  /**
+   * A GROUP row written straight into the table, the way the path before the retirement left one —
+   * nothing in this build can open one any more.
+   */
+  private UUID legacyGroupBump(String status, String runId) {
+    UUID id = UUID.randomUUID();
+    String changes;
+    try {
+      changes =
+          new ObjectMapper()
+              .writeValueAsString(
+                  List.of(
+                      new Change(
+                          "maven", "pom.xml", "eu.wohlben.qits:qits-eventstream", "1.0.0", "1.1.0",
+                          "property:qits.eventstream.version")));
+    } catch (Exception e) {
+      throw new IllegalStateException(e);
+    }
+    Instant now = Instant.now();
+    QuarkusTransaction.requiringNew()
+        .run(
+            () -> {
+              MtBump row = new MtBump();
+              row.id = id;
+              row.repository = Fixture.REPOSITORY;
+              row.groupName = "dependencies";
+              row.mode = BumpMode.GROUP.name();
+              row.branch = DEPENDENCIES;
+              row.environment = "dev";
+              row.trigger = BumpTrigger.SCHEDULED.name();
+              row.status = status;
+              row.changes = changes;
+              row.ciRunId = runId;
+              row.startedAt = now;
+              row.finishedAt =
+                  status.equals("REQUESTED") || status.equals("RUNNING") ? null : now;
+              row.persist();
+            });
+    return id;
   }
 
   private boolean triggered() {
     return peers.called(PeerTarget.CI, CiClient.TRIGGER_PATH);
   }
 
-  /** Whether a release ask was POSTed — the collection's GET (the listing) is not one. */
+  /**
+   * Whether a release ask was POSTed — the collection's GET (the listing) carries no body and is not
+   * one. Read through a method: {@code peers} is a client proxy, whose own field would be empty.
+   */
   private boolean releaseAsked() {
-    return peers.calls.stream()
-        .anyMatch(
-            call -> "POST".equals(call.method())
-                && call.url().endsWith(Fixture.RELEASE_REQUESTS_PATH));
+    return peers.bodiesFor(Fixture.RELEASE_REQUESTS_PATH).stream()
+        .anyMatch(java.util.Objects::nonNull);
   }
 }

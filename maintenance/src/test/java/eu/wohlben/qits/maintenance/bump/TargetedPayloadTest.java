@@ -96,7 +96,5 @@ class TargetedPayloadTest {
     assertEquals(BumpMode.GROUP, BumpMode.of(""));
     assertEquals(BumpMode.GROUP, BumpMode.of("SOMETHING_LATER"));
     assertEquals(BumpMode.TARGETED, BumpMode.of("TARGETED"));
-    assertTrue(BumpMode.GROUP.ownsTheBranch());
-    assertFalse(BumpMode.TARGETED.ownsTheBranch(), "which is the whole of the difference");
   }
 }

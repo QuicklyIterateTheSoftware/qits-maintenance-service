@@ -324,11 +324,6 @@ class AutomationSourceBranchEndingTest {
     UUID second = trigger(OTHER_BRANCH, gitlink());
     assertNotEquals(first, second);
     assertEquals(BumpStatus.RUNNING.name(), store.bump(second).orElseThrow().status);
-
-    // …and neither of them holds the nightly group's lock, which is a different ref again.
-    assertTrue(
-        store.activeBump(Fixture.REPOSITORY, "dependencies").isEmpty(),
-        "this ending must never hold up the group whose branch it never touches");
   }
 
   /** Nothing to write is an ending, not a refusal — and no CI run is started for it. */
