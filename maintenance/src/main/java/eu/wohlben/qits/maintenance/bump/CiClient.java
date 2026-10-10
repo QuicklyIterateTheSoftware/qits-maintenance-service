@@ -197,8 +197,12 @@ public class CiClient {
     return trigger(eventName, bumpId, payload);
   }
 
-  /** The {@code changes} array: each change as the plan spells it, plus its changelog if any. */
-  static ArrayNode changes(List<Change> changes, Map<Change, ChangelogRange> changelogs) {
+  /**
+   * The {@code changes} array: each change as the plan spells it, plus its changelog if any. Shared
+   * by both pipelines that carry changes — the {@code MaintenanceBump} trigger and the dependency
+   * bump's {@code ReleaseRequestAutomation} payload — so a changelog is spelled once.
+   */
+  public static ArrayNode changes(List<Change> changes, Map<Change, ChangelogRange> changelogs) {
     ArrayNode array = JSON.createArrayNode();
     for (Change change : changes) {
       ObjectNode node = JSON.valueToTree(change);
