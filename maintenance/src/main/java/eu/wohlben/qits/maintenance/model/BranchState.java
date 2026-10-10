@@ -11,13 +11,13 @@ public enum BranchState {
    * source branches when it lands. The next bump starts fresh from {@code main}. */
   NONE,
 
-  /** It exists on the git host and this service put it there. A further bump commits on top of it,
-   * ff-only. */
+  /** It exists on the git host and this service put it there. A further bump rebuilds it as one
+   * commit on its base (user decision 2026-10-09). */
   PUSHED,
 
-  /** SOMEBODY REWROTE IT BY HAND. The bump's push is ff-only and never forced, so a non-ff
-   * rejection is a person's edit — they own the branch now, and this service stops writing to it
-   * until it is gone. */
+  /** SOMEBODY WROTE IT BY HAND. The step rebuilds only over its own commits, so a commit it did not
+   * write — or a branch that moved under its lease — is a person's edit: they own the branch now,
+   * and this service stops writing to it until it is deleted. */
   STALE,
 
   /**

@@ -93,4 +93,12 @@ public interface ReleaseRequestAutomation {
   default String branchPrefix() {
     return AutomationService.BRANCH_PREFIX + kind() + "/";
   }
+
+  /**
+   * Whether this build offers the kind. A kind that is switched off is not listed, planned or
+   * started; rows it opened before still end. Default: on.
+   */
+  default boolean enabled() {
+    return true;
+  }
 }

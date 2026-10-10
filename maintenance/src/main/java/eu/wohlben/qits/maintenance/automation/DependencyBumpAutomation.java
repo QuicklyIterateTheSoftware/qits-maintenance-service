@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
  * <b>Dependency bump</b> (qits-1133): every pin a release request's FOLD carries that is behind its
@@ -47,6 +48,14 @@ import java.util.Set;
  *   <li><b>Writes</b> through the shared core's {@code automations/dependency-bump.yml}: the payload
  *       carries {@code changes} in exactly the {@code MaintenanceBump} entry shape ({@link Change})
  *       and {@code commitPaths}, the manifests those changes touch.
+ *   <li><b>Proves its changelogs before anything is sent</b> (qits-893): its commit is a bump commit
+ *       like any other, so at dispatch {@link AutomationService} resolves each change's range
+ *       through {@link eu.wohlben.qits.maintenance.bump.changelog.ChangelogRanges} and each change
+ *       that has one carries {@code "changelog": {"repository": "…", "versions": ["…"]}}, spelled by
+ *       {@link CiClient#changes} exactly as the {@code MaintenanceBump} trigger spells it — an
+ *       external change, or one whose repository predates changelogs, carries no key. A missing
+ *       changelog FAILS the run with the problems joined "; " and triggers nothing; a docs store
+ *       that could not be read leaves it REQUESTED for the sweep.
  * </ul>
  *
  * <h2>Whose upgrades</h2>
@@ -72,6 +81,12 @@ public class DependencyBumpAutomation implements ReleaseRequestAutomation {
 
   public static final String KIND = "dependency-bump";
 
+  /**
+   * The switch, off until the cutover (MT-5): off, the kind is not listed, planned or started, and
+   * the group bumps carry on as before.
+   */
+  public static final String SWITCH = "qits.maintenance.automations.dependency-bump.enabled";
+
   /** The manifests the four parsers edit: every pom, the npm pair, both Dockerfile spellings. */
   public static final List<String> MANIFESTS =
       List.of(
@@ -87,6 +102,14 @@ public class DependencyBumpAutomation implements ReleaseRequestAutomation {
   @Inject MaintenanceConfig config;
 
   @Inject ManifestScanner scanner;
+
+  @ConfigProperty(name = SWITCH, defaultValue = "false")
+  boolean enabled;
+
+  @Override
+  public boolean enabled() {
+    return enabled;
+  }
 
   @Override
   public String kind() {

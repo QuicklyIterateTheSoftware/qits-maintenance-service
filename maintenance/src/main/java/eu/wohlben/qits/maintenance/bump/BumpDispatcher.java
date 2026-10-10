@@ -10,6 +10,7 @@ import eu.wohlben.qits.maintenance.entity.MtLatest;
 import eu.wohlben.qits.maintenance.entity.MtPin;
 import eu.wohlben.qits.maintenance.entity.MtRepository;
 import eu.wohlben.qits.maintenance.manifest.GroupConfig;
+import eu.wohlben.qits.maintenance.model.BranchState;
 import eu.wohlben.qits.maintenance.model.BumpStatus;
 import eu.wohlben.qits.maintenance.model.BumpTrigger;
 import eu.wohlben.qits.maintenance.model.RepositoryStatus;
@@ -1018,6 +1019,16 @@ public class BumpDispatcher {
         refusals.add(new Refused(row.name, group, changes.size()));
         continue;
       }
+      // A BRANCH SOMEBODY WROTE BY HAND IS LEFT ALONE. The step refuses to rebuild it, so
+      // dispatching would only be a red run per tick; it is reported until the branch is deleted.
+      if (bases.stale(row, group)) {
+        stalled.add(
+            new Stalled(
+                row.name, group, null, BranchState.STALE.name(),
+                BumpService.BRANCH_PREFIX + group
+                    + " carries a commit qits maintenance did not write; delete it to resume"));
+        continue;
+      }
       Hold hold = hold(row, group, changes);
       if (config.preRunUpstreamEnabled() && hold == Hold.FREE) {
         hold = upstreamHold(row, changes);
@@ -1148,8 +1159,7 @@ public class BumpDispatcher {
     if (tagRef.equals(bump.baseRef)) {
       return "its newest bump was already cut from " + tagRef;
     }
-    BumpBase.Choice choice = bases.choose(row, group, bump.branch, tag);
-    if (!choice.rebuild()) {
+    if (!bases.lacksTag(row, group, bump.branch, tag)) {
       return "";
     }
     LOG.debugf(

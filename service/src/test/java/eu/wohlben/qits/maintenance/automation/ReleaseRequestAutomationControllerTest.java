@@ -91,18 +91,16 @@ class ReleaseRequestAutomationControllerTest {
             .statusCode(200)
             .body("requestId", equalTo(REQUEST))
             .body("foldSha", equalTo(FOLD_A))
-            // The dependency bump applies too (qits-1133) and finds the fold current: FRESH, listed
-            // first by kind order, and it is what lets the DERIVED screenshots go in the same ask.
-            .body("automations", hasSize(2))
-            .body("automations[0].kind", equalTo(DependencyBumpAutomation.KIND))
-            .body("automations[0].state", equalTo("FRESH"))
-            .body("automations[1].kind", equalTo(ScreenshotBaselinesAutomation.KIND))
-            .body("automations[1].label", equalTo("Screenshot baselines"))
-            .body("automations[1].state", equalTo("REQUESTED"))
-            .body("automations[1].branch", equalTo(AutomationFixture.branch(REQUEST)))
-            .body("automations[1].updatedAt", notNullValue())
+            // The dependency bump ships switched off (qits-1133), so it is not listed and holds
+            // nothing: the DERIVED screenshots go in the same ask.
+            .body("automations", hasSize(1))
+            .body("automations[0].kind", equalTo(ScreenshotBaselinesAutomation.KIND))
+            .body("automations[0].label", equalTo("Screenshot baselines"))
+            .body("automations[0].state", equalTo("REQUESTED"))
+            .body("automations[0].branch", equalTo(AutomationFixture.branch(REQUEST)))
+            .body("automations[0].updatedAt", notNullValue())
             .extract()
-            .path("automations[1].bumpId");
+            .path("automations[0].bumpId");
     queue.awaitIdle(Duration.ofSeconds(30));
 
     given()
@@ -110,9 +108,9 @@ class ReleaseRequestAutomationControllerTest {
         .get(DOOR + "?foldSha=" + FOLD_A)
         .then()
         .statusCode(200)
-        .body("automations[1].bumpId", equalTo(bumpId))
-        .body("automations[1].state", equalTo("RUNNING"))
-        .body("automations[1].runIds[0]", equalTo("run-automation-door"));
+        .body("automations[0].bumpId", equalTo(bumpId))
+        .body("automations[0].state", equalTo("RUNNING"))
+        .body("automations[0].runIds[0]", equalTo("run-automation-door"));
     given().when().get(DOOR).then().statusCode(200).body("foldSha", equalTo(FOLD_A));
     given().when().get("/maintenance/api/bumps/" + bumpId).then().statusCode(200)
         .body("mode", equalTo("AUTOMATION"));

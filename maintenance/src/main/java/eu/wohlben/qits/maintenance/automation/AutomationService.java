@@ -5,6 +5,7 @@ import eu.wohlben.qits.maintenance.bump.BumpPayload;
 import eu.wohlben.qits.maintenance.bump.BumpService;
 import eu.wohlben.qits.maintenance.bump.CiClient;
 import eu.wohlben.qits.maintenance.bump.ReleaseRequestClient;
+import eu.wohlben.qits.maintenance.bump.changelog.ChangelogRange;
 import eu.wohlben.qits.maintenance.bump.changelog.ChangelogRanges;
 import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
 import eu.wohlben.qits.maintenance.dto.FailureDto;
@@ -191,7 +192,7 @@ public class AutomationService {
   /** What a trigger for a repository no scan has read yet asks to read it. */
   @Inject ScanService scans;
 
-  /** Which changelogs a source-branch run's changes pull in, and the proof they exist (qits-893). */
+  /** Which changelogs a run's changes pull in, and the proof they exist (qits-893). */
   @Inject ChangelogRanges changelogRanges;
 
   @Inject @Any Instance<ReleaseRequestAutomation> registered;
@@ -253,8 +254,16 @@ public class AutomationService {
     return words;
   }
 
-  /** Every registered kind, ordered by id — the order every answer lists them in. */
+  /**
+   * Every kind this build offers (registered and switched on), ordered by id — the order every
+   * answer lists them in.
+   */
   public List<ReleaseRequestAutomation> kinds() {
+    return registeredKinds().stream().filter(ReleaseRequestAutomation::enabled).toList();
+  }
+
+  /** Every registered kind, switched on or not, ordered by id. */
+  private List<ReleaseRequestAutomation> registeredKinds() {
     List<ReleaseRequestAutomation> all = new ArrayList<>();
     for (ReleaseRequestAutomation kind : registered) {
       all.add(kind);
@@ -263,9 +272,19 @@ public class AutomationService {
     return List.copyOf(all);
   }
 
-  /** The kind registered under that id. */
+  /** The kind offered under that id: registered and switched on. */
   public Optional<ReleaseRequestAutomation> kind(String kind) {
     return kinds().stream().filter(candidate -> candidate.kind().equals(kind)).findFirst();
+  }
+
+  /**
+   * The kind registered under that id, switched on or not: what a row it already opened ends
+   * against.
+   */
+  private Optional<ReleaseRequestAutomation> registeredKind(String kind) {
+    return registeredKinds().stream()
+        .filter(candidate -> candidate.kind().equals(kind))
+        .findFirst();
   }
 
   // --- the every-fold trigger -------------------------------------------------------------------
@@ -768,6 +787,17 @@ public class AutomationService {
     if (!config.bumpEnabled()) {
       return;
     }
+    if (registeredKind(row.automationKind).filter(found -> !found.enabled()).isPresent()) {
+      // Switched off after the row was opened: it ends FRESH rather than FAILED, so it holds
+      // nothing.
+      store.bumpFinished(
+          row.id,
+          BumpStatus.NOTHING_TO_DO,
+          null,
+          "the " + row.automationKind + " automation is switched off; nothing was run",
+          Instant.now());
+      return;
+    }
     ReleaseRequestAutomation kind = kind(row.automationKind).orElse(null);
 
     // CARRY-OVER, ASKED AGAIN. The trigger asked it too, but the fold this one was opened behind may
@@ -834,22 +864,34 @@ public class AutomationService {
       fail(row, String.join("; ", problems));
       return;
     }
+    // A PLAN'S CHANGES ARE BUMP COMMITS TOO (qits-893): the dependency bump's are proved against
+    // the docs store exactly as a source-branch run's are, BEFORE the branch head is read or
+    // anything is sent — a missing changelog FAILS the row, an unreadable store leaves it REQUESTED.
+    List<Change> changes = BumpService.changes(row);
+    Map<Change, ChangelogRange> changelogs = Map.of();
+    if (!changes.isEmpty()) {
+      Optional<Map<Change, ChangelogRange>> resolved = changelogs(row, changes);
+      if (resolved.isEmpty()) {
+        return;
+      }
+      changelogs = resolved.get();
+    }
     store.bumpStartHead(row.id, branchHead(repository, row.branch));
     AutomationSubject subject =
         subject(repository, row.releaseRequestId, row.foldSha, List.of(), row.workItem);
     // A PLAN THAT NAMED ITS FILES STAGES THOSE AND NOTHING ELSE (qits-1133): the dependency bump's
     // `commitPaths` are the manifests its changes touch, frozen on the row at the plan, and they
     // replace the kind's whole pathspec list. A plan's `changes` ride beside them in the
-    // MaintenanceBump entry shape — the same records the bump pipeline has always been sent.
+    // MaintenanceBump entry shape — the same records, and the same `changelog` field on each one
+    // that has a range, serialized by the same CiClient code the bump pipeline is sent.
     Map<String, Object> extras = new LinkedHashMap<>(extras(row));
     List<String> commitPaths = committablePaths(kind, subject);
     Object planned = extras.remove(DependencyBumpAutomation.COMMIT_PATHS);
     if (planned instanceof List<?> list && !list.isEmpty()) {
       commitPaths = list.stream().map(String::valueOf).toList();
     }
-    List<Change> changes = BumpService.changes(row);
     if (!changes.isEmpty()) {
-      extras.put("changes", changes);
+      extras.put("changes", CiClient.changes(changes, changelogs));
     }
     CiClient.TriggerResult result =
         ci.triggerAutomation(
@@ -898,20 +940,8 @@ public class AutomationService {
       fail(row, String.join("; ", problems));
       return;
     }
-    // THE CHANGELOGS, as a group bump proves them (qits-893): a missing one FAILS the row with the
-    // sentence naming it, an unreadable docs store leaves it REQUESTED for the sweep — the same two
-    // answers a refused payload and a 503 get — and nothing is triggered by either.
-    ChangelogRanges.Result changelogs = changelogRanges.resolve(changes);
-    List<String> changelogProblems = new ArrayList<>(changelogs.problems());
-    changelogProblems.addAll(BumpPayload.changelogProblems(changelogs.ranges()));
-    if (!changelogProblems.isEmpty()) {
-      fail(row, String.join("; ", changelogProblems));
-      LOG.warnf("The automation %s was not sent: %s", row.id, changelogProblems);
-      return;
-    }
-    if (changelogs.transientFailure()) {
-      store.bumpFinished(
-          row.id, BumpStatus.REQUESTED, null, BumpService.CHANGELOGS_UNREADABLE, Instant.now());
+    Optional<Map<Change, ChangelogRange>> changelogs = changelogs(row, changes);
+    if (changelogs.isEmpty()) {
       return;
     }
     Map<String, String> extra = new LinkedHashMap<>();
@@ -931,8 +961,33 @@ public class AutomationService {
             baseRef,
             changes,
             extra,
-            changelogs.ranges());
+            changelogs.get());
     dispatched(row, result);
+  }
+
+  /**
+   * THE CHANGELOGS, as a group bump proves them (qits-893), for either target's changes: the ranges
+   * when every one resolved and is valid; otherwise empty, with the row already ended — a missing
+   * changelog (or a range {@link BumpPayload#changelogProblems} refuses) FAILS it with the problems
+   * joined "; ", and an unreadable docs store leaves it REQUESTED with {@link
+   * BumpService#CHANGELOGS_UNREADABLE} for the sweep to send again. The same two answers a refused
+   * payload and a 503 get, and nothing is triggered by either.
+   */
+  private Optional<Map<Change, ChangelogRange>> changelogs(MtBump row, List<Change> changes) {
+    ChangelogRanges.Result resolved = changelogRanges.resolve(changes);
+    List<String> problems = new ArrayList<>(resolved.problems());
+    problems.addAll(BumpPayload.changelogProblems(resolved.ranges()));
+    if (!problems.isEmpty()) {
+      fail(row, String.join("; ", problems));
+      LOG.warnf("The automation %s was not sent: %s", row.id, problems);
+      return Optional.empty();
+    }
+    if (resolved.transientFailure()) {
+      store.bumpFinished(
+          row.id, BumpStatus.REQUESTED, null, BumpService.CHANGELOGS_UNREADABLE, Instant.now());
+      return Optional.empty();
+    }
+    return Optional.of(resolved.ranges());
   }
 
   /** What qits-ci said to a trigger, onto the row — the three answers every bump reads alike. */
@@ -974,7 +1029,7 @@ public class AutomationService {
    * none — keeps the sentence it always had.
    */
   public void finish(MtBump row, boolean passed, String ciRunStatus, CiClient.Failure failure) {
-    ReleaseRequestAutomation kind = kind(row.automationKind).orElse(null);
+    ReleaseRequestAutomation kind = registeredKind(row.automationKind).orElse(null);
     Target target = target(row, kind);
     Optional<MtRepository> repository = store.repository(row.repository);
     Instant now = Instant.now();
@@ -1277,7 +1332,7 @@ public class AutomationService {
     }
     List<AutomationDto> entries = new ArrayList<>();
     for (String kind : listed) {
-      String label = kind(kind).map(ReleaseRequestAutomation::label).orElse(kind);
+      String label = registeredKind(kind).map(ReleaseRequestAutomation::label).orElse(kind);
       List<MtBump> rows = byKind.get(kind);
       if (rows != null && !rows.isEmpty()) {
         entries.add(aggregate(kind, label, rows));
@@ -1541,7 +1596,7 @@ public class AutomationService {
    * the bump pipeline.
    */
   public String configPath(MtBump row) {
-    ReleaseRequestAutomation kind = kind(row.automationKind).orElse(null);
+    ReleaseRequestAutomation kind = registeredKind(row.automationKind).orElse(null);
     boolean core =
         kind != null
             ? CiClient.AUTOMATION_EVENT_NAME.equals(kind.pipeline())

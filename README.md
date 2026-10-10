@@ -398,8 +398,10 @@ the commit message. **A missing changelog is an error, not a workaround**: a rel
 whose changelog was not published, or an internal coordinate with no known source repository, FAILS
 the bump with the sentence naming it and nothing is triggered. A docs store that cannot be read
 (5xx, transport) says nothing about the changelogs, so the bump stays REQUESTED and is sent again,
-exactly as a 503 from the trigger. Group bumps and the source-branch automations (`estate-pins`)
-both go through it; `BumpPayload.changelogProblems` holds the field to a catalog name
+exactly as a 503 from the trigger. Group bumps, the source-branch automations (`estate-pins`) and
+the `dependency-bump` automation's `ReleaseRequestAutomation` payload all go through it — the last
+carries the same `changelog` field on its `changes`, spelled by the same `CiClient.changes`, and a
+missing changelog ends its run FAILED with nothing dispatched; `BumpPayload.changelogProblems` holds the field to a catalog name
 (`[a-z0-9][a-z0-9-]{0,127}`) and calver versions (`[0-9]{4}.[0-9]{1,4}.[0-9]+`).
 
 **`baseRef` is main unless a release has not reached it (qits-1081).** qits-projects folds every
@@ -409,10 +411,19 @@ such a tag already moved conflicts in every fold. At dispatch `BumpBase` reads `
 (calver compared numerically per segment), and asks qits-githost's `GET
 /githost/api/repositories/<catalog id>/contains?commit=<releasedSha>&in=<main head>` — the door is
 storage-id addressed, and the storage id is the catalog id. Not contained: `baseRef` is
-`refs/tags/<version>`, and when `maintenance/<group>` exists without the tag (same door, `in=<branch
-head>`) and is not STALE, its head is sent as `replaceHead`; the step rebuilds the branch on the tag
-under `--force-with-lease` on that head. Anything unreadable is `main` with a WARN — never a failed
-bump. Both are recorded on the row (`base_ref`, `replace_head`, V19) and answered on `GET /bumps`. The
+`refs/tags/<version>`. Anything unreadable is `main` with a WARN — never a failed bump.
+
+**A `maintenance/<group>` branch is always ONE commit on its base (user decision 2026-10-09).** It
+replaced "ff-only, never force", which stacked one commit per bump. Whenever the branch exists and is
+not STALE, its head is sent as `replaceHead`, and the step rebuilds the branch from the base with
+every change in the payload, commits once and pushes under `--force-with-lease`. The changes are
+everything pending in the group against the scanned base, so the pins the old commit carried are in
+the payload again and survive. The step rebuilds only over commits authored `maintenance@qits.local`
+on top of the base; any other commit, or a branch that moved under the lease, ends the run with exit
+42 (`BumpBase.NOT_OURS_EXIT`) and no push, and the branch becomes STALE. A STALE branch is not
+dispatched again (the dispatcher reports it as stalled) until it is deleted. The estate-pins
+automation (group `targeted`) runs the same pipeline against a request's own branch, which the step
+still appends to, ff-only. Both are recorded on the row (`base_ref`, `replace_head`, V19) and answered on `GET /bumps`. The
 dispatcher rebuilds a CONFLICTED release this way too, once per tag; see `BumpDispatcher`.
 
 **Three answers from qits-ci and they mean different things:**
@@ -424,15 +435,15 @@ dispatcher rebuilds a CONFLICTED release this way too, once per tag; see `BumpDi
 | **200 with no run id** | FAILED, `no run recorded for MaintenanceBump (repository unreadable or no platform pipeline)`. A run exists only if the repository was readable in that evaluation, so nothing is running and nothing will be. |
 
 **The branch head is read twice — before the trigger and when the run ends — and only the head is
-compared, never a commit count.** One bump is up to two commits, because the maven step and the
-node/docker step each clone, commit and push.
+compared, never a commit count.** A bump that finds the same single commit already there pushes
+nothing.
 
 | run | branch | bump | `mt_branch` | release ask |
 |---|---|---|---|---|
 | SUCCESS | moved | `SUCCEEDED` | `PUSHED` | **asked** |
 | SUCCESS | unmoved | `NOTHING_TO_DO` | unchanged | not asked — nothing was pushed |
 | red | unmoved | `FAILED` | `FAILED` | not asked |
-| red | **moved** | `FAILED` | `STALE` — the push is ff-only and never forced, so a branch that moved anyway is a person's commit. They own it now. | not asked — releasing somebody else's commits on their behalf is the one thing this must never do |
+| red | **moved**, or step exit 42 | `FAILED` | `STALE` — the branch carries a commit qits maintenance did not write, or moved under the lease. They own it now. | not asked — releasing somebody else's commits on their behalf is the one thing this must never do |
 
 ### The release ask
 
@@ -456,9 +467,8 @@ poll the request, wait for a version, or record a release.
   name and the project cannot address it. A row with no catalog id records a refusal; the next scan
   fills the column and the next bump asks with it.
 - **`summary` is the commit subject shape the bump's own commits carry**, word for word from
-  qits-ci's `ci/src/main/resources/platform-pipelines/maintenance-bump.yml`. The `n` is what was ASKED FOR, and it
-  cannot be what a commit says: one bump is up to two commits and each counts what its own step
-  applied. It doubles as the fold's commit message.
+  qits-ci's `ci/src/main/resources/platform-pipelines/maintenance-bump.yml`. The `n` is what was ASKED FOR; the
+  commit's own `n` counts only the changes that differ from the base, so the two can differ. It doubles as the fold's commit message.
 - **No `expectedSha`, and that is a deliberate loss.** qits-workspaces' door armed a request at the
   instant it was asked, so a head that had moved in between had to be a refusal. A release request
   is re-folded and re-gated on every push to any of its named sources, so a commit landing after the
@@ -962,6 +972,7 @@ environment without a rebuild.
 | `qits.maintenance.bump.dispatch.quiet-hours` | *(empty)* | hours a branch is unwelcome in: `HH:MM-HH:MM[,…]` in `time-zone`, end exclusive, midnight-wrapping allowed. Suppresses the debt-driven opening only; `POST /bumps/window` overrides it |
 | `qits.maintenance.bump.internal.window` | `6h` | how long one window lasts before it is closed, logged and re-opened if work is still owed. It closes early the moment nothing is owed, and it is also how long a refusal stands |
 | `qits.maintenance.environment` | `dev` | which environment's CI is recorded on a bump row |
+| `qits.maintenance.automations.dependency-bump.enabled` | `false` | **the `dependency-bump` automation (qits-1133).** Off until the cutover: the kind is not listed, planned or started, and a row it opened before ends FRESH. The upstream switch below needs it on to do anything |
 | `qits.maintenance.pre-run.upstream.enabled` | `false` | **the upstream half of the pre-run (qits-1133).** On: a moved `mt_latest` re-plans the `dependency-bump` of every open, not-READY request of its consumers (three restarts without a QA verdict and a request is left alone until it has one), and the dispatcher opens a main-only `LOWEST` request instead of a `maintenance/<group>` branch, withdrawn again when its pre-run finds nothing. Only such a main-only request has the `dependency-bump` automation plan EXTERNAL upgrades; every other request, and every request while the switch is off, gets INTERNAL pins only. Off: group dispatch exactly as before |
 
 **The registry keys carry a PATH as well as a host**, because a registry is mounted under a prefix

@@ -104,10 +104,10 @@ public final class BumpPayload {
   /**
    * The same, for a payload that may carry a {@code replaceHead} (qits-1081).
    *
-   * <p><b>{@code replaceHead} is the one value here that licenses a non-fast-forward push</b> — the
-   * step rebuilds the branch on {@code baseRef} under {@code --force-with-lease} on it — so it is
+   * <p><b>{@code replaceHead} is the head the step is expected to rebuild over</b> — under {@code
+   * --force-with-lease}, as one commit on {@code baseRef} — so it is
    * held to exactly what the step admits: lowercase hex, 40 characters or 64 (a SHA-256 repository's
-   * object name), nothing else. Null is "continue the branch", the ordinary payload.
+   * object name), nothing else. Null when there is no branch to replace.
    */
   public static List<String> problems(
       String group, String branch, String baseRef, String replaceHead, List<Change> changes) {

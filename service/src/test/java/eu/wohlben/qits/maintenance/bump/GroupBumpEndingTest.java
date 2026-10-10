@@ -8,10 +8,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import eu.wohlben.qits.maintenance.api.Fixture;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
 import eu.wohlben.qits.maintenance.entity.MtBump;
+import eu.wohlben.qits.maintenance.model.BranchState;
 import eu.wohlben.qits.maintenance.model.BumpStatus;
 import eu.wohlben.qits.maintenance.model.BumpTrigger;
 import eu.wohlben.qits.maintenance.model.ScanScope;
 import eu.wohlben.qits.maintenance.peer.FakePeers;
+import eu.wohlben.qits.maintenance.peer.PeerTarget;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import eu.wohlben.qits.maintenance.scan.ScanService;
 import eu.wohlben.qits.maintenance.scan.ScanTrigger;
@@ -19,6 +21,7 @@ import eu.wohlben.qits.maintenance.work.WorkQueue;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import java.time.Duration;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -223,5 +226,67 @@ class GroupBumpEndingTest {
         2,
         peers.bodiesFor(Fixture.RELEASE_REQUESTS_PATH).size(),
         "the ending's ask, and the sweep's one after the withdrawal");
+  }
+
+  // --- one commit per branch (user decision 2026-10-09) ---------------------------------------
+
+  /** An existing branch on a main base is sent for a rebuild: its head travels as replaceHead. */
+  @Test
+  void anExistingBranchIsAlwaysSentForARebuild() {
+    UUID id = triggerWithBranchAt(Fixture.BUMPED_SHA);
+
+    List<String> triggers = peers.bodiesFor("/ci/api/events/trigger");
+    assertEquals(1, triggers.size());
+    assertTrue(triggers.getFirst().contains("\"baseRef\":\"main\""), triggers.getFirst());
+    assertTrue(
+        triggers.getFirst().contains("\"replaceHead\":\"" + Fixture.BUMPED_SHA + "\""),
+        triggers.getFirst());
+    assertEquals(Fixture.BUMPED_SHA, store.bump(id).orElseThrow().replaceHead);
+  }
+
+  /**
+   * The step's NOT_OURS exit — a commit it did not write, or a branch that moved under its lease —
+   * marks the branch STALE even though the head did not move across the run. Then nothing is sent
+   * for it again: not by the button, and not by the dispatcher, which reports it instead.
+   */
+  @Test
+  void aNotOursExitMarksTheBranchStaleAndNothingIsSentAgain() {
+    UUID id = triggerWithBranchAt(Fixture.BUMPED_SHA);
+    peers.answer(
+        PeerTarget.CI,
+        "/ci/api/runs/" + RUN,
+        FakePeers.Scripted.ok(
+            "{\"id\":\"" + RUN + "\",\"status\":\"FAILED\",\"steps\":[{\"stepIndex\":0,"
+                + "\"status\":\"FAILED\",\"exitCode\":" + BumpBase.NOT_OURS_EXIT + ","
+                + "\"output\":\"error: abc on maintenance/dependencies was not written\\n\"}]}"));
+    bumps.poll(id);
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    MtBump done = store.bump(id).orElseThrow();
+    assertEquals(BumpStatus.FAILED.name(), done.status);
+    assertEquals(
+        BranchState.STALE.name(),
+        store.branch(Fixture.REPOSITORY, "dependencies").orElseThrow().state,
+        done.message);
+
+    int sent = peers.bodiesFor("/ci/api/events/trigger").size();
+    UUID again = bumps.request(Fixture.REPOSITORY, "dependencies", BumpTrigger.MANUAL);
+    queue.awaitIdle(Duration.ofSeconds(30));
+    MtBump refused = store.bump(again).orElseThrow();
+    assertEquals(BumpStatus.FAILED.name(), refused.status);
+    assertTrue(refused.message.contains("delete it to resume"), refused.message);
+    assertEquals(sent, peers.bodiesFor("/ci/api/events/trigger").size(), "no run for a STALE branch");
+    assertEquals(
+        BranchState.STALE.name(),
+        store.branch(Fixture.REPOSITORY, "dependencies").orElseThrow().state);
+
+    BumpDispatcher.Assessment assessment = dispatcher.assess();
+    assertTrue(
+        assessment.stalled().stream()
+            .anyMatch(stall -> stall.repository().equals(Fixture.REPOSITORY)
+                && BranchState.STALE.name().equals(stall.state())),
+        assessment.toString());
+    assertTrue(
+        assessment.candidates().stream().noneMatch(c -> c.repository().equals(Fixture.REPOSITORY)));
   }
 }
