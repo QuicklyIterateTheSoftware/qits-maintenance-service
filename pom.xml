@@ -110,7 +110,7 @@
              lineage and the durable-consumer tables — so joining it added
              `postgresql:eventstream:qits_platform_maintenance_eventstream` to
              .config/qits/deployments.yml. See service/pom.xml. -->
-        <qits.eventstream.version>2026.1003.44717</qits.eventstream.version>
+        <qits.eventstream.version>2026.1010.165955</qits.eventstream.version>
         <qits.maven.repository.url>https://registry.qits.wohlben.eu/artifacts/maven/maven</qits.maven.repository.url>
         <maven.compiler.release>25</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
