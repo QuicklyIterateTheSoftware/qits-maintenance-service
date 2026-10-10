@@ -19,6 +19,7 @@ import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -276,7 +277,11 @@ public final class GoldenMasters {
    * same rule as {@code @qits/angular/testing}'s {@code addGoldenInteraction}. {@code consumes}
    * names those body paths: dot-separated keys, {@code []} after a key for the elements of an
    * array ({@code requests[].gates[].kind}); a path ending in {@code []} reads the elements but
-   * none of their fields. Every other field stays free for the provider to change. An empty list
+   * none of their fields. {@code [field=value]} in place of {@code []} reads only the elements whose
+   * {@code field} is that text ({@code requests[].gates[kind=CI].state}): the consumer looks one
+   * element up by a key, so the recorded order of the others must not decide the example. Such an
+   * array is built like {@code frozen.listFilteredTo} — {@code minArrayLike} of the selected
+   * elements, "contains", never equals. Every other field stays free for the provider to change. An empty list
    * means the caller reads the status alone: the response then has no body and no {@code
    * Content-Type}. A path the recording does not hold throws.
    *
@@ -351,7 +356,7 @@ public final class GoldenMasters {
       return null;
     }
     PactDslJsonBody root = new PactDslJsonBody();
-    fillObject(root, Shape.of(kept), "$", op);
+    fillObject(root, Shape.of(kept), "$", op, selectedArrays(consumes));
     return root;
   }
 
@@ -362,9 +367,12 @@ public final class GoldenMasters {
     boolean whole;
     final LinkedHashMap<String, Pick> keys = new LinkedHashMap<>();
     Pick elements;
+    /** The {@code [field=value]} step that reached {@link #elements}; {@code []} when none. */
+    String selector = "[]";
   }
 
-  /** One path's steps: a key, or {@code []} for the elements of an array. */
+  /** One path's steps: a key, {@code []} for the elements of an array, or {@code [field=value]}
+   * for the elements whose {@code field} is that text. */
   static List<String> steps(String path) {
     List<String> out = new ArrayList<>();
     for (String segment : path.split("\\.", -1)) {
@@ -375,14 +383,54 @@ public final class GoldenMasters {
       if (!m.group(1).isEmpty()) {
         out.add(m.group(1));
       }
-      for (int i = 0; i < m.group(2).length() / 2; i++) {
-        out.add("[]");
+      Matcher bracket = BRACKET.matcher(m.group(2));
+      while (bracket.find()) {
+        out.add(bracket.group());
       }
     }
     return out;
   }
 
-  private static final Pattern STEP = Pattern.compile("^([^\\[\\]]*)((?:\\[\\])*)$");
+  private static final Pattern STEP =
+      Pattern.compile("^([^\\[\\]]*)((?:\\[(?:[A-Za-z0-9_]+=[^\\]]+)?\\])*)$");
+
+  private static final Pattern BRACKET = Pattern.compile("\\[[^\\]]*\\]");
+
+  /** Whether a step reads array elements: {@code []} or {@code [field=value]}. */
+  private static boolean isElements(String step) {
+    return step.startsWith("[");
+  }
+
+  /** Whether {@code element} passes the step {@code [field=value]}; every element passes {@code []}. */
+  private static boolean selects(String step, JsonNode element) {
+    if (step.equals("[]")) {
+      return true;
+    }
+    int eq = step.indexOf('=');
+    String field = step.substring(1, eq);
+    String value = step.substring(eq + 1, step.length() - 1);
+    return element.isObject() && element.path(field).isTextual() && element.get(field).asText().equals(value);
+  }
+
+  /** The pact paths ({@code $.requests[*].gates}) of the arrays a {@code [field=value]} step selects
+   * from. */
+  static Set<String> selectedArrays(List<String> consumes) {
+    Set<String> out = new HashSet<>();
+    for (String path : consumes) {
+      StringBuilder at = new StringBuilder("$");
+      for (String step : steps(path)) {
+        if (!isElements(step)) {
+          at.append('.').append(step);
+        } else {
+          if (!step.equals("[]")) {
+            out.add(at.toString());
+          }
+          at.append("[*]");
+        }
+      }
+    }
+    return out;
+  }
 
   /**
    * The recorded body cut down to the paths of {@code consumes}, or null when the list is empty.
@@ -402,14 +450,20 @@ public final class GoldenMasters {
       }
       Pick node = root;
       for (String step : walk) {
-        if (step.equals("[]")) {
+        if (isElements(step)) {
+          if (node.elements != null && !node.selector.equals(step)) {
+            throw new IllegalArgumentException(
+                "consumes '" + path + "' reads an array as " + step + ", another path as "
+                    + node.selector + ": name one");
+          }
+          node.selector = step;
           node = node.elements == null ? (node.elements = new Pick()) : node.elements;
         } else {
           node = node.keys.computeIfAbsent(step, k -> new Pick());
         }
       }
       // `entries[]` reads the elements, not their fields: only a path ending in a key reads it whole.
-      if (!walk.get(walk.size() - 1).equals("[]")) {
+      if (!isElements(walk.get(walk.size() - 1))) {
         node.whole = true;
       }
     }
@@ -423,15 +477,15 @@ public final class GoldenMasters {
     }
     String step = walk.get(0);
     List<String> rest = walk.subList(1, walk.size());
-    if (step.equals("[]")) {
+    if (isElements(step)) {
       if (!value.isArray()) {
         return false;
       }
       if (value.isEmpty()) {
-        return true; // nothing recorded there to bind
+        return step.equals("[]"); // nothing recorded there to bind; a selector must find one
       }
       for (JsonNode element : value) {
-        if (holds(element, rest)) {
+        if (selects(step, element) && holds(element, rest)) {
           return true;
         }
       }
@@ -451,7 +505,12 @@ public final class GoldenMasters {
         return value;
       }
       com.fasterxml.jackson.databind.node.ArrayNode out = MAPPER.createArrayNode();
-      value.forEach(element -> out.add(project(element, node.elements)));
+      value.forEach(
+          element -> {
+            if (selects(node.selector, element)) {
+              out.add(project(element, node.elements));
+            }
+          });
       return out;
     }
     if (value.isObject()) {
@@ -469,7 +528,8 @@ public final class GoldenMasters {
 
   // --- the body ---------------------------------------------------------------------------------
 
-  private static void fillObject(PactDslJsonBody target, Shape shape, String path, Operation op) {
+  private static void fillObject(
+      PactDslJsonBody target, Shape shape, String path, Operation op, Set<String> selected) {
     for (Map.Entry<String, Shape> field : shape.fields.entrySet()) {
       String name = field.getKey();
       Shape child = field.getValue();
@@ -482,10 +542,10 @@ public final class GoldenMasters {
             throw unsupported(op, childPath, "an object that is null in some elements");
           }
           PactDslJsonBody nested = target.object(name);
-          fillObject(nested, child, childPath, op);
+          fillObject(nested, child, childPath, op, selected);
           nested.closeObject();
         }
-        case ARRAY -> array(target, name, child, childPath, op);
+        case ARRAY -> array(target, name, child, childPath, op, selected);
       }
     }
   }
@@ -522,11 +582,11 @@ public final class GoldenMasters {
   }
 
   private static void array(
-      PactDslJsonBody target, String name, Shape array, String path, Operation op) {
+      PactDslJsonBody target, String name, Shape array, String path, Operation op, Set<String> selected) {
     if (array.nullable) {
       throw unsupported(op, path, "an array that is null in some elements");
     }
-    boolean filtered = path.equals(op.listFilteredTo());
+    boolean filtered = path.equals(op.listFilteredTo()) || selected.contains(path);
     int n = array.length;
     if (n == 0) {
       // Nothing to build a template from: the recording says "empty", and an empty array with no
@@ -540,7 +600,7 @@ public final class GoldenMasters {
       case OBJECT -> {
         PactDslJsonBody template =
             filtered ? target.minArrayLike(name, n, n) : target.minMaxArrayLike(name, n, n, n);
-        fillObject(template, element, elementPath, op);
+        fillObject(template, element, elementPath, op, selected);
         DslPart closed = template.closeObject();
         ((PactDslJsonArray) closed).closeArray();
       }

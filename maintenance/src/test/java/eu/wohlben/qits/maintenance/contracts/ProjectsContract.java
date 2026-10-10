@@ -112,8 +112,8 @@ final class ProjectsContract {
           "requests[].id",
           "requests[].state",
           "requests[].mergedSha",
-          "requests[].gates[].kind",
-          "requests[].gates[].state");
+          "requests[].gates[kind=CI].kind",
+          "requests[].gates[kind=CI].state");
 
   /** The status alone. */
   static final List<String> STATUS_ONLY = List.of();
