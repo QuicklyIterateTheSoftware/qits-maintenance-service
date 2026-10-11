@@ -85,6 +85,12 @@
             <artifactId>quarkus-oidc-client</artifactId>
         </dependency>
         <dependency>
+            <!-- QitsHttpClients.wrap, so PeerClient's own HttpClient opens a CLIENT span and stamps
+                 X-Qits-Caller exactly as every other service-to-service call does. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-http-core</artifactId>
+        </dependency>
+        <dependency>
             <!-- ComparableVersion: maven's own version order, which is the order a maven resolver
                  would pick a release in. plexus-utils is excluded — ComparableVersion imports
                  nothing outside java.*, and a native image should not carry a library no code

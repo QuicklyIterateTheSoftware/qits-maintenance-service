@@ -2,6 +2,7 @@ package eu.wohlben.qits.maintenance.peer;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import eu.wohlben.qits.http.QitsHttpClients;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.net.URI;
@@ -24,6 +25,10 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
  * answer stays an opaque document rather than a bound record, so nothing here is a second copy of
  * five other repositories' response shapes. It also has to read bodies that are not JSON at all —
  * a {@code maven-metadata.xml} and a raw blob — which a JSON-bound client would make awkward.
+ *
+ * <p><b>The lazily built client is wrapped through {@link QitsHttpClients}</b> (qits-1198): a CLIENT
+ * span per call and {@code X-Qits-Caller} alongside the forward-auth pair, the same two things a
+ * REST client gets from Quarkus and this one otherwise would not.
  *
  * <p><b>Two credentials on every call, and they are not alternatives.</b> {@code X-Qits-User} /
  * {@code X-Qits-Roles} are the forward-auth pair a peer accepts on the platform's own network; the
@@ -55,6 +60,8 @@ public class PeerClient {
   Duration callTimeout;
 
   @Inject PeerTokens tokens;
+
+  @Inject QitsHttpClients clients;
 
   /** One client for the life of the process — a scan is hundreds of calls and a new pool per call
    * is waste. An INSTANCE field, never static: a static HttpClient is a native-image hazard. */
@@ -167,7 +174,7 @@ public class PeerClient {
       synchronized (this) {
         existing = client;
         if (existing == null) {
-          existing = HttpClient.newBuilder().connectTimeout(callTimeout).build();
+          existing = clients.wrap(HttpClient.newBuilder().connectTimeout(callTimeout).build());
           client = existing;
         }
       }
