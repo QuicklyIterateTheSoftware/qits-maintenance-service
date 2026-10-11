@@ -111,6 +111,12 @@ public class ScreenshotBaselinesAutomation implements ReleaseRequestAutomation {
     return Stage.DERIVED;
   }
 
+  /** QA runs the same generator and fails on stale output (qits-1180). */
+  @Override
+  public boolean checkedByQa() {
+    return true;
+  }
+
   /** Whether a {@code package.json} declares the script. One that does not parse declares nothing. */
   static boolean declaresScript(String content) {
     try {

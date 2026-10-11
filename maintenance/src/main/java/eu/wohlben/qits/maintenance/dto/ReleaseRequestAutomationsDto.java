@@ -20,6 +20,10 @@ import java.util.List;
  * a waiting kind reads REQUESTED — "not run yet", which an older reader holds on and asks again
  * about, exactly what it should do — so the two services can be released in either order.
  *
+ * <p><b>DEFERRED is sent the same way</b> (qits-1180): with {@code "DEFERRED"} in {@code accepts},
+ * a kind QA checks for this repository is answered DEFERRED, with its {@code reason}, instead of
+ * being run. Without it the kind runs as before.
+ *
  * @param requestId the release request
  * @param foldSha the fold the entries are for; null on a read of a request nothing was ever asked
  *     about
@@ -49,7 +53,8 @@ public record ReleaseRequestAutomationsDto(
    * @param updatedAt when the deciding row last changed
    * @param failure why the deciding row's run went red (qits-1116); null unless it is FAILED with a
    *     failing step recorded
-   * @param reason why a NOT_APPLICABLE kind does not apply, or why a WAITING one waits (qits-1133);
+   * @param reason why a NOT_APPLICABLE kind does not apply, why a WAITING one waits (qits-1133), or
+   *     why a DEFERRED one is left to QA (qits-1180);
    *     the same sentence as {@code detail}, and null in every other state
    */
   public record AutomationDto(

@@ -93,6 +93,14 @@ import org.jboss.logging.Logger;
  * ReleaseRequestAutomation#inputPaths() inputs} carries over exactly when the fold touched none of
  * them. A plan that would write another applicable kind's path is refused FAILED before it runs.
  *
+ * <h2>Kinds QA checks (qits-1180)</h2>
+ *
+ * <p>For a repository listed in {@code qits.maintenance.automations.qa-checked.repositories}, a kind
+ * that says {@link ReleaseRequestAutomation#checkedByQa()} is not planned or run before QA when the
+ * trigger accepts DEFERRED: QA runs the same generator and fails on stale output, and the re-run door
+ * regenerates on demand. Applicability is still decided, and the kind's paths stay in the union. A
+ * caller that does not accept the word gets today's pre-run.
+ *
  * <h2>Concurrency, on a platform whose CI slots are few</h2>
  *
  * <p><b>At most one RUNNING run per (request, kind)</b> — per branch, which for a kind's own branch
@@ -256,7 +264,7 @@ public class AutomationService {
     }
   }
 
-  /** Which of the qits-1133 words a caller said it understands. */
+  /** Which of the qits-1133 and qits-1180 words a caller said it understands. */
   private static Set<AutomationState> accepted(List<String> accepts) {
     Set<AutomationState> words = new LinkedHashSet<>();
     for (String word : accepts == null ? List.<String>of() : accepts) {
@@ -268,6 +276,8 @@ public class AutomationService {
         words.add(AutomationState.WAITING);
       } else if (AutomationState.NOT_APPLICABLE.name().equals(value)) {
         words.add(AutomationState.NOT_APPLICABLE);
+      } else if (AutomationState.DEFERRED.name().equals(value)) {
+        words.add(AutomationState.DEFERRED);
       }
     }
     return words;
@@ -394,12 +404,19 @@ public class AutomationService {
     Map<String, String> unknown = new LinkedHashMap<>();
     Map<String, String> waiting = new LinkedHashMap<>();
     Map<String, String> notApplicable = new LinkedHashMap<>();
+    // QA CHECKS THESE KINDS (qits-1180), but only a caller that understands DEFERRED is told so;
+    // every other caller gets the pre-run it always had.
+    Set<AutomationState> accepts = accepted(fold.accepts());
+    Map<String, String> deferred =
+        accepts.contains(AutomationState.DEFERRED) && config.qaChecked(name)
+            ? new LinkedHashMap<>()
+            : null;
     // SOURCE FIRST, then DERIVED behind it: what the first stage writes is what the second is built
     // from, so the second is not asked until the first is FRESH at this fold.
     for (ReleaseRequestAutomation kind : kinds) {
       if (kind.stage() != Stage.DERIVED) {
         decide(kind, subject, previous, fold.changedSincePrevious(), stored, decided, paths, union,
-            derivedUnion, unknown, notApplicable, null, waiting);
+            derivedUnion, unknown, notApplicable, null, waiting, deferred);
       }
     }
     String hold = sourcesNotFresh(kinds, decided, requestId, foldSha);
@@ -409,13 +426,20 @@ public class AutomationService {
     for (ReleaseRequestAutomation kind : kinds) {
       if (kind.stage() == Stage.DERIVED) {
         decide(kind, subject, previous, fold.changedSincePrevious(), stored, decided, paths, union,
-            derivedUnion, unknown, notApplicable, hold, waiting);
+            derivedUnion, unknown, notApplicable, hold, waiting, deferred);
       }
     }
-    return answer(requestId, foldSha, unknown, waiting, notApplicable, accepted(fold.accepts()));
+    return answer(
+        requestId, foldSha, unknown, waiting, notApplicable,
+        deferred == null ? Map.of() : deferred, accepts);
   }
 
-  /** One kind at the fold, after applicability: answered from rows, listed, or settled. */
+  /**
+   * One kind at the fold, after applicability: answered from rows, listed, deferred or settled.
+   *
+   * @param deferred where a kind QA checks is put instead of being run (qits-1180), or null when
+   *     this fold defers nothing
+   */
   private void decide(
       ReleaseRequestAutomation kind,
       AutomationSubject subject,
@@ -429,7 +453,8 @@ public class AutomationService {
       Map<String, String> unknown,
       Map<String, String> notApplicable,
       String hold,
-      Map<String, String> waiting) {
+      Map<String, String> waiting,
+      Map<String, String> deferred) {
     if (stored.contains(kind.kind())) {
       return;
     }
@@ -438,6 +463,10 @@ public class AutomationService {
       case NOT_APPLICABLE -> notApplicable.put(kind.kind(), applicability.reason());
       case UNKNOWN -> unknown.put(kind.kind(), applicability.reason());
       case APPLIES -> {
+        if (deferred != null && kind.checkedByQa()) {
+          defer(kind, subject, previous, changed, union, derivedUnion, hold, deferred);
+          return;
+        }
         if (hold != null) {
           // WAITING is answered and never stored: the ask after the sources settle decides it.
           waiting.put(kind.kind(), hold);
@@ -450,6 +479,37 @@ public class AutomationService {
         }
       }
     }
+  }
+
+  /**
+   * A kind QA checks, at a fold that defers it (qits-1180): no plan and no run. When the previous
+   * fold's outcome carries over — an on-demand run there COMMITTED, and only its output changed
+   * since — it is recorded FRESH exactly as today, so that run's result still shows on the request.
+   * Otherwise it is answered DEFERRED and not stored, so a later on-demand run on this fold is
+   * answered from its row.
+   */
+  private void defer(
+      ReleaseRequestAutomation kind,
+      AutomationSubject subject,
+      String previous,
+      List<String> changed,
+      List<String> union,
+      List<String> derivedUnion,
+      String hold,
+      Map<String, String> deferred) {
+    if (hold == null
+        && Boolean.TRUE.equals(carries(kind, subject, previous, changed, union, derivedUnion))) {
+      AutomationState before = foldState(subject.requestId(), kind.kind(), previous);
+      if (before != null && before.carries()) {
+        record(kind, subject, previous, true, BumpStatus.NOTHING_TO_DO, carried(previous, before));
+        return;
+      }
+    }
+    deferred.put(
+        kind.kind(),
+        "checked by QA: " + kind.label().toLowerCase(java.util.Locale.ROOT)
+            + " is not run before QA for " + subject.repository().name
+            + "; run it on demand to regenerate");
   }
 
   /**
@@ -643,7 +703,7 @@ public class AutomationService {
     if (fold == null) {
       return new ReleaseRequestAutomationsDto(requestId, null, List.of());
     }
-    return answer(requestId, fold, Map.of(), Map.of(), Map.of(), Set.of());
+    return answer(requestId, fold, Map.of(), Map.of(), Map.of(), Map.of(), Set.of());
   }
 
   // --- the re-run door --------------------------------------------------------------------------
@@ -1373,6 +1433,7 @@ public class AutomationService {
       Map<String, String> unknown,
       Map<String, String> waiting,
       Map<String, String> notApplicable,
+      Map<String, String> deferred,
       Set<AutomationState> accepts) {
     Map<String, List<MtBump>> byKind = new TreeMap<>();
     for (MtBump row : store.automations(requestId, foldSha)) {
@@ -1382,6 +1443,7 @@ public class AutomationService {
     Set<String> listed = new java.util.TreeSet<>(byKind.keySet());
     listed.addAll(unknown.keySet());
     listed.addAll(waiting.keySet());
+    listed.addAll(deferred.keySet());
     if (listInapplicable) {
       listed.addAll(notApplicable.keySet());
     }
@@ -1393,6 +1455,10 @@ public class AutomationService {
         entries.add(aggregate(kind, label, rows));
       } else if (unknown.containsKey(kind)) {
         entries.add(answered(kind, label, AutomationState.UNKNOWN, unknown.get(kind), null));
+      } else if (deferred.containsKey(kind)) {
+        // Only ever filled for a caller that accepts DEFERRED (see trigger).
+        String why = deferred.get(kind);
+        entries.add(answered(kind, label, AutomationState.DEFERRED, why, why));
       } else if (waiting.containsKey(kind)) {
         // THE OLD READER IS TOLD REQUESTED: "not run yet", which it holds the request on and asks
         // again about — exactly what WAITING asks of it. UNKNOWN would say nobody could decide,

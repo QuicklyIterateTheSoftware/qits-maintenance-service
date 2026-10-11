@@ -127,6 +127,26 @@ class AutomationTriggerTest {
   }
 
   /**
+   * The qits-1180 switch off — the shipped default: a caller that accepts DEFERRED still gets
+   * today's pre-run, because no repository is QA-checked.
+   */
+  @Test
+  void withTheQaCheckedSwitchOffDeferredIsNeverAnswered() {
+    ReleaseRequestAutomationsDto answer =
+        automations.trigger(
+            REQUEST,
+            new AutomationService.Fold(
+                Fixture.REPOSITORY, FOLD_A, null, null, List.of("main", "work"), null,
+                List.of("WAITING", "NOT_APPLICABLE", "DEFERRED")));
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    AutomationDto entry = screenshots(answer);
+    assertEquals(AutomationState.REQUESTED.name(), entry.state(), entry.detail());
+    assertEquals(1, screenshotRows(FOLD_A).size());
+    assertEquals(1, triggers());
+  }
+
+  /**
    * A repository whose fold declares no {@code test:browser} is not listed at all — no row, no CI
    * run — which is what lets every ordinary repository release exactly as it did.
    */

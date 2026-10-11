@@ -60,6 +60,14 @@ public class MaintenanceConfig {
   @ConfigProperty(name = "qits.maintenance.internal.image-prefixes")
   List<String> internalImagePrefixes;
 
+  /** The repositories whose QA checks the generated output (qits-1180). */
+  public static final String QA_CHECKED_REPOSITORIES =
+      "qits.maintenance.automations.qa-checked.repositories";
+
+  // OPTIONAL FOR THE SAME REASON AS quiet-hours: the shipped default is empty.
+  @ConfigProperty(name = QA_CHECKED_REPOSITORIES)
+  Optional<List<String>> qaCheckedRepositories;
+
   /** Which environment's qits-ci applies a bump. Recorded on every bump row. */
   public String environment() {
     return environment;
@@ -79,6 +87,20 @@ public class MaintenanceConfig {
    */
   public boolean bumpEnabled() {
     return bumpEnabled;
+  }
+
+  /**
+   * Whether QA checks this repository's generated output (qits-1180): then the kinds that say
+   * {@code checkedByQa()} are not run before QA for a trigger that accepts DEFERRED. Empty by
+   * default, so every repository keeps today's pre-run until it is listed.
+   */
+  public boolean qaChecked(String repository) {
+    if (repository == null) {
+      return false;
+    }
+    return qaCheckedRepositories.orElse(List.of()).stream()
+        .map(String::trim)
+        .anyMatch(repository.trim()::equals);
   }
 
   /**

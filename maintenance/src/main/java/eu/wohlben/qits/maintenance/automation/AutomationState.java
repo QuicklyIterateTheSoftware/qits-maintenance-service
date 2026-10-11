@@ -36,7 +36,14 @@ public enum AutomationState {
    * The kind does not apply to the repository at this fold. Answered, never stored, and on the wire
    * only to a trigger that {@code accepts} it — anyone else is not told about the kind at all.
    */
-  NOT_APPLICABLE;
+  NOT_APPLICABLE,
+  /**
+   * A kind QA checks for this repository (qits-1180): it applies, but it is not run before QA,
+   * because QA runs the same generator and fails when the output is stale. Answered, never stored,
+   * and on the wire only to a trigger that {@code accepts} it — anyone else gets today's answer, and
+   * the kind runs as it always did. The re-run door still runs it on demand.
+   */
+  DEFERRED;
 
   /** The state one row reads as. */
   public static AutomationState of(String status) {

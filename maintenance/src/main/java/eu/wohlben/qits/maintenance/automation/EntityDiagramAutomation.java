@@ -117,6 +117,12 @@ public class EntityDiagramAutomation implements ReleaseRequestAutomation {
     return Stage.DERIVED;
   }
 
+  /** QA runs the same generator and fails on stale output (qits-1180). */
+  @Override
+  public boolean checkedByQa() {
+    return true;
+  }
+
   /**
    * What the generator reads: the sources it compiles and the poms that decide what it compiles
    * against (qits-1133). A fold that changed neither — a screenshot join, a lockfile, a README —

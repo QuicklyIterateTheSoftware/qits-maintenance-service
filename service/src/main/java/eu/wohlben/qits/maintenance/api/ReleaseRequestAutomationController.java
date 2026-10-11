@@ -53,8 +53,9 @@ public class ReleaseRequestAutomationController {
    * @param sourceBranches the request's named branches; main and the automations' own are ignored
    * @param workItem the work item a commit subject names, or null
    * @param accepts the answer words the caller understands beyond the old ones (qits-1133): {@code
-   *     WAITING} and {@code NOT_APPLICABLE}. Absent, a waiting kind is answered REQUESTED and a kind
-   *     that does not apply is left out, exactly as before
+   *     WAITING} and {@code NOT_APPLICABLE}, and {@code DEFERRED} (qits-1180). Absent, a waiting kind
+   *     is answered REQUESTED, a kind that does not apply is left out and a kind QA checks is run,
+   *     exactly as before
    * @param backingBranch the branch the request is folded onto (qits-1158): {@code
    *     release/<qualifiedId>} for a newer request. Absent, it is read from qits-projects, and
    *     {@code release/<requestId>} when that answers none
@@ -90,7 +91,9 @@ public class ReleaseRequestAutomationController {
    * list. A kind that has to run answers REQUESTED, and its run is dispatched behind the scenes;
    * follow it with the read below. A DERIVED kind waits for every SOURCE kind to be FRESH at the
    * fold (qits-1133). With {@code accepts} naming them, a waiting kind answers WAITING and a kind
-   * that does not apply is listed NOT_APPLICABLE with its {@code reason}.
+   * that does not apply is listed NOT_APPLICABLE with its {@code reason}. With DEFERRED named, a
+   * kind QA checks for a repository on {@code qits.maintenance.automations.qa-checked.repositories}
+   * is answered DEFERRED and not run (qits-1180); the re-run door still runs it.
    *
    * <p>A repository no scan has read yet — a new one's first request — is still a 404, but it queues
    * a scan of that repository (one at a time), so the next thirty-second ask finds it.

@@ -274,6 +274,13 @@ to. **The one kill switch left is `qits.maintenance.automations.dependency-bump.
 true): off, the kind is not listed, planned or run, a row it opened ends FRESH, the hook re-plans
 nothing and the dispatcher answers DISABLED (`DependencyBumpSwitchedOffTest`).
 
+**KINDS QA CHECKS ARE DEFERRED (qits-1180).** `entity-diagram` and `screenshot-baselines` say
+`checkedByQa()`. For a repository in `qits.maintenance.automations.qa-checked.repositories` (empty by
+default) and a trigger that `accepts` DEFERRED, they are not planned or run: answered DEFERRED, never
+stored, unless the previous fold's outcome carries over (then FRESH, as today). Applicability is still
+decided and their paths stay in the union. Any other caller gets today's pre-run. The re-run door
+ignores the switch (`QaCheckedAutomationTest`).
+
 **GROUP BUMPS ARE RETIRED (qits-1133: switched off in R2, removed in R5).** Nothing writes a
 `maintenance/<group>` branch, and there is no code left that could: no `BumpService.request`, no
 group dispatch, poll ending or release ask, no `BumpBase`, no `schedule/BumpSchedule` (the 02:00
