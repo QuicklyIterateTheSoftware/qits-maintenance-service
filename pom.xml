@@ -79,7 +79,7 @@
              java.net.http.HttpClient into one that opens a CLIENT span and sends traceparent plus
              X-Qits-Caller; the server filter (jandex-discovered off this jar alone) records an
              inbound caller on the server span. Not released yet (qits-1198). -->
-        <qits.http-core.version>0-qits-1198-local</qits.http-core.version>
+        <qits.http-core.version>2026.1011.185745</qits.http-core.version>
         <!-- The user-story framework (test scope, service/ only). The five story classes under
              service/src/test/.../stories/ plus TokenValidationBootstrapIT are userflows, so a
              `mvn verify -DskipITs=false -Dit.test=<the list>` also regenerates
