@@ -275,8 +275,8 @@ true): off, the kind is not listed, planned or run, a row it opened ends FRESH, 
 nothing and the dispatcher answers DISABLED (`DependencyBumpSwitchedOffTest`).
 
 **KINDS QA CHECKS ARE DEFERRED (qits-1180).** `entity-diagram` and `screenshot-baselines` say
-`checkedByQa()`. For a repository in `qits.maintenance.automations.qa-checked.repositories` (empty by
-default) and a trigger that `accepts` DEFERRED, they are not planned or run: answered DEFERRED, never
+`checkedByQa()`. For a repository in `qits.maintenance.automations.qa-checked.repositories` (by default
+qits-landing-app and qits-projects-service) and a trigger that `accepts` DEFERRED, they are not planned or run: answered DEFERRED, never
 stored, unless the previous fold's outcome carries over (then FRESH, as today). Applicability is still
 decided and their paths stay in the union. Any other caller gets today's pre-run. The re-run door
 ignores the switch (`QaCheckedAutomationTest`).
