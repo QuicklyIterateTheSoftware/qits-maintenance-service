@@ -73,11 +73,19 @@ import org.jboss.logging.Logger;
  *       2026.1010.124627 lists none of 2026.1010.120523's). That gap belongs to the composer;
  *       failing the range for it here would hold every consumer for ever, since nothing can
  *       publish the missing changelog after the fact.
+ *       <p><b>A publish that FAILED in a closed request is skipped too, but only below the new
+ *       pin</b> (qits-1191, {@link ReleaseRequestClient.Cut#publishFailedForGood}). Its request is
+ *       OBSOLETE or WITHDRAWN, so nothing will ever retry the run, and its changelog can never
+ *       appear (measured: qits-workspace-daemon 2026.1011.81850 and 2026.1011.115738, publish runs
+ *       restarted by a qits-ci redeploy, held every consumer's bump). The bump pins a later,
+ *       published release, so it ships those commits, and their changelog gap is the same one a
+ *       cancelled release leaves. As the new pin itself it stays a PROBLEM: a failed run may have
+ *       stored only part of the release, and a bump must not pin that.
  *   <li><b>Every other candidate the store did not publish is a PROBLEM</b> naming the repository
  *       and the version: every release publishes one, so that release's publish did not complete.
- *       That covers a publish run that finished, green or red, without the changelog; a release
- *       still RELEASED, whose run a retry can still finish; and a version the history does not
- *       name at all.
+ *       That covers a publish run that went green without the changelog; a run that went red in
+ *       a FINALIZED request; a release still RELEASED, whose run a retry can still finish; and a
+ *       version the history does not name at all.
  *   <li>No candidate, no range — the change carries no {@code changelog} field.
  * </ol>
  *
@@ -127,18 +135,30 @@ public class ChangelogRanges {
   record Release(String version, String sha) {}
 
   /**
-   * The versions of one repository that were tagged and published nothing (rule 7).
+   * The versions of one repository that were tagged and will never publish a changelog (rule 7).
    *
-   * @param versions those versions; empty when none is known to have published nothing
+   * @param versions the versions that published nothing; empty when none is known
+   * @param failed the versions whose publish FAILED in a closed request (qits-1191): skipped only
+   *     below the new pin, never as the pin itself
    * @param error why qits-projects could not be read, or null — a RETRY, like an unreadable store
    */
-  record Unpublished(Set<String> versions, String error) {
+  record Unpublished(Set<String> versions, Set<String> failed, String error) {
 
     Unpublished {
       versions = versions == null ? Set.of() : Set.copyOf(versions);
+      failed = failed == null ? Set.of() : Set.copyOf(failed);
     }
 
-    static final Unpublished NONE = new Unpublished(Set.of(), null);
+    Unpublished(Set<String> versions, String error) {
+      this(versions, Set.of(), error);
+    }
+
+    static final Unpublished NONE = new Unpublished(Set.of(), Set.of(), null);
+
+    /** What a readable history says: {@link #neverPublished} and {@link #failedForGood}. */
+    static Unpublished of(List<ReleaseRequestClient.Cut> cuts) {
+      return new Unpublished(neverPublished(cuts), failedForGood(cuts), null);
+    }
   }
 
   /** Everything the rules read, as a seam a plain unit test can replace. */
@@ -201,7 +221,7 @@ public class ChangelogRanges {
             if (!history.readable()) {
               return new Unpublished(Set.of(), history.error());
             }
-            return new Unpublished(neverPublished(history.cuts()), null);
+            return Unpublished.of(history.cuts());
           }
         });
   }
@@ -325,6 +345,12 @@ public class ChangelogRanges {
             LOG.infof(
                 "%s %s was tagged and published nothing, so a bump carries no changelog of it",
                 repository, version);
+          } else if (nothing.failed().contains(version) && Calver.compare(version, to) < 0) {
+            candidates.remove(version);
+            LOG.infof(
+                "%s %s was tagged and its publish failed in a closed request, so nothing can"
+                    + " publish its changelog; a bump to the later %s carries none of it",
+                repository, version, to);
           }
         }
       }
@@ -361,6 +387,25 @@ public class ChangelogRanges {
     }
     nothing.removeAll(ran);
     return nothing;
+  }
+
+  /**
+   * The versions whose publish FAILED for good (qits-1191): every request that cut it closed without
+   * completing, at least one with a FAILED publish run, and none with a run that passed or is open.
+   * A version also cut by a FINALIZED or RELEASED request, or by one whose run passed, is not here.
+   */
+  static Set<String> failedForGood(List<ReleaseRequestClient.Cut> cuts) {
+    Set<String> failed = new HashSet<>();
+    Set<String> other = new HashSet<>();
+    for (ReleaseRequestClient.Cut cut : cuts) {
+      if (cut.publishFailedForGood()) {
+        failed.add(cut.version());
+      } else if (!cut.publishedNothing()) {
+        other.add(cut.version());
+      }
+    }
+    failed.removeAll(other);
+    return failed;
   }
 
   /**

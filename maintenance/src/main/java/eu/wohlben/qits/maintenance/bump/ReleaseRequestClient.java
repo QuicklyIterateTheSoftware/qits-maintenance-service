@@ -428,13 +428,28 @@ public class ReleaseRequestClient {
      *
      * <p>A run that finished, green or red, is not this case — an OBSOLETE request whose publish
      * went green is common (three of qits-maintenance-service's, measured 2026-10-10). It ran, so a
-     * changelog missing after it is a publish that broke. A RELEASED request is not this case
+     * changelog missing after it is a publish that broke (a red run of a closed request is {@link
+     * #publishFailedForGood()}). A RELEASED request is not this case
      * either, cancelled or not: a retry of its run can still publish. Nor is a FINALIZED one.
      */
     public boolean publishedNothing() {
       return state != null
           && CLOSED.contains(state)
           && (publish == null || "CANCELLED".equals(publish));
+    }
+
+    /**
+     * <b>Whether this release's publish FAILED, for good</b> (qits-1191). The request closed without
+     * completing (OBSOLETE or WITHDRAWN) and its newest publish run FAILED. Only a CI run of that
+     * release may publish, and a closed request is never retried, so its changelog can never appear.
+     *
+     * <p>Unlike {@link #publishedNothing()}, a failed run may have stored part of the release (the
+     * daemon binary of qits-workspace-daemon 2026.1011.81850, measured). So such a version is
+     * skipped only between two published releases, never as the version a bump pins — the caller
+     * decides that.
+     */
+    public boolean publishFailedForGood() {
+      return state != null && CLOSED.contains(state) && "FAILED".equals(publish);
     }
   }
 
