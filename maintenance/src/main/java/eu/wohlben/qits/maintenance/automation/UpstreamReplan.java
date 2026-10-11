@@ -39,8 +39,10 @@ import org.jboss.logging.Logger;
  *       (Q2): it has its verdict and a person's push still re-folds it as before.
  *   <li><b>The starvation guard.</b> A busy upstream could restart one request's pre-run for ever, so
  *       after {@value #STARVATION_RESTARTS} upstream restarts without a QA verdict — its {@code CI}
- *       gate PASSED or FAILED at the current fold, or the request no longer PENDING — it is left
- *       alone until it has one. A verdict resets the count.
+ *       gate PASSED or FAILED at the current fold, or the request past both PENDING and REJECTED —
+ *       it is left alone until it has one. A plain REJECTED is not enough (qits-1199): qits-projects
+ *       also lands a request there when a pre-run automation fails, before any QA ran. A verdict
+ *       resets the count.
  *   <li><b>No open request</b>: nothing here. The dispatcher's next tick finds the repository owed
  *       and opens a main-only LOWEST request whose pre-run writes the bump —
  *       behind the same capacity gate and chain order every bump has always waited behind.

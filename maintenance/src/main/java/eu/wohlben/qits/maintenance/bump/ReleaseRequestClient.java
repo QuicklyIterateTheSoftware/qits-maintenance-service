@@ -329,10 +329,15 @@ public class ReleaseRequestClient {
 
     /**
      * Whether the request has a QA VERDICT — its CI gate PASSED or FAILED at the current fold, or it
-     * left PENDING altogether. What resets the upstream starvation guard.
+     * left both PENDING and REJECTED behind. REJECTED alone is not enough (qits-1199): qits-projects
+     * also lands a request there when a pre-run automation fails, before any QA ran, so its gate is
+     * still PENDING; a CI-rejected request has {@code ciGate} FAILED and a person's decline comes
+     * after CI passed, {@code ciGate} PASSED, so both still count on the gate check alone. What
+     * resets the upstream starvation guard.
      */
     public boolean verdict() {
-      return "PASSED".equals(ciGate) || "FAILED".equals(ciGate) || !"PENDING".equals(state);
+      return "PASSED".equals(ciGate) || "FAILED".equals(ciGate)
+          || (!"PENDING".equals(state) && !"REJECTED".equals(state));
     }
   }
 
