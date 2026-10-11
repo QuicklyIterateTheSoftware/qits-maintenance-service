@@ -435,9 +435,12 @@ public class ProviderStates {
 
   private static Map<String, String> automationParams() {
     Map<String, String> params = new TreeMap<>();
+    // What qits-projects names the request with since qits-1158.
+    params.put("backingBranch", "release/" + REPOSITORY + "-rr-1");
     params.put("branch", BRANCH);
     params.put("foldSha", FOLD_SHA);
     params.put("kind", ScreenshotBaselinesAutomation.KIND);
+    params.put("qualifiedId", REPOSITORY + "-rr-1");
     params.put("repoName", REPOSITORY);
     params.put("repositoryId", REPOSITORY_ID);
     params.put("requestId", REQUEST_ID);

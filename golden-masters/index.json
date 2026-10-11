@@ -6,9 +6,11 @@
       "name": "a release request with a failed automation",
       "slug": "a-release-request-with-a-failed-automation",
       "params": {
+        "backingBranch": "release/contract-service-rr-1",
         "branch": "feature/export",
         "foldSha": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
         "kind": "screenshot-baselines",
+        "qualifiedId": "contract-service-rr-1",
         "repoName": "contract-service",
         "repositoryId": "00000000-0000-4000-8000-000000000001",
         "requestId": "00000000-0000-4000-8000-000000000002"
@@ -40,9 +42,11 @@
       "name": "a release request with an automation to re-run",
       "slug": "a-release-request-with-an-automation-to-re-run",
       "params": {
+        "backingBranch": "release/contract-service-rr-1",
         "branch": "feature/export",
         "foldSha": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
         "kind": "screenshot-baselines",
+        "qualifiedId": "contract-service-rr-1",
         "repoName": "contract-service",
         "repositoryId": "00000000-0000-4000-8000-000000000001",
         "requestId": "00000000-0000-4000-8000-000000000002"
@@ -71,9 +75,11 @@
       "name": "a release request with automations",
       "slug": "a-release-request-with-automations",
       "params": {
+        "backingBranch": "release/contract-service-rr-1",
         "branch": "feature/export",
         "foldSha": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
         "kind": "screenshot-baselines",
+        "qualifiedId": "contract-service-rr-1",
         "repoName": "contract-service",
         "repositoryId": "00000000-0000-4000-8000-000000000001",
         "requestId": "00000000-0000-4000-8000-000000000002"
@@ -115,7 +121,9 @@
             "sourceBranches": [
               "{branch}"
             ],
-            "workItem": null
+            "workItem": null,
+            "backingBranch": "{backingBranch}",
+            "qualifiedId": "{qualifiedId}"
           },
           "status": 200,
           "file": "a-release-request-with-automations/triggerReleaseRequestAutomations.json",

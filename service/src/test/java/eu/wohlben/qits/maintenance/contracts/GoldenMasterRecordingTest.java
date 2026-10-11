@@ -164,7 +164,8 @@ class GoldenMasterRecordingTest {
               200,
               "{\"repository\":\"{repoName}\",\"foldSha\":\"{foldSha}\","
                   + "\"previousFoldSha\":null,\"changedSincePrevious\":null,"
-                  + "\"sourceBranches\":[\"{branch}\"],\"workItem\":null}"),
+                  + "\"sourceBranches\":[\"{branch}\"],\"workItem\":null,"
+                  + "\"backingBranch\":\"{backingBranch}\",\"qualifiedId\":\"{qualifiedId}\"}"),
           Interaction.read(
               ProviderStates.A_RELEASE_REQUEST_WITH_AUTOMATIONS,
               "listReleaseRequestAutomations",
