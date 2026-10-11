@@ -46,7 +46,7 @@
         "body": {
           "content": {
             "request": {
-              "backingBranch": "release/00000000-0000-4000-8000-000000000003",
+              "backingBranch": "release/contract-service-rr-1",
               "detail": "Withdrawn by dana.weber: the export moves to next quarter's release",
               "mergedSha": "cb9776855921387be1951de5bbbf0914aa54b1bf",
               "sources": [
@@ -337,7 +337,7 @@
         "body": {
           "content": {
             "request": {
-              "backingBranch": "release/00000000-0000-4000-8000-000000000003",
+              "backingBranch": "release/contract-suite-app-rr-1",
               "detail": "Waiting for a person to approve bd6360a2c6",
               "mergedSha": "bd6360a2c6b42a991c62e3418b7f6d4ac5d89f14",
               "sources": [
@@ -1310,7 +1310,7 @@
         "body": {
           "content": {
             "request": {
-              "backingBranch": "release/00000000-0000-4000-8000-000000000003",
+              "backingBranch": "release/contract-suite-app-rr-1",
               "detail": "Waiting for a person to approve bd6360a2c6",
               "mergedSha": "bd6360a2c6b42a991c62e3418b7f6d4ac5d89f14",
               "sources": [
@@ -1458,7 +1458,7 @@
         "body": {
           "content": {
             "request": {
-              "backingBranch": "release/00000000-0000-4000-8000-000000000003",
+              "backingBranch": "release/contract-suite-app-rr-1",
               "detail": "Waiting for a person to approve bd6360a2c6",
               "mergedSha": "bd6360a2c6b42a991c62e3418b7f6d4ac5d89f14",
               "sources": [
