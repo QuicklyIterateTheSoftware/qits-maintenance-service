@@ -37,6 +37,12 @@ public class MaintenanceConfig {
   @ConfigProperty(name = "qits.maintenance.bump.dispatch.refusal-ttl", defaultValue = "6h")
   Duration bumpRefusalTtl;
 
+  @ConfigProperty(name = "qits.maintenance.bump.dispatch.retry-attempts", defaultValue = "5")
+  int bumpDispatchRetryAttempts;
+
+  @ConfigProperty(name = "qits.maintenance.bump.dispatch.retry-backoff", defaultValue = "30s")
+  Duration bumpDispatchRetryBackoff;
+
   @ConfigProperty(name = "qits.maintenance.bump.dispatch.release-state-ttl")
   Duration bumpReleaseStateTtl;
 
@@ -123,6 +129,25 @@ public class MaintenanceConfig {
    * its chain, holds up everything behind it. The refusal lives in memory, so a restart forgives it
    * too; the worst case of forgiving too early is one more refused ask.
    */
+  /**
+   * How many times an automation is sent to qits-ci when the answer can go away — qits-ci not
+   * reachable, a 5xx, or no run recorded — before it ends FAILED (qits-1183). At least one.
+   */
+  public int bumpDispatchRetryAttempts() {
+    return Math.max(1, bumpDispatchRetryAttempts);
+  }
+
+  /**
+   * The wait before the second send; it doubles before each later one (qits-1183). With the
+   * shipped 30s and five sends, the last one goes about seven and a half minutes after the first,
+   * which covers a qits-ci restart.
+   */
+  public Duration bumpDispatchRetryBackoff() {
+    return bumpDispatchRetryBackoff == null || bumpDispatchRetryBackoff.isNegative()
+        ? Duration.ofSeconds(30)
+        : bumpDispatchRetryBackoff;
+  }
+
   public Duration bumpRefusalTtl() {
     return bumpRefusalTtl == null || bumpRefusalTtl.isNegative()
         ? Duration.ofHours(6)

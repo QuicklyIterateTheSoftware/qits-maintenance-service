@@ -256,4 +256,15 @@ public class MtBump extends PanacheEntityBase {
 
   @Column(name = "failure_excerpt", columnDefinition = "text")
   public String failureExcerpt;
+
+  /**
+   * How many sends to qits-ci failed for a reason that can go away — qits-ci not reachable, a 5xx,
+   * or no run recorded (qits-1183). Null is zero.
+   */
+  @Column(name = "dispatch_attempts")
+  public Integer dispatchAttempts;
+
+  /** The earliest time the sweep sends this REQUESTED row again, or null for now (qits-1183). */
+  @Column(name = "dispatch_retry_at")
+  public Instant dispatchRetryAt;
 }

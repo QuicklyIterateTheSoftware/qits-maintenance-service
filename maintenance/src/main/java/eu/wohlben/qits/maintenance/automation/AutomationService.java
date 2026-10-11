@@ -36,6 +36,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Any;
 import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -875,6 +876,10 @@ public class AutomationService {
     if (!config.bumpEnabled()) {
       return;
     }
+    if (row.dispatchRetryAt != null && Instant.now().isBefore(row.dispatchRetryAt)) {
+      // The last send failed for a reason that can go away; wait out the backoff (qits-1183).
+      return;
+    }
     if (registeredKind(row.automationKind).filter(found -> !found.enabled()).isPresent()) {
       // Switched off after the row was opened: it ends FRESH rather than FAILED, so it holds
       // nothing.
@@ -1092,11 +1097,38 @@ public class AutomationService {
       case RETRY ->
           // Still REQUESTED, same event id next time. The sweep sends it again.
           store.bumpFinished(row.id, BumpStatus.REQUESTED, null, result.message(), Instant.now());
+      case TRANSIENT -> deferOrFail(row, result.message());
       case FAILED -> {
         fail(row, result.message());
         LOG.warnf("The automation %s failed at the trigger: %s", row.id, result.message());
       }
     }
+  }
+
+  /**
+   * A send that failed for a reason that can go away (qits-1183): qits-ci not reachable, a 5xx, or
+   * no run recorded. The row stays REQUESTED and the sweep sends it again after a wait that doubles
+   * each time. When the configured number of sends is spent, it ends FAILED and says how many.
+   */
+  private void deferOrFail(MtBump row, String message) {
+    int attempts = (row.dispatchAttempts == null ? 0 : row.dispatchAttempts) + 1;
+    int allowed = config.bumpDispatchRetryAttempts();
+    if (attempts >= allowed) {
+      fail(row, message + ". qits-ci was asked " + attempts + " times and started no run, so the"
+          + " automation ends FAILED");
+      LOG.warnf("The automation %s failed at the trigger after %d attempts: %s", row.id, attempts,
+          message);
+      return;
+    }
+    Duration wait = config.bumpDispatchRetryBackoff().multipliedBy(1L << Math.min(attempts - 1, 20));
+    store.bumpDispatchDeferred(
+        row.id,
+        attempts,
+        Instant.now().plus(wait),
+        message + "; attempt " + attempts + " of " + allowed + ", sending again in "
+            + wait.toSeconds() + "s");
+    LOG.infof("The automation %s is sent again in %ss (attempt %d of %d): %s", row.id,
+        wait.toSeconds(), attempts, allowed, message);
   }
 
   /** Every waiting row, offered a dispatch — what an ending does, so the newest fold goes next. */

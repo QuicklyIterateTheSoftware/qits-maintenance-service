@@ -963,6 +963,28 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
         });
   }
 
+  /**
+   * Keeps a row REQUESTED after a send that failed for a reason that can go away (qits-1183), with
+   * the failed sends counted and the earliest time to send it again.
+   */
+  @ActivateRequestContext
+  public void bumpDispatchDeferred(UUID id, int attempts, Instant retryAt, String message) {
+    DbRetry.runInNewTx(
+        "defer bump " + id,
+        () -> {
+          MtBump row = MtBump.findById(id);
+          if (row == null) {
+            return;
+          }
+          row.status = BumpStatus.REQUESTED.name();
+          row.dispatchAttempts = attempts;
+          row.dispatchRetryAt = retryAt;
+          row.message = message;
+          row.finishedAt = null;
+          getEntityManager().flush();
+        });
+  }
+
   /** Records that qits-ci accepted the trigger and named its runs. */
   @ActivateRequestContext
   public void bumpDispatched(UUID id, String eventId, List<String> runIds) {

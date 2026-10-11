@@ -337,10 +337,13 @@ A scan never asks for a bump: a scan is a READ whose schedule is set by how fast
 **The event id IS the bump row id**, and qits-ci dedupes on (event id, repository, config path). A
 dispatch whose answer was lost records no second run when it is retried. Never generate a fresh one.
 
-**Three answers, three meanings.** 503 is RETRY and the bump stays REQUESTED with its changes; a 200
-with no run id is FAILED, because qits-ci records a run only if the payload's repository was
-readable in that evaluation; anything else non-2xx is FAILED. Treating an empty `runIds` as success
-would report a branch that was never written.
+**Four answers, four meanings.** 503 is RETRY and the bump stays REQUESTED with its changes. A 200
+with no run id, no answer at all, and any other 5xx are TRANSIENT (qits-1183): qits-ci records a run
+only if the payload's repository and step images could be read in that evaluation, and a restarting
+qits-ci answers nothing, so the row stays REQUESTED and is sent again with a doubling backoff, a
+bounded number of times (`mt_bump.dispatch_attempts`, `dispatch_retry_at`), then FAILED. Anything
+else non-2xx is FAILED at once. Treating an empty `runIds` as success would report a branch that was
+never written.
 
 **A bump proves its changelogs before it is sent (epic qits-893).** `bump/changelog/ChangelogRanges`
 decides, per INTERNAL change, the releases of its source repository after the old pin up to the new

@@ -60,6 +60,8 @@ erDiagram
     string ci_event_id "length 255"
     text ci_run_id
     string ci_run_status "length 32"
+    int dispatch_attempts
+    instant dispatch_retry_at
     string environment "not null, length 64"
     int failed_step_exit
     text failed_step_image

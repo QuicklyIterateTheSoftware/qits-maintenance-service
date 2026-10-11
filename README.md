@@ -267,13 +267,14 @@ branch somebody pushes by hand.
 the retired group bumps' history. A row's `releaseRequestId` is the request an automation belongs
 to; on a group row it was the request it asked for, or a sentinel (`converged`, `refused`).
 
-**Three answers from qits-ci and they mean different things:**
+**Four answers from qits-ci and they mean different things:**
 
 | answer | outcome |
 |---|---|
 | 200 with run ids | RUNNING; the poller follows them, through qits-ci's automatic retries |
 | **503** | RETRY. The row stays REQUESTED with its changes and the sweep sends the same payload under the same event id. |
-| **200 with no run id** | FAILED: a run exists only if the repository was readable in that evaluation, so nothing is running and nothing will be. |
+| **200 with no run id, no answer at all, or another 5xx** | Sent again (qits-1183). qits-ci records no run when a read or a step image's digest lookup missed, and a restarting qits-ci answers nothing. The row stays REQUESTED and the sweep sends it again under the same event id after `bump.dispatch.retry-backoff`, doubling each time, up to `bump.dispatch.retry-attempts` sends; then FAILED, with the count in the message. |
+| **any other non-2xx** | FAILED: a refusal with a reason is final. |
 
 ## The event bus
 
@@ -755,6 +756,8 @@ environment without a rebuild.
 | `qits.maintenance.bump.poll-interval` | `15s` | how often an unfinished automation run is looked at — and how often a dispatch is considered |
 | `qits.maintenance.bump.dispatch.release-state-ttl` | `60s` | how long qits-projects' answer about one repository's open requests, or one request's state, is reused. `0` asks every tick |
 | `qits.maintenance.bump.dispatch.quiet-hours` | *(empty)* | hours the dispatcher opens nothing in: `HH:MM-HH:MM[,…]` in `time-zone`, end exclusive, midnight-wrapping allowed |
+| `qits.maintenance.bump.dispatch.retry-attempts` | `5` | how many times an automation is sent when qits-ci cannot be reached, answers 5xx (not 503) or records no run, before it ends FAILED |
+| `qits.maintenance.bump.dispatch.retry-backoff` | `30s` | the wait before the second such send; it doubles before each later one |
 | `qits.maintenance.bump.dispatch.refusal-ttl` | `6h` | how long a repository whose main-only request could not be opened (no catalog id, a refusal) is left alone before it is asked again |
 | `qits.maintenance.environment` | `dev` | which environment's CI is recorded on a bump row |
 | `qits.maintenance.automations.dependency-bump.enabled` | `true` | **the `dependency-bump` automation (qits-1133), and since R5 the one kill switch of the bump path.** Off (emergency only): the kind is not listed, planned or started, a row it opened before ends FRESH, a moved `mt_latest` re-plans nothing and the dispatcher opens no main-only request |

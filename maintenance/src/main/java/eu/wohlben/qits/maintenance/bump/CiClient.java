@@ -103,6 +103,12 @@ public class CiClient {
       /** qits-ci could not evaluate it now. Retry with the same event id. */
       RETRY,
 
+      /**
+       * qits-ci could not be reached, answered 5xx, or recorded no run (qits-1183). This can go
+       * away: retry with the same event id a bounded number of times, then fail.
+       */
+      TRANSIENT,
+
       /** No pipeline answered, or the call was refused. Nothing is running. */
       FAILED
     }
@@ -282,6 +288,14 @@ public class CiClient {
           List.of(),
           "qits-ci could not evaluate the trigger yet; it will be sent again");
     }
+    if (answer.httpStatus() == null || answer.httpStatus() >= 500) {
+      // No answer at all (connect, timeout) or a server error: qits-ci restarting looks like this.
+      return new TriggerResult(
+          TriggerResult.Outcome.TRANSIENT,
+          bumpId,
+          List.of(),
+          "qits-ci could not take the trigger: " + answer.failure());
+    }
     if (!answer.ok()) {
       return new TriggerResult(
           TriggerResult.Outcome.FAILED,
@@ -292,8 +306,10 @@ public class CiClient {
     JsonNode result = answer.json();
     List<String> runIds = runIds(result);
     if (runIds.isEmpty()) {
+      // TRANSIENT, not FAILED (qits-1183): qits-ci records no run when a read or a step image's
+      // digest lookup missed, and the next send usually finds them back.
       return new TriggerResult(
-          TriggerResult.Outcome.FAILED,
+          TriggerResult.Outcome.TRANSIENT,
           eventId(result, bumpId),
           List.of(),
           "no run recorded for " + eventName
