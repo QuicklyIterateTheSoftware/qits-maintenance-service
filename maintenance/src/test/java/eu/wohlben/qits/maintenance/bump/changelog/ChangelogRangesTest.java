@@ -139,8 +139,7 @@ class ChangelogRangesTest {
             if (historyUnreadable.contains(repository)) {
               return new ChangelogRanges.Unpublished(java.util.Set.of(), "HTTP 503");
             }
-            return new ChangelogRanges.Unpublished(
-                ChangelogRanges.neverPublished(history.getOrDefault(repository, List.of())), null);
+            return ChangelogRanges.Unpublished.of(history.getOrDefault(repository, List.of()));
           }
         });
   }
@@ -418,8 +417,8 @@ class ChangelogRangesTest {
     for (String[] shape :
         List.of(
             new String[] {"FINALIZED", "FAILED"},
-            new String[] {"OBSOLETE", "FAILED"},
             new String[] {"OBSOLETE", "SUCCESS"},
+            new String[] {"WITHDRAWN", "SUCCESS"},
             new String[] {"FINALIZED", "SUCCESS"})) {
       history.clear();
       released(REPO, "2026.1002.1", SHA_B);
@@ -532,5 +531,119 @@ class ChangelogRangesTest {
     ChangelogRanges.Result result = resolve(maven("2026.1001.1", "2026.1003.1"));
 
     assertEquals(List.of(HOLE), result.problems());
+  }
+
+  /**
+   * THE LIVE CASE (qits-1191): qits-workspace-daemon 2026.1011.81850 and 2026.1011.115738 were
+   * tagged, their publish runs FAILED (a qits-ci redeploy restarted them) and their requests went
+   * OBSOLETE. Nothing can retry them, so a bump to the published 2026.1011.134206 skips both.
+   */
+  @Test
+  void closedReleasesWhosePublishFailedAreSkippedBelowAPublishedPin() {
+    String daemon = "qits-workspace-daemon";
+    released(daemon, "2026.1010.203838", SHA_A);
+    released(daemon, "2026.1011.81850", SHA_B);
+    released(daemon, "2026.1011.115738", SHA_C);
+    released(daemon, "2026.1011.134206", "dd11bb22cc33dd44ee55ff6677889900aabbccdd");
+    published(daemon, "2026.1010.203838", "2026.1011.134206");
+    cut(daemon, "2026.1011.134206", "FINALIZED", "SUCCESS");
+    cut(daemon, "2026.1011.115738", "OBSOLETE", "FAILED");
+    cut(daemon, "2026.1011.81850", "OBSOLETE", "FAILED");
+    cut(daemon, "2026.1010.203838", "FINALIZED", "SUCCESS");
+    producers.put("maven eu.wohlben.qits:qits-workspace-daemon", daemon);
+
+    Change maven =
+        Change.of(
+            Ecosystem.MAVEN,
+            "pom.xml",
+            "eu.wohlben.qits:qits-workspace-daemon",
+            "2026.1010.203838",
+            "2026.1011.134206",
+            "property:qits.workspace-daemon.version");
+    Change gitlink =
+        Change.of(
+            Ecosystem.GITLINK, "daemon", daemon, SHA_A, "2026.1011.134206", "gitlink:daemon");
+    ChangelogRanges.Result result = resolve(maven, gitlink);
+
+    assertEquals(List.of(), result.problems());
+    assertFalse(result.transientFailure());
+    ChangelogRange only = new ChangelogRange(daemon, List.of("2026.1011.134206"));
+    assertEquals(only, result.ranges().get(maven));
+    assertEquals(only, result.ranges().get(gitlink), "the estate-pins gitlink takes the same rule");
+  }
+
+  /** WITHDRAWN closes a request as surely as OBSOLETE does. */
+  @Test
+  void aWithdrawnReleaseWhosePublishFailedIsSkipped() {
+    released(REPO, "2026.1002.1", SHA_B);
+    published(REPO, "2026.1001.1", "2026.1003.1");
+    cut(REPO, "2026.1002.1", "WITHDRAWN", "FAILED");
+
+    Change change = maven("2026.1001.1", "2026.1003.1");
+    ChangelogRanges.Result result = resolve(change);
+
+    assertEquals(List.of(), result.problems());
+    assertEquals(new ChangelogRange(REPO, List.of("2026.1003.1")), result.ranges().get(change));
+  }
+
+  /**
+   * The new pin itself must not be a failed publish: the run may have stored part of the release,
+   * so the bump fails until a later release moves the pin.
+   */
+  @Test
+  void aNewPinWhosePublishFailedStillFails() {
+    published(REPO, "2026.1001.1");
+    cut(REPO, "2026.1002.1", "OBSOLETE", "FAILED");
+
+    ChangelogRanges.Result result = resolve(maven("2026.1001.1", "2026.1002.1"));
+
+    assertEquals(
+        List.of(
+            "no changelog for "
+                + REPO
+                + " 2026.1002.1 (@changelog/"
+                + REPO
+                + "): every release publishes one, so this release's publish did not complete"),
+        result.problems());
+  }
+
+  /** A RELEASED request whose publish failed can still be retried: the hole stays a problem. */
+  @Test
+  void aFailedPublishOfAStillReleasedRequestStillFails() {
+    released(REPO, "2026.1002.1", SHA_B);
+    published(REPO, "2026.1001.1", "2026.1003.1");
+    cut(REPO, "2026.1002.1", "RELEASED", "FAILED");
+
+    ChangelogRanges.Result result = resolve(maven("2026.1001.1", "2026.1003.1"));
+
+    assertEquals(List.of(HOLE), result.problems());
+  }
+
+  /** One closed request failed, a later one of the same version is still open: it stays a problem. */
+  @Test
+  void aFailedVersionAnotherRequestCanStillPublishStillFails() {
+    released(REPO, "2026.1002.1", SHA_B);
+    published(REPO, "2026.1001.1", "2026.1003.1");
+    cut(REPO, "2026.1002.1", "OBSOLETE", "FAILED");
+    cut(REPO, "2026.1002.1", "RELEASED", "RUNNING");
+
+    ChangelogRanges.Result result = resolve(maven("2026.1001.1", "2026.1003.1"));
+
+    assertEquals(List.of(HOLE), result.problems());
+  }
+
+  /** A failed run and a cancelled run of the same version, both closed: nothing can publish it. */
+  @Test
+  void aVersionWithAFailedAndACancelledClosedRequestIsSkipped() {
+    released(REPO, "2026.1002.1", SHA_B);
+    published(REPO, "2026.1001.1", "2026.1003.1");
+    cut(REPO, "2026.1002.1", "OBSOLETE", "CANCELLED");
+    cut(REPO, "2026.1002.1", "OBSOLETE", "FAILED");
+
+    Change change = maven("2026.1001.1", "2026.1003.1");
+    ChangelogRanges.Result result = resolve(change);
+
+    assertEquals(List.of(), result.problems());
+    assertEquals(new ChangelogRange(REPO, List.of("2026.1003.1")), result.ranges().get(change));
   }
 }

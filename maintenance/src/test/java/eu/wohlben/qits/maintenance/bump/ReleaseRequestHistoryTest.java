@@ -75,4 +75,23 @@ class ReleaseRequestHistoryTest {
     assertFalse(new ReleaseRequestClient.Cut("a", "v", "FINALIZED", null).publishedNothing());
     assertFalse(new ReleaseRequestClient.Cut("a", "v", "FINALIZED", "CANCELLED").publishedNothing());
   }
+
+  /** qits-1191: a red publish of a closed request can never be retried. */
+  @Test
+  void aClosedRequestWhosePublishFailedFailedForGood() {
+    assertTrue(new ReleaseRequestClient.Cut("a", "v", "OBSOLETE", "FAILED").publishFailedForGood());
+    assertTrue(new ReleaseRequestClient.Cut("a", "v", "WITHDRAWN", "FAILED").publishFailedForGood());
+  }
+
+  /** A retryable, completed, green, cancelled or running publish is not a failure for good. */
+  @Test
+  void anythingElseIsNotAFailureForGood() {
+    assertFalse(new ReleaseRequestClient.Cut("a", "v", "RELEASED", "FAILED").publishFailedForGood());
+    assertFalse(new ReleaseRequestClient.Cut("a", "v", "FINALIZED", "FAILED").publishFailedForGood());
+    assertFalse(new ReleaseRequestClient.Cut("a", "v", "OBSOLETE", "SUCCESS").publishFailedForGood());
+    assertFalse(new ReleaseRequestClient.Cut("a", "v", "OBSOLETE", "CANCELLED").publishFailedForGood());
+    assertFalse(new ReleaseRequestClient.Cut("a", "v", "OBSOLETE", "RUNNING").publishFailedForGood());
+    assertFalse(new ReleaseRequestClient.Cut("a", "v", "OBSOLETE", null).publishFailedForGood());
+    assertFalse(new ReleaseRequestClient.Cut("a", "v", null, "FAILED").publishFailedForGood());
+  }
 }
