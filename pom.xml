@@ -75,6 +75,11 @@
         <qits.db-core.version>2026.1002.70617</qits.db-core.version>
         <qits.auth-core.version>2026.1002.70617</qits.auth-core.version>
         <qits.arch-rules.version>2026.1002.70617</qits.arch-rules.version>
+        <!-- Service-to-service HTTP that says who is calling: QitsHttpClients.wrap turns a raw
+             java.net.http.HttpClient into one that opens a CLIENT span and sends traceparent plus
+             X-Qits-Caller; the server filter (jandex-discovered off this jar alone) records an
+             inbound caller on the server span. Not released yet (qits-1198). -->
+        <qits.http-core.version>0-qits-1198-local</qits.http-core.version>
         <!-- The user-story framework (test scope, service/ only). The five story classes under
              service/src/test/.../stories/ plus TokenValidationBootstrapIT are userflows, so a
              `mvn verify -DskipITs=false -Dit.test=<the list>` also regenerates
@@ -269,6 +274,11 @@
                 <groupId>${project.groupId}</groupId>
                 <artifactId>qits-arch-rules</artifactId>
                 <version>${qits.arch-rules.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-http-core</artifactId>
+                <version>${qits.http-core.version}</version>
             </dependency>
             <dependency>
                 <!-- The userflow framework. Test scope, in `service/` only: the story runs against

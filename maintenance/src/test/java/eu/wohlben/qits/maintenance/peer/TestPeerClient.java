@@ -1,5 +1,7 @@
 package eu.wohlben.qits.maintenance.peer;
 
+import eu.wohlben.qits.http.QitsHttpClients;
+import io.opentelemetry.api.OpenTelemetry;
 import java.time.Duration;
 import java.util.Optional;
 
@@ -13,9 +15,10 @@ import java.util.Optional;
  * this class and is handed one through its ordinary {@code peers} field.
  *
  * <p>It lives in this package rather than in {@code contracts} (where {@code ProjectsContract}
- * does) because {@link PeerClient#callTimeout} and {@link PeerClient#tokens} are
- * package-private test seams — this class sets both directly rather than needing CDI or a running
- * Quarkus application, which is also why the whole pact test is plain JUnit.
+ * does) because {@link PeerClient#callTimeout}, {@link PeerClient#tokens} and
+ * {@link PeerClient#clients} are package-private test seams — this class sets all three directly
+ * rather than needing CDI or a running Quarkus application, which is also why the whole pact test
+ * is plain JUnit.
  */
 public final class TestPeerClient extends PeerClient {
 
@@ -24,6 +27,7 @@ public final class TestPeerClient extends PeerClient {
   public TestPeerClient(String base) {
     this.base = base;
     this.callTimeout = Duration.ofSeconds(5);
+    this.clients = QitsHttpClients.of(OpenTelemetry.noop(), null);
     this.tokens =
         new PeerTokens() {
           @Override
