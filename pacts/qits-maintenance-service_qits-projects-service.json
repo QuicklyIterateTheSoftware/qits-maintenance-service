@@ -831,6 +831,7 @@
       "request": {
         "body": {
           "content": {
+            "outcome": "OBSOLETE",
             "target": "DROPPED"
           },
           "contentType": "application/json",

@@ -98,6 +98,7 @@ class TicketClientTest {
         "http://qits-projects:8080/projects/api/work/" + ref + "/status",
         peers.calls.get(2).url());
     assertEquals("DROPPED", JSON.readTree(peers.calls.get(2).body()).get("target").asText());
+    assertEquals("OBSOLETE", JSON.readTree(peers.calls.get(2).body()).get("outcome").asText());
 
     peers.answer(404, "{}");
     assertTrue(client.read(ref).isEmpty(), "a ticket that is gone reads as empty");

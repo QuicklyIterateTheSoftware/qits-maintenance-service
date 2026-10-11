@@ -243,7 +243,7 @@ final class ProjectsContract {
       () -> new PactDslJsonBody().stringValue("body", CLOSING_TEXT);
 
   private static final Supplier<DslPart> DROP_REQUEST =
-      () -> new PactDslJsonBody().stringValue("target", "DROPPED");
+      () -> new PactDslJsonBody().stringValue("target", "DROPPED").stringValue("outcome", "OBSOLETE");
 
   private static final Supplier<DslPart> WITHDRAW_REQUEST =
       () -> new PactDslJsonBody().stringValue("reason", WITHDRAW_REASON);

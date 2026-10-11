@@ -23,7 +23,9 @@ import java.util.UUID;
  * the ticket create schema (answers 201 with the entity in the merged shape — {@code id}, {@code
  * qualifiedId}, {@code slug}); {@code GET /projects/api/work/{qualifiedId}} ({@code status}, {@code
  * ticketType}); {@code POST …/{qualifiedId}/comments} {@code {"body": …}}; {@code POST
- * …/{qualifiedId}/status} {@code {"target": "DROPPED"}}. qits-projects names the path segment
+ * …/{qualifiedId}/status} {@code {"target": "DROPPED", "outcome": "OBSOLETE"}} — OBSOLETE because
+ * the SBOM check only drops a ticket whose subject went away by itself, never a duplicate or a
+ * successor, so no reference accompanies it (qits-248). qits-projects names the path segment
  * {@code qualifiedId} but resolves either a qualified id ({@code qits-703}) or a UUID there.
  *
  * <p><b>Addressed by qualified id where one is known, a UUID otherwise — no schema migration.</b>
@@ -136,10 +138,14 @@ public class TicketClient {
     }
   }
 
-  /** Moves a ticket to DROPPED. {@code ticketRef}: see {@link #read}. */
+  /**
+   * Moves a ticket to DROPPED with outcome OBSOLETE — the SBOM check only drops a ticket whose
+   * subject went away by itself, so no reference is sent. {@code ticketRef}: see {@link #read}.
+   */
   public void drop(String ticketRef) {
     ObjectNode body = JSON.createObjectNode();
     body.put("target", "DROPPED");
+    body.put("outcome", "OBSOLETE");
     PeerExchange exchange =
         peers.post(PeerTarget.PROJECTS, WORK + "/" + ticketRef + "/status", body.toString());
     if (!exchange.answer().ok()) {
