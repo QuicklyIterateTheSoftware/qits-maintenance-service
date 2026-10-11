@@ -92,8 +92,8 @@ public class ReleaseRequestAutomationController {
    * follow it with the read below. A DERIVED kind waits for every SOURCE kind to be FRESH at the
    * fold (qits-1133). With {@code accepts} naming them, a waiting kind answers WAITING and a kind
    * that does not apply is listed NOT_APPLICABLE with its {@code reason}. With DEFERRED named, a
-   * kind QA checks for a repository on {@code qits.maintenance.automations.qa-checked.repositories}
-   * is answered DEFERRED and not run (qits-1180); the re-run door still runs it.
+   * kind the repository's QA checks at the fold (its {@code check-outputs:}) is answered DEFERRED and
+   * not run (qits-1180, qits-1178); the re-run door still runs it.
    *
    * <p>A repository no scan has read yet — a new one's first request — is still a 404, but it queues
    * a scan of that repository (one at a time), so the next thirty-second ask finds it.

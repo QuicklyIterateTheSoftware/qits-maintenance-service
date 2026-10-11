@@ -152,6 +152,22 @@ final class AutomationFixture {
     peers.answer(PeerTarget.GITHOST, BLOB + fold + "/pom.xml", FakePeers.Scripted.ok(POM_WITH_ORM, sha));
   }
 
+  /** A file at the fold, under its path from the repository root (qits-1178's QA declarations). */
+  static void scriptFile(FakePeers peers, String fold, String path, String content) {
+    peers.answer(
+        PeerTarget.GITHOST,
+        BLOB + fold + "/" + path,
+        FakePeers.Scripted.ok(content, Map.of("Git-Commit-Sha", fold)));
+  }
+
+  /** qits-ci's packaged recipe of that name, as its repository on the git host holds it at main. */
+  static void scriptPackagedRecipe(FakePeers peers, String name, FakePeers.Scripted answer) {
+    peers.answer(
+        PeerTarget.GITHOST,
+        "/git/qits/qits-ci-service/blob/main/" + QaChecks.PACKAGED_RECIPES + name + ".yml",
+        answer);
+  }
+
   /**
    * One fold of the repository, readable: its root (so a file it lacks is ABSENT rather than GONE),
    * its {@code package.json}, and — when it follows the convention — the renderer record.

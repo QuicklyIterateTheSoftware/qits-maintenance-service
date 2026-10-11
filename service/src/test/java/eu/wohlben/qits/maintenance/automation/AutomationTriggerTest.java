@@ -127,11 +127,11 @@ class AutomationTriggerTest {
   }
 
   /**
-   * The qits-1180 switch off — the shipped default: a caller that accepts DEFERRED still gets
-   * today's pre-run, because no repository is QA-checked.
+   * A fold whose QA checks nothing — here it carries no {@code release.yml} at all: a caller that
+   * accepts DEFERRED still gets today's pre-run (qits-1178).
    */
   @Test
-  void withTheQaCheckedSwitchOffDeferredIsNeverAnswered() {
+  void whereQaChecksNothingDeferredIsNeverAnswered() {
     ReleaseRequestAutomationsDto answer =
         automations.trigger(
             REQUEST,

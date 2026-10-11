@@ -537,9 +537,9 @@ POST /release-requests/{id}/automations           → {requestId, foldSha,
                                                     when `accepts` names them (qits-1133); without
                                                     it a waiting kind reads REQUESTED and an
                                                     inapplicable one is not listed; DEFERRED
-                                                    (qits-1180) for a kind QA checks on a
-                                                    repository in `automations.qa-checked.
-                                                    repositories` — only when `accepts` names it,
+                                                    (qits-1180) for a kind the repository's QA
+                                                    checks at the fold (`check-outputs:`,
+                                                    qits-1178) — only when `accepts` names it,
                                                     and the kind is then not run;
                                                     `backingBranch` is the fold an own-branch run
                                                     starts from — absent, it is read from
@@ -761,7 +761,7 @@ environment without a rebuild.
 | `qits.maintenance.bump.dispatch.refusal-ttl` | `6h` | how long a repository whose main-only request could not be opened (no catalog id, a refusal) is left alone before it is asked again |
 | `qits.maintenance.environment` | `dev` | which environment's CI is recorded on a bump row |
 | `qits.maintenance.automations.dependency-bump.enabled` | `true` | **the `dependency-bump` automation (qits-1133), and since R5 the one kill switch of the bump path.** Off (emergency only): the kind is not listed, planned or started, a row it opened before ends FRESH, a moved `mt_latest` re-plans nothing and the dispatcher opens no main-only request |
-| `qits.maintenance.automations.qa-checked.repositories` | `qits-landing-app,qits-projects-service` | repositories whose QA checks the generated output (qits-1180): for a trigger that accepts `DEFERRED`, `entity-diagram` and `screenshot-baselines` are answered DEFERRED and not run before QA; the re-run door still runs them |
+| `qits.maintenance.automations.packaged-recipes.project` / `.repository` | `qits` / `qits-ci-service` | where qits-ci's packaged release recipes live (qits-1178). `entity-diagram` and `screenshot-baselines` are answered DEFERRED and not run before QA, for a trigger that accepts `DEFERRED`, when the repository's QA names them under `check-outputs:`. That is read from the fold's `.config/qits/release.yml` (its own `release-request:` slot wins), else the repository's own recipe copy, else the packaged recipe read here at `main`. In doubt, the pre-run stays. The re-run door still runs them |
 
 **The registry keys carry a PATH as well as a host**, because a registry is mounted under a prefix
 and the prefix names the repository row it serves. Moving a row is then a deployment's decision.

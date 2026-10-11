@@ -94,11 +94,11 @@ import org.jboss.logging.Logger;
  * ReleaseRequestAutomation#inputPaths() inputs} carries over exactly when the fold touched none of
  * them. A plan that would write another applicable kind's path is refused FAILED before it runs.
  *
- * <h2>Kinds QA checks (qits-1180)</h2>
+ * <h2>Kinds QA checks (qits-1180, qits-1178)</h2>
  *
- * <p>For a repository listed in {@code qits.maintenance.automations.qa-checked.repositories}, a kind
- * that says {@link ReleaseRequestAutomation#checkedByQa()} is not planned or run before QA when the
- * trigger accepts DEFERRED: QA runs the same generator and fails on stale output, and the re-run door
+ * <p>A kind that says {@link ReleaseRequestAutomation#checkedByQa()} and that the repository's QA
+ * names under {@code check-outputs:} at the fold ({@link QaChecks}) is not planned or run before QA
+ * when the trigger accepts DEFERRED: QA runs the same generator and fails on stale output, and the re-run door
  * regenerates on demand. Applicability is still decided, and the kind's paths stay in the union. A
  * caller that does not accept the word gets today's pre-run.
  *
@@ -193,6 +193,8 @@ public class AutomationService {
   @Inject CiClient ci;
 
   @Inject GitHostReader gitHost;
+
+  @Inject QaChecks qaChecks;
 
   @Inject ReleaseRequestClient releases;
 
@@ -406,18 +408,26 @@ public class AutomationService {
     Map<String, String> waiting = new LinkedHashMap<>();
     Map<String, String> notApplicable = new LinkedHashMap<>();
     // QA CHECKS THESE KINDS (qits-1180), but only a caller that understands DEFERRED is told so;
-    // every other caller gets the pre-run it always had.
+    // every other caller gets the pre-run it always had. Which kinds QA checks is read from the
+    // fold only when an applying kind could be deferred (qits-1178).
     Set<AutomationState> accepts = accepted(fold.accepts());
     Map<String, String> deferred =
-        accepts.contains(AutomationState.DEFERRED) && config.qaChecked(name)
-            ? new LinkedHashMap<>()
-            : null;
+        accepts.contains(AutomationState.DEFERRED) ? new LinkedHashMap<>() : null;
+    boolean deferrable =
+        deferred != null
+            && kinds.stream()
+                .anyMatch(
+                    kind ->
+                        kind.checkedByQa()
+                            && !stored.contains(kind.kind())
+                            && decided.get(kind.kind()).applied());
+    Set<String> qaChecked = deferrable ? qaChecks.kinds(subject) : Set.of();
     // SOURCE FIRST, then DERIVED behind it: what the first stage writes is what the second is built
     // from, so the second is not asked until the first is FRESH at this fold.
     for (ReleaseRequestAutomation kind : kinds) {
       if (kind.stage() != Stage.DERIVED) {
         decide(kind, subject, previous, fold.changedSincePrevious(), stored, decided, paths, union,
-            derivedUnion, unknown, notApplicable, null, waiting, deferred);
+            derivedUnion, unknown, notApplicable, null, waiting, deferred, qaChecked);
       }
     }
     String hold = sourcesNotFresh(kinds, decided, requestId, foldSha);
@@ -427,7 +437,7 @@ public class AutomationService {
     for (ReleaseRequestAutomation kind : kinds) {
       if (kind.stage() == Stage.DERIVED) {
         decide(kind, subject, previous, fold.changedSincePrevious(), stored, decided, paths, union,
-            derivedUnion, unknown, notApplicable, hold, waiting, deferred);
+            derivedUnion, unknown, notApplicable, hold, waiting, deferred, qaChecked);
       }
     }
     return answer(
@@ -440,6 +450,7 @@ public class AutomationService {
    *
    * @param deferred where a kind QA checks is put instead of being run (qits-1180), or null when
    *     this fold defers nothing
+   * @param qaChecked the kinds the repository's QA checks at this fold (qits-1178)
    */
   private void decide(
       ReleaseRequestAutomation kind,
@@ -455,7 +466,8 @@ public class AutomationService {
       Map<String, String> notApplicable,
       String hold,
       Map<String, String> waiting,
-      Map<String, String> deferred) {
+      Map<String, String> deferred,
+      Set<String> qaChecked) {
     if (stored.contains(kind.kind())) {
       return;
     }
@@ -464,7 +476,7 @@ public class AutomationService {
       case NOT_APPLICABLE -> notApplicable.put(kind.kind(), applicability.reason());
       case UNKNOWN -> unknown.put(kind.kind(), applicability.reason());
       case APPLIES -> {
-        if (deferred != null && kind.checkedByQa()) {
+        if (deferred != null && kind.checkedByQa() && qaChecked.contains(kind.kind())) {
           defer(kind, subject, previous, changed, union, derivedUnion, hold, deferred);
           return;
         }
