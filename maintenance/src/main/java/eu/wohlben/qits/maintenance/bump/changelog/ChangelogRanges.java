@@ -68,18 +68,19 @@ import org.jboss.logging.Logger;
  *       per version ({@link ReleaseRequestClient.Cut#publishedNothing}), and such a version is left
  *       out of the range: it has no changelog, and nothing can ever publish one (only a CI run of
  *       that release may). The history is read only when a changelog is missing. <b>Its commits
- *       are then in no changelog at all</b>: the next release's changelog lists the commits since
- *       the previous TAG, not since the previous publish (measured, qits-maintenance-service
- *       2026.1010.124627 lists none of 2026.1010.120523's). That gap belongs to the composer;
- *       failing the range for it here would hold every consumer for ever, since nothing can
- *       publish the missing changelog after the fact.
+ *       are not lost</b>: the next release that publishes lists the commits of every earlier
+ *       release since the last published changelog ({@code qits artifacts publish changelog},
+ *       qits-1193), so a later version in the range carries them, and the bump message, which
+ *       joins the changelogs of the range, carries them with it. Before qits-1193 they were in no
+ *       changelog at all (measured, qits-maintenance-service 2026.1010.124627 lists none of
+ *       2026.1010.120523's).
  *       <p><b>A publish that FAILED in a closed request is skipped too, but only below the new
  *       pin</b> (qits-1191, {@link ReleaseRequestClient.Cut#publishFailedForGood}). Its request is
  *       OBSOLETE or WITHDRAWN, so nothing will ever retry the run, and its changelog can never
  *       appear (measured: qits-workspace-daemon 2026.1011.81850 and 2026.1011.115738, publish runs
  *       restarted by a qits-ci redeploy, held every consumer's bump). The bump pins a later,
- *       published release, so it ships those commits, and their changelog gap is the same one a
- *       cancelled release leaves. As the new pin itself it stays a PROBLEM: a failed run may have
+ *       published release, so it ships those commits, and that release's changelog lists them,
+ *       as for a cancelled release. As the new pin itself it stays a PROBLEM: a failed run may have
  *       stored only part of the release, and a bump must not pin that.
  *   <li><b>Every other candidate the store did not publish is a PROBLEM</b> naming the repository
  *       and the version: every release publishes one, so that release's publish did not complete.

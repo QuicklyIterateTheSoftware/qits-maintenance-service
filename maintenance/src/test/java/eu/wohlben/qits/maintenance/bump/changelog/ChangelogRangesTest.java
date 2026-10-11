@@ -536,7 +536,8 @@ class ChangelogRangesTest {
   /**
    * THE LIVE CASE (qits-1191): qits-workspace-daemon 2026.1011.81850 and 2026.1011.115738 were
    * tagged, their publish runs FAILED (a qits-ci redeploy restarted them) and their requests went
-   * OBSOLETE. Nothing can retry them, so a bump to the published 2026.1011.134206 skips both.
+   * OBSOLETE. Nothing can retry them, so a bump to the published 2026.1011.134206 skips both. Its
+   * changelog lists their commits (qits-1193), so the one changelog in the range carries all of them.
    */
   @Test
   void closedReleasesWhosePublishFailedAreSkippedBelowAPublishedPin() {
