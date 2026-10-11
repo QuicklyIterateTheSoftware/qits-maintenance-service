@@ -74,7 +74,7 @@
              container can actually reach — see docker/Dockerfile and .qits-maven-settings.xml. -->
         <qits.db-core.version>2026.1002.70617</qits.db-core.version>
         <qits.auth-core.version>2026.1002.70617</qits.auth-core.version>
-        <qits.arch-rules.version>2026.1002.70617</qits.arch-rules.version>
+        <qits.arch-rules.version>2026.1011.185745</qits.arch-rules.version>
         <!-- Service-to-service HTTP that says who is calling: QitsHttpClients.wrap turns a raw
              java.net.http.HttpClient into one that opens a CLIENT span and sends traceparent plus
              X-Qits-Caller; the server filter (jandex-discovered off this jar alone) records an
