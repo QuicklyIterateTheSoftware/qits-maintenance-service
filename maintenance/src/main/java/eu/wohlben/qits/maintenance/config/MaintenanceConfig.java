@@ -66,13 +66,16 @@ public class MaintenanceConfig {
   @ConfigProperty(name = "qits.maintenance.internal.image-prefixes")
   List<String> internalImagePrefixes;
 
-  /** The repositories whose QA checks the generated output (qits-1180). */
-  public static final String QA_CHECKED_REPOSITORIES =
-      "qits.maintenance.automations.qa-checked.repositories";
+  /**
+   * The git host project of the repository that holds qits-ci's packaged release recipes, which
+   * {@code automation.QaChecks} reads (qits-1178).
+   */
+  @ConfigProperty(name = "qits.maintenance.automations.packaged-recipes.project")
+  String packagedRecipesProject;
 
-  // OPTIONAL FOR THE SAME REASON AS quiet-hours: the shipped default is empty.
-  @ConfigProperty(name = QA_CHECKED_REPOSITORIES)
-  Optional<List<String>> qaCheckedRepositories;
+  /** That repository's name. */
+  @ConfigProperty(name = "qits.maintenance.automations.packaged-recipes.repository")
+  String packagedRecipesRepository;
 
   /** Which environment's qits-ci applies a bump. Recorded on every bump row. */
   public String environment() {
@@ -95,18 +98,14 @@ public class MaintenanceConfig {
     return bumpEnabled;
   }
 
-  /**
-   * Whether QA checks this repository's generated output (qits-1180): then the kinds that say
-   * {@code checkedByQa()} are not run before QA for a trigger that accepts DEFERRED. Empty by
-   * default, so every repository keeps today's pre-run until it is listed.
-   */
-  public boolean qaChecked(String repository) {
-    if (repository == null) {
-      return false;
-    }
-    return qaCheckedRepositories.orElse(List.of()).stream()
-        .map(String::trim)
-        .anyMatch(repository.trim()::equals);
+  /** The git host project of the repository holding qits-ci's packaged release recipes. */
+  public String packagedRecipesProject() {
+    return packagedRecipesProject;
+  }
+
+  /** The repository holding qits-ci's packaged release recipes. */
+  public String packagedRecipesRepository() {
+    return packagedRecipesRepository;
   }
 
   /**

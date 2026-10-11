@@ -103,9 +103,9 @@ public interface ReleaseRequestAutomation {
   }
 
   /**
-   * Whether QA checks this kind's output (qits-1180). For a repository listed in {@code
-   * qits.maintenance.automations.qa-checked.repositories}, such a kind is not run before QA and is
-   * answered DEFERRED to a trigger that accepts the word. Default: no.
+   * Whether QA can check this kind's output (qits-1180). Where the repository's QA names the kind
+   * under {@code check-outputs:} ({@link QaChecks}, qits-1178), such a kind is not run before QA and
+   * is answered DEFERRED to a trigger that accepts the word. Default: no.
    */
   default boolean checkedByQa() {
     return false;

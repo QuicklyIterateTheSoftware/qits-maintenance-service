@@ -275,11 +275,12 @@ true): off, the kind is not listed, planned or run, a row it opened ends FRESH, 
 nothing and the dispatcher answers DISABLED (`DependencyBumpSwitchedOffTest`).
 
 **KINDS QA CHECKS ARE DEFERRED (qits-1180).** `entity-diagram` and `screenshot-baselines` say
-`checkedByQa()`. For a repository in `qits.maintenance.automations.qa-checked.repositories` (by default
-qits-landing-app and qits-projects-service) and a trigger that `accepts` DEFERRED, they are not planned or run: answered DEFERRED, never
+`checkedByQa()`. Where the repository's QA names them under `check-outputs:` at the fold (`QaChecks`, qits-1178:
+its `release.yml` slot, else its own recipe copy, else qits-ci's packaged recipe; in doubt, no) and the trigger
+`accepts` DEFERRED, they are not planned or run: answered DEFERRED, never
 stored, unless the previous fold's outcome carries over (then FRESH, as today). Applicability is still
 decided and their paths stay in the union. Any other caller gets today's pre-run. The re-run door
-ignores the switch (`QaCheckedAutomationTest`).
+runs them either way (`QaCheckedAutomationTest`).
 
 **GROUP BUMPS ARE RETIRED (qits-1133: switched off in R2, removed in R5).** Nothing writes a
 `maintenance/<group>` branch, and there is no code left that could: no `BumpService.request`, no

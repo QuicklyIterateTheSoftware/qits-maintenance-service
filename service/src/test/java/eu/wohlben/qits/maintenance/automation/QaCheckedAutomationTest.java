@@ -12,7 +12,6 @@ import eu.wohlben.qits.maintenance.api.Fixture;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
 import eu.wohlben.qits.maintenance.bump.BumpService;
 import eu.wohlben.qits.maintenance.bump.CiClient;
-import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto.AutomationDto;
 import eu.wohlben.qits.maintenance.entity.MtBump;
@@ -25,34 +24,50 @@ import eu.wohlben.qits.maintenance.scan.ScanService;
 import eu.wohlben.qits.maintenance.scan.ScanTrigger;
 import eu.wohlben.qits.maintenance.work.WorkQueue;
 import io.quarkus.test.junit.QuarkusTest;
-import io.quarkus.test.junit.QuarkusTestProfile;
-import io.quarkus.test.junit.TestProfile;
 import jakarta.inject.Inject;
 import java.time.Duration;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * <b>Kinds QA checks</b> (qits-1180): with the repository on {@code
- * qits.maintenance.automations.qa-checked.repositories}, entity-diagram and screenshot-baselines are
- * answered DEFERRED and not run — but only for a caller that accepts the word. The re-run door still
- * runs them, and its result shows as it does today. The switch off is in {@link
- * AutomationTriggerTest}.
+ * <b>Kinds QA checks</b> (qits-1180, qits-1178): where the repository's QA names entity-diagram and
+ * screenshot-baselines under {@code check-outputs:} at the fold, they are answered DEFERRED and not
+ * run — but only for a caller that accepts the word. The re-run door still runs them, and its result
+ * shows as it does today. Which file decides follows qits-ci: the fold's own {@code
+ * release-request:} slot, else the repository's own recipe copy, else qits-ci's packaged recipe. A
+ * fold with no {@code release.yml} is in {@link AutomationTriggerTest}.
  */
 @QuarkusTest
-@TestProfile(QaCheckedAutomationTest.QaChecked.class)
 class QaCheckedAutomationTest {
 
-  /** The fixture's repository is QA-checked; nothing else changed. */
-  public static class QaChecked implements QuarkusTestProfile {
-    @Override
-    public Map<String, String> getConfigOverrides() {
-      return Map.of(MaintenanceConfig.QA_CHECKED_REPOSITORIES, "other-repository," + Fixture.REPOSITORY);
-    }
-  }
+  /** A release.yml whose own QA slot checks both kinds. */
+  private static final String OWN_SLOT_CHECKS_BOTH =
+      """
+      archetype: java-service
+      release-request:
+        - image: qits/build-images/maven-base:latest
+          check-outputs: [entity-diagram, screenshot-baselines]
+          script: ./mvnw verify
+      """;
+
+  /** A recipe whose QA step checks the screenshots only. */
+  private static final String RECIPE_CHECKS_SCREENSHOTS =
+      """
+      release-request:
+        - image: qits/build-images/node-browser-base:latest
+          check-outputs: [screenshot-baselines]
+          script: npm test
+      """;
+
+  /** A recipe whose QA step checks nothing. */
+  private static final String RECIPE_CHECKS_NOTHING =
+      """
+      release-request:
+        - image: qits/build-images/node-browser-base:latest
+          script: npm test
+      """;
 
   private static final String RUN = "run-qa-checked";
 
@@ -86,6 +101,9 @@ class QaCheckedAutomationTest {
       AutomationFixture.scriptFold(peers, fold, true);
     }
     AutomationFixture.scriptEntityDiagramApplies(peers, FOLD_A);
+    for (String fold : List.of(FOLD_A, FOLD_B)) {
+      AutomationFixture.scriptFile(peers, fold, QaChecks.RELEASE_YML, OWN_SLOT_CHECKS_BOTH);
+    }
     AutomationFixture.scriptRequest(peers, REQUEST, "PENDING", FOLD_A);
     AutomationFixture.scriptJoin(peers, REQUEST, AutomationFixture.joined(REQUEST));
     Fixture.scriptForeignBranchAt(
@@ -141,7 +159,7 @@ class QaCheckedAutomationTest {
     assertEquals(0, triggers());
   }
 
-  /** A caller that does not accept DEFERRED gets today's pre-run, switch or no switch. */
+  /** A caller that does not accept DEFERRED gets today's pre-run, whatever QA checks. */
   @Test
   void aCallerThatDoesNotAcceptDeferredRunsAsToday() {
     ReleaseRequestAutomationsDto answer = trigger(FOLD_A, null, null, WITHOUT_DEFERRED);
@@ -204,5 +222,68 @@ class QaCheckedAutomationTest {
     MtBump row = store.bump(UUID.fromString(carried.bumpId())).orElseThrow();
     assertEquals(BumpStatus.NOTHING_TO_DO.name(), row.status);
     assertEquals(1, triggers(), "and no second run");
+  }
+
+  /** The answer's state for one kind. */
+  private static String state(ReleaseRequestAutomationsDto answer, String kind) {
+    return AutomationFixture.entry(answer, kind).state();
+  }
+
+  /**
+   * No own slot and no own copy: qits-ci's packaged recipe decides. It checks the screenshots only,
+   * so they are DEFERRED and the entity diagram runs before QA as today.
+   */
+  @Test
+  void thePackagedRecipeDecidesWhenTheRepositoryNamesOnlyAnArchetype() {
+    AutomationFixture.scriptFile(peers, FOLD_A, QaChecks.RELEASE_YML, "archetype: app\n");
+    AutomationFixture.scriptPackagedRecipe(
+        peers, "app", FakePeers.Scripted.ok(RECIPE_CHECKS_SCREENSHOTS));
+
+    ReleaseRequestAutomationsDto answer = trigger(FOLD_A, null, null, WITH_DEFERRED);
+
+    assertEquals(AutomationState.DEFERRED.name(), state(answer, ScreenshotBaselinesAutomation.KIND));
+    assertEquals(AutomationState.REQUESTED.name(), state(answer, EntityDiagramAutomation.KIND));
+    assertEquals(1, rows(FOLD_A, EntityDiagramAutomation.KIND).size());
+    assertTrue(rows(FOLD_A, ScreenshotBaselinesAutomation.KIND).isEmpty());
+  }
+
+  /** The repository's own recipe copy wins over the packaged one, as in qits-ci: no key, no defer. */
+  @Test
+  void anOwnRecipeCopyWithoutTheKeyKeepsThePreRun() {
+    AutomationFixture.scriptFile(peers, FOLD_A, QaChecks.RELEASE_YML, "archetype: app\n");
+    AutomationFixture.scriptFile(
+        peers, FOLD_A, QaChecks.OWN_RECIPES + "app.yml", RECIPE_CHECKS_NOTHING);
+    AutomationFixture.scriptPackagedRecipe(
+        peers, "app", FakePeers.Scripted.ok(RECIPE_CHECKS_SCREENSHOTS));
+
+    ReleaseRequestAutomationsDto answer = trigger(FOLD_A, null, null, WITH_DEFERRED);
+
+    assertEquals(AutomationState.REQUESTED.name(), state(answer, ScreenshotBaselinesAutomation.KIND));
+    assertEquals(AutomationState.REQUESTED.name(), state(answer, EntityDiagramAutomation.KIND));
+  }
+
+  /** An own release-request slot replaces the archetype's whole: without the key, no defer. */
+  @Test
+  void anOwnQaSlotWithoutTheKeyKeepsThePreRun() {
+    AutomationFixture.scriptFile(
+        peers, FOLD_A, QaChecks.RELEASE_YML, "archetype: app\n" + RECIPE_CHECKS_NOTHING);
+    AutomationFixture.scriptPackagedRecipe(
+        peers, "app", FakePeers.Scripted.ok(RECIPE_CHECKS_SCREENSHOTS));
+
+    ReleaseRequestAutomationsDto answer = trigger(FOLD_A, null, null, WITH_DEFERRED);
+
+    assertEquals(AutomationState.REQUESTED.name(), state(answer, ScreenshotBaselinesAutomation.KIND));
+  }
+
+  /** A packaged recipe the git host cannot serve is doubt, and doubt keeps the pre-run. */
+  @Test
+  void anUnreadablePackagedRecipeKeepsThePreRun() {
+    AutomationFixture.scriptFile(peers, FOLD_A, QaChecks.RELEASE_YML, "archetype: app\n");
+    AutomationFixture.scriptPackagedRecipe(
+        peers, "app", FakePeers.Scripted.unreachable("connection refused"));
+
+    ReleaseRequestAutomationsDto answer = trigger(FOLD_A, null, null, WITH_DEFERRED);
+
+    assertEquals(AutomationState.REQUESTED.name(), state(answer, ScreenshotBaselinesAutomation.KIND));
   }
 }
