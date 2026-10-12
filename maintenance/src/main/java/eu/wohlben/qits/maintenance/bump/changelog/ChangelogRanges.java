@@ -80,8 +80,13 @@ import org.jboss.logging.Logger;
  *       appear (measured: qits-workspace-daemon 2026.1011.81850 and 2026.1011.115738, publish runs
  *       restarted by a qits-ci redeploy, held every consumer's bump). The bump pins a later,
  *       published release, so it ships those commits, and that release's changelog lists them,
- *       as for a cancelled release. As the new pin itself it stays a PROBLEM: a failed run may have
- *       stored only part of the release, and a bump must not pin that.
+ *       as for a cancelled release.
+ *       <p><b>As the new pin itself it passes only when a LATER release published a changelog</b>
+ *       (qits-1209). The pin comes from the coordinate's own registry listing, so that coordinate
+ *       is stored; publish-only-if-changed can leave it the newest version while later releases
+ *       publish (measured: qits-projects-golden-masters 2026.1011.230000 held six bumps). The range
+ *       then names the earliest later published changelog, which lists the pin's commits
+ *       (qits-1193), so it can end above the pin. Without a later changelog it stays a PROBLEM.
  *   <li><b>Every other candidate the store did not publish is a PROBLEM</b> naming the repository
  *       and the version: every release publishes one, so that release's publish did not complete.
  *       That covers a publish run that went green without the changelog; a run that went red in
@@ -352,6 +357,16 @@ public class ChangelogRanges {
                 "%s %s was tagged and its publish failed in a closed request, so nothing can"
                     + " publish its changelog; a bump to the later %s carries none of it",
                 repository, version, to);
+          } else if (nothing.failed().contains(version) && publishedVersions.higher(to) != null) {
+            // qits-1209: the pin itself failed for good, but a later release published, and its
+            // changelog lists the pin's commits (qits-1193). Name that changelog instead.
+            String later = publishedVersions.higher(to);
+            candidates.remove(version);
+            candidates.add(later);
+            LOG.infof(
+                "%s %s is the new pin and its publish failed in a closed request; its commits are"
+                    + " in the later changelog %s, so the range names that one",
+                repository, version, later);
           }
         }
       }

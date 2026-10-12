@@ -15,7 +15,8 @@ import java.util.List;
  * @param repository the source repository — the docs site's second segment and the {@code ## }
  *     heading of the commit body
  * @param versions every release after the old pin up to and including the new one, oldest first in
- *     calver order; never empty
+ *     calver order; never empty. When the new pin failed for good, the last is the later release
+ *     whose changelog carries the pin's commits (qits-1209)
  */
 public record ChangelogRange(String repository, List<String> versions) {
 

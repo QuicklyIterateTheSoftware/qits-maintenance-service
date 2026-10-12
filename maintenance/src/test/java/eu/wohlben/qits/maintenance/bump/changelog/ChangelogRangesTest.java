@@ -588,8 +588,8 @@ class ChangelogRangesTest {
   }
 
   /**
-   * The new pin itself must not be a failed publish: the run may have stored part of the release,
-   * so the bump fails until a later release moves the pin.
+   * The new pin failed for good and no later release published a changelog: nothing carries its
+   * commits, so the bump fails until a later release publishes one (qits-1209).
    */
   @Test
   void aNewPinWhosePublishFailedStillFails() {
@@ -646,5 +646,46 @@ class ChangelogRangesTest {
 
     assertEquals(List.of(), result.problems());
     assertEquals(new ChangelogRange(REPO, List.of("2026.1003.1")), result.ranges().get(change));
+  }
+
+  private static final String PIN_HOLE =
+      "no changelog for "
+          + REPO
+          + " 2026.1002.1 (@changelog/"
+          + REPO
+          + "): every release publishes one, so this release's publish did not complete";
+
+  /**
+   * THE LIVE CASE (qits-1209): qits-projects-golden-masters 2026.1011.230000 failed its publish
+   * for good, and publish-only-if-changed left it the newest version while 2026.1012.73146
+   * published a changelog. The pin passes, and the range names the earliest later changelog.
+   */
+  @Test
+  void aNewPinWhosePublishFailedPassesWhenALaterReleasePublished() {
+    released(REPO, "2026.1002.1", SHA_B);
+    published(REPO, "2026.1004.1", "2026.1001.1", "2026.1003.1");
+    cut(REPO, "2026.1002.1", "OBSOLETE", "FAILED");
+    cut(REPO, "2026.1003.1", "FINALIZED", "SUCCESS");
+
+    Change change = maven("2026.1001.1", "2026.1002.1");
+    ChangelogRanges.Result result = resolve(change);
+
+    assertEquals(List.of(), result.problems());
+    assertFalse(result.transientFailure());
+    assertEquals(new ChangelogRange(REPO, List.of("2026.1003.1")), result.ranges().get(change));
+  }
+
+  /** A failed pin whose request is still RELEASED or FINALIZED is no failed-for-good release. */
+  @Test
+  void aNewPinWhosePublishFailedInAnOpenOrFinalizedRequestStillFailsDespiteALaterChangelog() {
+    for (String state : List.of("RELEASED", "FINALIZED")) {
+      history.clear();
+      published(REPO, "2026.1001.1", "2026.1003.1");
+      cut(REPO, "2026.1002.1", state, "FAILED");
+
+      ChangelogRanges.Result result = resolve(maven("2026.1001.1", "2026.1002.1"));
+
+      assertEquals(List.of(PIN_HOLE), result.problems(), state);
+    }
   }
 }
