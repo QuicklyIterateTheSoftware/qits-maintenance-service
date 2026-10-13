@@ -205,7 +205,9 @@ pending INTERNAL pin at the fold (minus `ignore:` and `hold:`, never a wrapper's
 `estate-pins`'), writes one commit and joins it to the request at `LOWEST` — one commit, one build.
 A library release re-plans the bump of every open, not-READY consumer request
 (`automation/UpstreamReplan`; three upstream restarts without a QA verdict and a request is left
-alone until it has one). The automation engine — kinds, stages, carry-over, the payload, the
+alone until it has one); a member's release recorded in the ledger likewise re-plans the
+`estate-pins` of every open, not-READY request of every wrapper of its project (qits-1224), whose
+per-fold FRESH would otherwise never be asked again. The automation engine — kinds, stages, carry-over, the payload, the
 changelog ranges every internal change proves before it is sent (qits-893) — is under "The event
 bus" and in AGENTS.md.
 

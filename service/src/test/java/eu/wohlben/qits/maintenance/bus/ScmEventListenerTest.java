@@ -238,6 +238,13 @@ class ScmEventListenerTest {
     public void latestMoved(eu.wohlben.qits.maintenance.model.Ecosystem ecosystem, String name) {
       moved.add(ecosystem.wireName() + ":" + name);
     }
+
+    final List<String> released = new java.util.ArrayList<>();
+
+    @Override
+    public void released(String repository) {
+      released.add(repository);
+    }
   }
 
   private ScmEventListener listener;
@@ -492,6 +499,32 @@ class ScmEventListenerTest {
     ledger.failWith = new IllegalStateException("the git host could not be asked");
 
     assertThrows(IllegalStateException.class, () -> released(FRONTEND, MAIN, VERSION));
+    assertTrue(upstream.released.isEmpty(), "no estate re-plan against a row never written");
+  }
+
+  /**
+   * <b>The estate's half of the hook</b> (qits-1224): every release the ledger records is announced
+   * — after the row is written, since that row is what the estate plan reads — whether or not the
+   * gitlink latest moved, so a redelivered frame whose column already moved still re-plans.
+   */
+  @Test
+  void everyReleaseTheLedgerRecordsReplansTheEstate() {
+    gitHost.holds(FRONTEND, "refs/tags/2026.902.1", RELEASE_SHA);
+    gitHost.holds(FRONTEND, "refs/tags/2026.801.1", "cccccccccccccccccccccccccccccccccccccccc");
+
+    released(FRONTEND, MAIN, "2026.902.1");
+    released(FRONTEND, MAIN, "2026.801.1");
+
+    assertEquals(List.of("gitlink:" + FRONTEND), upstream.moved);
+    assertEquals(List.of(FRONTEND, FRONTEND), upstream.released);
+  }
+
+  /** A tag the git host does not hold records no row, and announces nothing to the estate. */
+  @Test
+  void aReleaseWhoseTagIsNotThereReplansNoEstate() {
+    released(FRONTEND, MAIN, VERSION);
+
+    assertTrue(upstream.released.isEmpty());
   }
 
   // --- the release's manifests ------------------------------------------------------------------

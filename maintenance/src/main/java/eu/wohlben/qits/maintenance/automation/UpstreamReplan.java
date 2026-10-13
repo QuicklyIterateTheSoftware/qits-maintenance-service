@@ -6,6 +6,7 @@ import eu.wohlben.qits.maintenance.entity.MtRepository;
 import eu.wohlben.qits.maintenance.model.BumpTrigger;
 import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.PinKind;
+import eu.wohlben.qits.maintenance.model.RepositoryArchetype;
 import eu.wohlben.qits.maintenance.pending.PendingChanges;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import eu.wohlben.qits.maintenance.work.WorkQueue;
@@ -13,6 +14,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
@@ -48,6 +50,18 @@ import org.jboss.logging.Logger;
  *       behind the same capacity gate and chain order every bump has always waited behind.
  * </ul>
  *
+ * <h2>And the estate (qits-1224)</h2>
+ *
+ * <p>A wrapper holds no INTERNAL pin — its gitlinks are {@code estate-pins}', never the bump's —
+ * so the hook above never reaches it, and its {@code estate-pins} verdict is stored per fold: a
+ * request folded before a member released is FRESH at that fold for ever. {@link #released} closes
+ * that: a release recorded in the ledger re-plans {@code estate-pins} on every open, not-READY
+ * request of every wrapper of the member's project, through the same door, guard and restart
+ * count. The plan itself reads each source branch's {@code .gitmodules} and answers FRESH where the
+ * member is not declared or its pin is current, so "of the member's project" is the membership rule
+ * the plan already applies ({@code EstatePinsAutomation.newestRelease}), and nothing finer is
+ * guessed at from main's gitlinks — a source branch may declare a submodule main does not.
+ *
  * <p><b>Never inside the caller's transaction.</b> Two of the three callers are bus listeners whose
  * claim transaction must not hold an HTTP call open; the hook submits to {@link WorkQueue} and
  * returns, which is the outbox rule {@code SoftwareReleaseListener} already keeps.
@@ -61,6 +75,8 @@ public class UpstreamReplan {
   public static final int STARVATION_RESTARTS = 3;
 
   @Inject DependencyBumpAutomation dependencyBump;
+
+  @Inject EstatePinsAutomation estatePins;
 
   @Inject MaintenanceStore store;
 
@@ -99,7 +115,7 @@ public class UpstreamReplan {
     }
     for (String consumer : consumers) {
       try {
-        replan(consumer);
+        replan(consumer, DependencyBumpAutomation.KIND);
       } catch (RuntimeException e) {
         // One consumer's failure costs that consumer, never the rest of the list.
         LOG.warnf("The upstream re-plan of %s for %s %s failed: %s", consumer,
@@ -108,8 +124,58 @@ public class UpstreamReplan {
     }
   }
 
-  /** One consumer: re-plan each open, not-READY request, minding the starvation guard. */
-  void replan(String repository) {
+  /**
+   * A release of one repository was recorded in the release ledger (qits-1224). A no-op while
+   * estate-pins is off.
+   *
+   * <p><b>After the ledger write, and not off {@link #latestMoved}</b>: the estate plan reads a
+   * member's newest release from {@code mt_release}, so a re-plan queued before that row is written
+   * could plan against the previous release and answer FRESH. And it fires on a durable redelivery
+   * too, where the latest column has already moved and {@code latestMoved} is not called again.
+   */
+  public void released(String repository) {
+    if (!estatePins.enabled() || repository == null) {
+      return;
+    }
+    queue.submit(
+        "re-plan the estate pins over " + repository, () -> replanWrappers(repository));
+  }
+
+  /**
+   * Every wrapper of the released repository's project, each open request of each re-planned for
+   * its estate pins. The repository itself is never its own member.
+   */
+  public void replanWrappers(String repository) {
+    if (!estatePins.enabled()) {
+      return;
+    }
+    Optional<MtRepository> member = store.repository(repository);
+    if (member.isEmpty() || member.get().project == null) {
+      return;
+    }
+    Set<String> wrappers = new TreeSet<>();
+    for (MtRepository row : store.repositories()) {
+      if (!repository.equals(row.name)
+          && Objects.equals(member.get().project, row.project)
+          && RepositoryArchetype.of(row.archetype)
+              .filter(archetype -> archetype == RepositoryArchetype.PROJECT)
+              .isPresent()) {
+        wrappers.add(row.name);
+      }
+    }
+    for (String wrapper : wrappers) {
+      try {
+        replan(wrapper, EstatePinsAutomation.KIND);
+      } catch (RuntimeException e) {
+        // One wrapper's failure costs that wrapper, never the rest of the list.
+        LOG.warnf("The estate re-plan of %s for a release of %s failed: %s", wrapper, repository,
+            e.toString());
+      }
+    }
+  }
+
+  /** One repository: re-plan one kind on each open, not-READY request, minding the guard. */
+  void replan(String repository, String kind) {
     Optional<MtRepository> row = store.repository(repository);
     if (row.isEmpty() || row.get().catalogId == null || row.get().catalogId.isBlank()) {
       return;
@@ -147,16 +213,16 @@ public class UpstreamReplan {
       try {
         UUID id =
             automations.replan(
-                repository, request.id(), DependencyBumpAutomation.KIND, BumpTrigger.UPSTREAM);
+                repository, request.id(), kind, BumpTrigger.UPSTREAM);
         if (id != null) {
           store.recordUpstreamRestart(request.id(), repository, now);
-          LOG.infof("An upstream release re-planned the dependency bump of %s for %s as %s",
+          LOG.infof("An upstream release re-planned the %s of %s for %s as %s", kind,
               repository, request.id(), id);
         }
       } catch (RuntimeException e) {
         // A 409 (one already active, the request settled) or an undecidable plan: the next upstream
         // release asks again, and the request's own fold trigger is what settles it meanwhile.
-        LOG.infof("The upstream re-plan of %s for %s was not opened: %s", repository,
+        LOG.infof("The upstream re-plan of %s's %s for %s was not opened: %s", repository, kind,
             request.id(), e.getMessage());
       }
     }

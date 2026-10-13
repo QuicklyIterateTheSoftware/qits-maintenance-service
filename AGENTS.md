@@ -272,7 +272,12 @@ upstream hook (`automation/UpstreamReplan`) and the dispatcher's main-only LOWES
 always on: R5 removed `qits.maintenance.pre-run.upstream.enabled` with the group path it fell back
 to. **The one kill switch left is `qits.maintenance.automations.dependency-bump.enabled`** (default
 true): off, the kind is not listed, planned or run, a row it opened ends FRESH, the hook re-plans
-nothing and the dispatcher answers DISABLED (`DependencyBumpSwitchedOffTest`).
+nothing and the dispatcher answers DISABLED (`DependencyBumpSwitchedOffTest`). **The same hook
+re-plans `estate-pins` (qits-1224)**: `ScmEventListener` calls `UpstreamReplan.released` once the
+ledger row is written — not off `latestMoved`, which fires before it, and the estate plan reads
+`mt_release` — and every open, not-READY request of every `PROJECT` repository of the released
+repository's project is re-planned through `AutomationService.replan`, past its stored per-fold
+FRESH (`EstatePinsUpstreamReplanTest`).
 
 **KINDS QA CHECKS ARE DEFERRED (qits-1180).** `entity-diagram` and `screenshot-baselines` say
 `checkedByQa()`. Where the repository's QA names them under `check-outputs:` at the fold (`QaChecks`, qits-1178:

@@ -446,7 +446,12 @@ public class ScmEventListener implements QitsDurableEventListener {
     // declare" — a fact about a version rather than about the newest one, and a late-announced older
     // release deserves its row exactly as much as this morning's does. The tag sha is already
     // resolved above, so the ledger's own read of the tree costs no second resolution.
-    ledger.record(project, repository, version, tag.headSha(), Instant.now());
+    if (ledger.record(project, repository, version, tag.headSha(), Instant.now())) {
+      // The estate's half of the hook (qits-1224), and only once the row it plans from is written:
+      // every open request of a wrapper of this project re-plans its estate pins. A queue submit, as
+      // above.
+      upstream.released(repository);
+    }
   }
 
   /**
