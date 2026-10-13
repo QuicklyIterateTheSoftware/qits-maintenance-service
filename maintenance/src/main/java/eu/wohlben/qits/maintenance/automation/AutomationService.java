@@ -1228,6 +1228,7 @@ public class AutomationService {
    * A green own-branch run: unmoved is FRESH (NOTHING_TO_DO), moved is joined to the request. A join
    * qits-projects refuses fails the outcome with its reason; one it did not answer leaves it
    * COMMITTED with the reason on the row — the commit is on the branch, and joining by hand adds it.
+   * A moved branch is written COMMITTED before the join is sent, never after (qits-1226).
    */
   private void finishOwnBranch(
       MtBump row, String label, Optional<MtRepository> repository, String ciRunStatus,
@@ -1256,6 +1257,19 @@ public class AutomationService {
       LOG.warnf("The %s automation %s: %s", row.automationKind, row.id, tripped);
       return;
     }
+    String base = label.toLowerCase() + " written on " + row.branch + " at " + after;
+    // COMMITTED BEFORE THE JOIN (qits-1226): the join makes qits-projects re-fold onto this commit
+    // and ask for that fold's pre-run before it answers, and that pre-run reads this row. Still
+    // RUNNING, it counted for nothing — the fold already carries the bump, so dependency-bump was
+    // FRESH there and the request was withdrawn as having nothing to bump while carrying one. The
+    // join's answer then only refines the sentence, or fails the row when it was refused.
+    store.bumpFinished(
+        row.id,
+        BumpStatus.SUCCEEDED,
+        ciRunStatus,
+        base + "; joining release request " + requestName(row),
+        after,
+        now);
     String repoId = repository.map(repo -> repo.catalogId).orElse(null);
     ReleaseRequestClient.RequestResult joined =
         repoId == null || repoId.isBlank()
@@ -1267,7 +1281,6 @@ public class AutomationService {
             // branches, and an automation's branch is never what anybody is waiting for.
             : releases.join(repoId, row.releaseRequestId, row.branch, ReleaseRequestClient.LOWEST);
     store.bumpJoined(row.id, joined.outcome().name(), joined.message(), now);
-    String base = label.toLowerCase() + " written on " + row.branch + " at " + after;
     switch (joined.outcome()) {
       case REQUESTED, CONVERGED ->
           store.bumpFinished(

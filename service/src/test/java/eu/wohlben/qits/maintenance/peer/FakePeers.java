@@ -64,6 +64,9 @@ public class FakePeers extends PeerClient {
 
   private final Map<String, Scripted> script = new ConcurrentHashMap<>();
 
+  /** What runs when a call reaches a path, before it is answered — see {@link #onCall}. */
+  private final Map<String, Runnable> effects = new ConcurrentHashMap<>();
+
   /** Every call made, in order, so a test can assert what a body carried. */
   public final List<PeerCall> calls = new CopyOnWriteArrayList<>();
 
@@ -76,6 +79,7 @@ public class FakePeers extends PeerClient {
 
   public void reset() {
     script.clear();
+    effects.clear();
     calls.clear();
     gate = null;
     // Nothing deployed unless a test says so: GET /pins asks qits-deployments on every read and
@@ -87,6 +91,16 @@ public class FakePeers extends PeerClient {
   /** Scripts one answer. */
   public void answer(PeerTarget target, String path, Scripted scripted) {
     script.put(key(target, path), scripted);
+  }
+
+  /**
+   * Runs this on the caller's thread whenever a call reaches that target and path, before the
+   * scripted answer is returned: how a test makes a peer call back into this service SYNCHRONOUSLY,
+   * the way qits-projects re-folds a request and asks for its pre-run inside the join that moved it
+   * (qits-1226).
+   */
+  public void onCall(PeerTarget target, String path, Runnable effect) {
+    effects.put(key(target, path), effect);
   }
 
   /**
@@ -170,6 +184,10 @@ public class FakePeers extends PeerClient {
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
       }
+    }
+    Runnable effect = effects.get(key(target, path));
+    if (effect != null) {
+      effect.run();
     }
     Scripted scripted = script.get(key(target, path));
     if (scripted == null) {

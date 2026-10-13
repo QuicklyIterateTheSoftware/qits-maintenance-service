@@ -3,6 +3,8 @@ package eu.wohlben.qits.maintenance.automation;
 import static eu.wohlben.qits.maintenance.automation.AutomationFixture.CURRENT_POM;
 import static eu.wohlben.qits.maintenance.automation.AutomationFixture.EVENTSTREAM;
 import static eu.wohlben.qits.maintenance.automation.AutomationFixture.FOLD_A;
+import static eu.wohlben.qits.maintenance.automation.AutomationFixture.FOLD_B;
+import static eu.wohlben.qits.maintenance.automation.AutomationFixture.PUSHED;
 import static eu.wohlben.qits.maintenance.automation.AutomationFixture.REQUEST;
 import static eu.wohlben.qits.maintenance.automation.AutomationFixture.STALE_POM;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -13,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import eu.wohlben.qits.maintenance.api.Fixture;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
 import eu.wohlben.qits.maintenance.bump.BumpDispatcher;
+import eu.wohlben.qits.maintenance.bump.BumpService;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto.AutomationDto;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto;
 import eu.wohlben.qits.maintenance.entity.MtBump;
@@ -60,6 +63,8 @@ class UpstreamReplanTest {
   @Inject AutomationService automations;
 
   @Inject BumpDispatcher dispatcher;
+
+  @Inject BumpService bumps;
 
   @Inject ScanService scans;
 
@@ -383,6 +388,74 @@ class UpstreamReplanTest {
             .map(eu.wohlben.qits.maintenance.pending.Change::name)
             .toList(),
         "a main-only request carries no external upgrade");
+    assertTrue(
+        store.releaseRequest(MAIN_REQUEST).orElseThrow().withdrawnAt == null, "and is kept");
+  }
+
+  /**
+   * <b>A request whose bump COMMITTED is never withdrawn as nothing to bump</b> (qits-1226). The
+   * join is what makes qits-projects re-fold onto the bump's commit, and it asks for that fold's
+   * pre-run before the join returns: the fold already carries the bump, so its pre-run is FRESH.
+   * The committing row must already read SUCCEEDED by then — a row still RUNNING counted for
+   * nothing, and qits-workspace-oci-rr-59..66 were withdrawn carrying the pin they were opened for.
+   */
+  @Test
+  void aMainOnlyRequestWhoseBumpCommittedIsKeptThroughItsOwnRefold() {
+    store.recordOpenedRequest(
+        MAIN_REQUEST, Fixture.REPOSITORY, "main", MtReleaseRequest.MAIN_ONLY, List.of(),
+        Instant.now());
+    String branch = AutomationFixture.branch(DependencyBumpAutomation.KIND, MAIN_REQUEST);
+    Fixture.scriptForeignBranchAt(peers, branch, AutomationFixture.BEFORE);
+    scriptMainRequestSources(
+        "{\"kind\":\"BRANCH\",\"name\":\"main\"},"
+            + "{\"kind\":\"BRANCH\",\"name\":\"" + branch + "\"}");
+    String withdraw = Fixture.RELEASE_REQUESTS_PATH + "/" + MAIN_REQUEST + "/withdraw";
+    peers.answer(
+        PeerTarget.PROJECTS,
+        withdraw,
+        FakePeers.Scripted.ok(
+            "{\"request\":{\"id\":\"" + MAIN_REQUEST + "\",\"state\":\"WITHDRAWN\"}}"));
+    AutomationDto planned =
+        AutomationFixture.entry(
+            automations.trigger(
+                MAIN_REQUEST,
+                new AutomationService.Fold(
+                    Fixture.REPOSITORY, FOLD_A, null, null, List.of("main"), null, List.of())),
+            DependencyBumpAutomation.KIND);
+    queue.awaitIdle(Duration.ofSeconds(30));
+    UUID id = UUID.fromString(planned.bumpId());
+    assertEquals(BumpStatus.RUNNING.name(), store.bump(id).orElseThrow().status);
+
+    // The run pushes its commit; the fold that commit makes is current, and qits-projects asks for
+    // its pre-run INSIDE the join.
+    Fixture.scriptForeignBranchAt(peers, branch, PUSHED);
+    AutomationFixture.scriptManifests(peers, FOLD_B, CURRENT_POM, null);
+    ReleaseRequestAutomationsDto[] refold = new ReleaseRequestAutomationsDto[1];
+    AutomationFixture.scriptJoin(peers, MAIN_REQUEST, AutomationFixture.joined(MAIN_REQUEST));
+    peers.onCall(
+        PeerTarget.PROJECTS,
+        AutomationFixture.joinPath(MAIN_REQUEST),
+        () ->
+            refold[0] =
+                automations.trigger(
+                    MAIN_REQUEST,
+                    new AutomationService.Fold(
+                        Fixture.REPOSITORY, FOLD_B, FOLD_A, List.of("pom.xml"),
+                        List.of("main", branch), null,
+                        List.of("WAITING", "NOT_APPLICABLE"))));
+    Fixture.scriptRun(peers, RUN, "SUCCESS");
+
+    bumps.poll(id);
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    assertNotNull(refold[0], "the join asked for the re-fold's pre-run");
+    AutomationDto fresh = AutomationFixture.entry(refold[0], DependencyBumpAutomation.KIND);
+    assertEquals(AutomationState.FRESH.name(), fresh.state(), fresh.detail());
+    MtBump done = store.bump(id).orElseThrow();
+    assertEquals(BumpStatus.SUCCEEDED.name(), done.status, done.message);
+    assertEquals(PUSHED, done.resultSha);
+    assertTrue(done.message.contains("joined to release request"), done.message);
+    assertTrue(peers.bodiesFor(withdraw).isEmpty(), "never asked to withdraw");
     assertTrue(
         store.releaseRequest(MAIN_REQUEST).orElseThrow().withdrawnAt == null, "and is kept");
   }
