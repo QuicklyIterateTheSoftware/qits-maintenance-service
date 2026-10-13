@@ -73,13 +73,13 @@
              The url is a property so the image build can point it at the address the builder
              container can actually reach — see docker/Dockerfile and .qits-maven-settings.xml. -->
         <qits.db-core.version>2026.1002.70617</qits.db-core.version>
-        <qits.auth-core.version>2026.1002.70617</qits.auth-core.version>
+        <qits.auth-core.version>2026.1012.173247</qits.auth-core.version>
         <qits.arch-rules.version>2026.1011.185745</qits.arch-rules.version>
         <!-- Service-to-service HTTP that says who is calling: QitsHttpClients.wrap turns a raw
              java.net.http.HttpClient into one that opens a CLIENT span and sends traceparent plus
              X-Qits-Caller; the server filter (jandex-discovered off this jar alone) records an
              inbound caller on the server span. Not released yet (qits-1198). -->
-        <qits.http-core.version>2026.1011.185745</qits.http-core.version>
+        <qits.http-core.version>2026.1013.64811</qits.http-core.version>
         <!-- The user-story framework (test scope, service/ only). The five story classes under
              service/src/test/.../stories/ plus TokenValidationBootstrapIT are userflows, so a
              `mvn verify -DskipITs=false -Dit.test=<the list>` also regenerates
