@@ -1456,7 +1456,7 @@ public class AutomationService {
             .toList();
     if (history.isEmpty()
         || !BumpStatus.NOTHING_TO_DO.name().equals(history.getFirst().status)
-        || history.stream().anyMatch(row -> BumpStatus.SUCCEEDED.name().equals(row.status))) {
+        || MaintenanceStore.wroteABump(history)) {
       return false;
     }
     if (repository.catalogId == null || repository.catalogId.isBlank()) {

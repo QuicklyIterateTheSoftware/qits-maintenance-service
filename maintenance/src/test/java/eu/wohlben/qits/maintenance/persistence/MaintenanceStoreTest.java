@@ -794,4 +794,38 @@ class MaintenanceStoreTest {
         List.of(),
         at);
   }
+
+  // --- wroteABump -------------------------------------------------------------------------------
+
+  private static MtBump historyRow(BumpStatus status) {
+    MtBump row = new MtBump();
+    row.status = status.name();
+    return row;
+  }
+
+  /** A SUCCEEDED row anywhere in the history, not only the newest, is a bump that was written. */
+  @Test
+  void wroteABumpIsTrueWithASucceededRowEvenWhenANewerOneDidNothing() {
+    assertTrue(
+        MaintenanceStore.wroteABump(
+            List.of(historyRow(BumpStatus.NOTHING_TO_DO), historyRow(BumpStatus.SUCCEEDED))));
+  }
+
+  /**
+   * A SUPERSEDED row is never read as "wrote a bump" — only a GREEN run is kept SUCCEEDED, so a
+   * SUPERSEDED one never means a bump went through.
+   */
+  @Test
+  void wroteABumpIgnoresASupersededRow() {
+    assertFalse(
+        MaintenanceStore.wroteABump(
+            List.of(historyRow(BumpStatus.SUPERSEDED), historyRow(BumpStatus.NOTHING_TO_DO))));
+  }
+
+  /** No history, or history that never succeeded, wrote nothing. */
+  @Test
+  void wroteABumpIsFalseWithNoSucceededRow() {
+    assertFalse(MaintenanceStore.wroteABump(List.of()));
+    assertFalse(MaintenanceStore.wroteABump(List.of(historyRow(BumpStatus.NOTHING_TO_DO))));
+  }
 }
