@@ -5,6 +5,7 @@ import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
 import eu.wohlben.qits.maintenance.entity.MtLatest;
 import eu.wohlben.qits.maintenance.entity.MtPin;
 import eu.wohlben.qits.maintenance.githost.FileLookup;
+import eu.wohlben.qits.maintenance.latest.LatestResolver;
 import eu.wohlben.qits.maintenance.manifest.GitmodulesParser;
 import eu.wohlben.qits.maintenance.manifest.GroupConfig;
 import eu.wohlben.qits.maintenance.manifest.ManifestScanner;
@@ -21,7 +22,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
@@ -39,8 +39,10 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
  *       INTERNAL one, and in a wrapper not a gitlink (below). One store read, no git host.
  *   <li><b>Plans AT THE FOLD</b>, never at main: the fold's manifests are read through the scan's
  *       own discovery ({@link ManifestScanner#pinsAt}, the same parsers and the same {@code ignore:}),
- *       each pin is judged by the pending rule ({@link PendingChanges#newerVersion}) against {@code
- *       mt_latest}, and what is left after the fold's own {@code hold:} list is the change list.
+ *       each pin is judged by the pending rule ({@link PendingChanges#resolve}) against {@code
+ *       mt_latest} — a maven property several artifacts read decided once, at a version every one
+ *       of them has published (qits-1206) — and what is left after the fold's own {@code hold:}
+ *       list is the change list.
  *       Nothing behind is FRESH with no run — the loop's terminator, as estate pins' is: the
  *       re-fold this kind's own commit causes is planned again and finds nothing.
  *   <li><b>Writes</b> through the shared core's {@code automations/dependency-bump.yml}: the payload
@@ -99,6 +101,8 @@ public class DependencyBumpAutomation implements ReleaseRequestAutomation {
   @Inject MaintenanceConfig config;
 
   @Inject ManifestScanner scanner;
+
+  @Inject LatestResolver resolver;
 
   @ConfigProperty(name = SWITCH, defaultValue = "true")
   boolean enabled;
@@ -226,8 +230,7 @@ public class DependencyBumpAutomation implements ReleaseRequestAutomation {
 
     boolean wrapper = wrapper(subject);
     Map<String, MtLatest> latest = PendingChanges.index(store.allLatest());
-    List<Change> changes = new ArrayList<>();
-    List<String> held = new ArrayList<>();
+    List<MtPin> rows = new ArrayList<>();
     for (ParsedPin pin : read.pins()) {
       if (wrapper && pin.ecosystem() == Ecosystem.GITLINK) {
         continue;
@@ -236,23 +239,22 @@ public class DependencyBumpAutomation implements ReleaseRequestAutomation {
       if (kind != PinKind.INTERNAL) {
         continue;
       }
-      MtPin row = asRow(pin, kind);
-      Optional<String> newer = PendingChanges.newerVersion(row, latest);
-      if (newer.isEmpty()) {
-        continue;
-      }
-      if (declared.holds(pin.name())) {
-        held.add(pin.name());
-        continue;
-      }
-      changes.add(
-          new Change(
-              row.ecosystem, row.manifestPath, row.name, row.version, newer.get(), row.location));
+      rows.add(asRow(pin, kind));
     }
+    // A property several artifacts read is decided ONCE, against what every one of them has
+    // published (qits-1206): a content-addressed reactor's release uploads only the modules that
+    // changed, so one reader's latest can be a version its sibling was never uploaded at. Only such
+    // a property costs a registry read.
+    PendingChanges.Resolution resolution =
+        PendingChanges.resolve(rows, latest, declared::holds, resolver::published);
+    List<Change> changes = resolution.changes();
+    List<String> held = resolution.held();
+    List<String> blocked = resolution.blocked();
     if (changes.isEmpty()) {
       return Plan.fresh(
           "every internal pin at the fold names its latest"
-              + (held.isEmpty() ? "" : "; held by " + GroupConfig.PATH + ": " + held));
+              + (held.isEmpty() ? "" : "; held by " + GroupConfig.PATH + ": " + held)
+              + (blocked.isEmpty() ? "" : "; not moved: " + String.join("; ", blocked)));
     }
     return Plan.runs(
         List.of(new Plan.Run(null, changes, Map.of(COMMIT_PATHS, commitPaths(changes)))));

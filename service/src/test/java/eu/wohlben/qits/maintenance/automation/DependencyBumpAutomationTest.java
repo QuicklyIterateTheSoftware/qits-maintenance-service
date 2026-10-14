@@ -671,4 +671,106 @@ class DependencyBumpAutomationTest {
     paths.remove(EstatePinsAutomation.KIND);
     assertNull(AutomationService.clash(dependencyBump, plan, paths), "its own paths never clash");
   }
+
+  // --- a property several artifacts read (qits-1206) ----------------------------------------------
+
+  private static final String ARCH_RULES = "eu.wohlben.qits:qits-arch-rules";
+
+  private static final String DB_CORE = "eu.wohlben.qits:qits-db-core";
+
+  /** The property's value at the fold — arch-rules' latest as the fixture's scan records it. */
+  private static final String SHARED_V1 = "2026.822.1";
+
+  /** The release that uploaded arch-rules and, content-addressed, maybe not db-core. */
+  private static final String SHARED_V2 = "2026.1010.1";
+
+  /** A fold pom whose ONE property versions two artifacts of the same reactor. */
+  private static final String SHARED_POM =
+      "<project>\n"
+          + "  <groupId>eu.wohlben.qits</groupId>\n"
+          + "  <artifactId>qits-ci</artifactId>\n"
+          + "  <version>2026.821.1</version>\n"
+          + "  <properties>\n"
+          + "    <qits.integrations-quarkus.version>" + SHARED_V1
+          + "</qits.integrations-quarkus.version>\n"
+          + "  </properties>\n"
+          + "  <dependencies>\n"
+          + "    <dependency>\n"
+          + "      <groupId>eu.wohlben.qits</groupId>\n"
+          + "      <artifactId>qits-arch-rules</artifactId>\n"
+          + "      <version>${qits.integrations-quarkus.version}</version>\n"
+          + "    </dependency>\n"
+          + "    <dependency>\n"
+          + "      <groupId>eu.wohlben.qits</groupId>\n"
+          + "      <artifactId>qits-db-core</artifactId>\n"
+          + "      <version>${qits.integrations-quarkus.version}</version>\n"
+          + "    </dependency>\n"
+          + "  </dependencies>\n"
+          + "</project>\n";
+
+  /** arch-rules released at V2, db-core still at V1, and each registry listing as given. */
+  private void scriptSharedProperty(List<String> archRules, List<String> dbCore) {
+    store.recordLatestIfNewer(Ecosystem.MAVEN, ARCH_RULES, SHARED_V2, null, Instant.now());
+    store.recordLatestIfNewer(Ecosystem.MAVEN, DB_CORE, SHARED_V1, null, Instant.now());
+    peers.answer(
+        PeerTarget.MAVEN_REGISTRY,
+        "/eu/wohlben/qits/qits-arch-rules/maven-metadata.xml",
+        FakePeers.Scripted.ok(metadata(archRules)));
+    peers.answer(
+        PeerTarget.MAVEN_REGISTRY,
+        "/eu/wohlben/qits/qits-db-core/maven-metadata.xml",
+        FakePeers.Scripted.ok(metadata(dbCore)));
+    AutomationFixture.scriptManifests(peers, FOLD_A, SHARED_POM, null);
+  }
+
+  private static String metadata(List<String> versions) {
+    StringBuilder xml = new StringBuilder("<metadata><versioning><versions>");
+    for (String version : versions) {
+      xml.append("<version>").append(version).append("</version>");
+    }
+    return xml.append("</versions></versioning></metadata>").toString();
+  }
+
+  /**
+   * THE REPRODUCTION (qits-1206). The integrations reactor publishes content-addressed, so its V2
+   * uploaded arch-rules and not db-core. Planned per pin, arch-rules' latest moved the property both
+   * read and db-core's build failed on a version that was never uploaded. Now the property is not
+   * moved, nothing is sent, and the plan says why.
+   */
+  @Test
+  void aSharedPropertyIsNotMovedToAVersionOneReaderWasNeverPublishedAt() {
+    scriptSharedProperty(List.of(SHARED_V1, SHARED_V2), List.of(SHARED_V1));
+
+    AutomationDto bump =
+        AutomationFixture.entry(trigger(FOLD_A, null, null, ACCEPTS), DependencyBumpAutomation.KIND);
+
+    assertEquals(AutomationState.FRESH.name(), bump.state(), bump.detail());
+    assertTrue(
+        bump.detail()
+            .contains(
+                "property qits.integrations-quarkus.version: no version newer than " + SHARED_V1
+                    + " is published for every artifact reading it (" + ARCH_RULES + ", " + DB_CORE
+                    + ")"),
+        bump.detail());
+    assertTrue(
+        triggers().stream().noneMatch(body -> body.contains(DependencyBumpAutomation.KIND)),
+        "nothing is sent to qits-ci: " + triggers());
+  }
+
+  /** Both readers published at V2: the property moves, as ONE change for its one line. */
+  @Test
+  void aSharedPropertyEveryReaderWasPublishedAtMovesAsOneChange() {
+    scriptSharedProperty(List.of(SHARED_V1, SHARED_V2), List.of(SHARED_V1, SHARED_V2));
+    MtRepository repository = store.repository(Fixture.REPOSITORY).orElseThrow();
+
+    Plan plan = dependencyBump.plan(automations.subject(repository, REQUEST, FOLD_A, null, null));
+
+    assertEquals(Plan.Kind.RUN, plan.kind(), plan.reason());
+    assertEquals(
+        List.of(
+            new Change(
+                "maven", "pom.xml", ARCH_RULES, SHARED_V1, SHARED_V2,
+                "property:qits.integrations-quarkus.version")),
+        plan.runs().getFirst().changes());
+  }
 }

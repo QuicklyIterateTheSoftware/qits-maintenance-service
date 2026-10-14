@@ -10,6 +10,7 @@ import eu.wohlben.qits.maintenance.entity.MtLatest;
 import eu.wohlben.qits.maintenance.entity.MtPin;
 import eu.wohlben.qits.maintenance.entity.MtReleaseRequest;
 import eu.wohlben.qits.maintenance.entity.MtRepository;
+import eu.wohlben.qits.maintenance.latest.LatestResolver;
 import eu.wohlben.qits.maintenance.manifest.GroupConfig;
 import eu.wohlben.qits.maintenance.model.BumpStatus;
 import eu.wohlben.qits.maintenance.model.RepositoryStatus;
@@ -106,6 +107,9 @@ public class BumpDispatcher {
   @Inject ReleaseRequestClient releases;
 
   @Inject ArtifactGraph artifacts;
+
+  /** The version lists a shared maven property is decided against (qits-1206). */
+  @Inject LatestResolver resolver;
 
   /** The kind that writes the bump a main-only request is opened for. */
   @Inject DependencyBumpAutomation dependencyBump;
@@ -509,7 +513,8 @@ public class BumpDispatcher {
         continue;
       }
       List<MtPin> pins = store.pins(row.name);
-      List<Change> changes = PendingChanges.forGroup(pins, latest, groups, group);
+      List<Change> changes =
+          PendingChanges.forGroup(pins, latest, groups, group, resolver::published);
       if (changes.isEmpty()) {
         continue;
       }

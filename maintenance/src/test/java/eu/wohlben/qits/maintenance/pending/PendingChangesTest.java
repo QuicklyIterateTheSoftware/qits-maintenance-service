@@ -3,16 +3,20 @@ package eu.wohlben.qits.maintenance.pending;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 import eu.wohlben.qits.maintenance.entity.MtGroup;
 import eu.wohlben.qits.maintenance.latest.GitlinkSha;
 import eu.wohlben.qits.maintenance.entity.MtLatest;
 import eu.wohlben.qits.maintenance.entity.MtPin;
+import eu.wohlben.qits.maintenance.latest.PublishedLookup;
 import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.PinKind;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Predicate;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -77,6 +81,10 @@ class PendingChangesTest {
   private static final List<MtGroup> SPLIT =
       List.of(
           kindGroup("dependencies", 0, PinKind.INTERNAL), kindGroup("external", 1, PinKind.EXTERNAL));
+
+  /** A registry nobody may ask: a property one artifact reads is decided without one. */
+  private static final PublishedVersions NO_REGISTRY =
+      (ecosystem, kind, name) -> fail("no registry may be asked, and " + name + " was");
 
   @Test
   void aNewerVersionIsPendingAndCarriesTheFileAndTheLocation() {
@@ -210,12 +218,12 @@ class PendingChangesTest {
 
     assertEquals(
         List.of("eu.wohlben.qits:qits-eventstream", "qits/build-images/maven-base"),
-        PendingChanges.forGroup(pins, latest, SPLIT, "dependencies").stream()
+        PendingChanges.forGroup(pins, latest, SPLIT, "dependencies", NO_REGISTRY).stream()
             .map(Change::name)
             .toList());
     assertEquals(
         List.of("io.quarkus.platform:quarkus-bom", "@angular/core"),
-        PendingChanges.forGroup(pins, latest, SPLIT, "external").stream().map(Change::name).toList());
+        PendingChanges.forGroup(pins, latest, SPLIT, "external", NO_REGISTRY).stream().map(Change::name).toList());
     assertEquals(Map.of("dependencies", 2, "external", 2), PendingChanges.countByGroup(pins, latest, SPLIT));
   }
 
@@ -396,8 +404,210 @@ class PendingChangesTest {
             List.of(
                 latest(Ecosystem.NPM, "@angular/core", "21.1.0"),
                 latest(Ecosystem.NPM, "rxjs", "7.1.0")));
-    List<Change> angular = PendingChanges.forGroup(pins, latest, GROUPS, "angular");
+    List<Change> angular = PendingChanges.forGroup(pins, latest, GROUPS, "angular", NO_REGISTRY);
     assertEquals(1, angular.size());
     assertEquals("@angular/core", angular.get(0).name());
+  }
+
+  // --- a property several artifacts read (qits-1206) ----------------------------------------------
+
+  private static final String ARCH_RULES = "eu.wohlben.qits:qits-arch-rules";
+  private static final String DB_CORE = "eu.wohlben.qits:qits-db-core";
+  private static final String PROPERTY = "property:qits.integrations-quarkus.version";
+  private static final Predicate<String> NOTHING_HELD = name -> false;
+
+  /** One reader of the shared property, at its current value. */
+  private static MtPin reader(String name, String version) {
+    MtPin pin = pin(Ecosystem.MAVEN, name, version, "pom.xml", PinKind.INTERNAL);
+    pin.location = PROPERTY;
+    return pin;
+  }
+
+  /** A registry answering from a map, recording every name it was asked about. */
+  private static final class Registry implements PublishedVersions {
+    private final Map<String, List<String>> versions;
+    final List<String> asked = new ArrayList<>();
+
+    Registry(Map<String, List<String>> versions) {
+      this.versions = versions;
+    }
+
+    @Override
+    public PublishedLookup lookup(Ecosystem ecosystem, PinKind kind, String name) {
+      asked.add(name);
+      List<String> listed = versions.get(name);
+      return listed == null
+          ? PublishedLookup.failed("http://registry/" + name, "HTTP 503")
+          : PublishedLookup.found(listed, "http://registry/" + name);
+    }
+  }
+
+  private static List<MtPin> sharedReaders() {
+    return List.of(reader(ARCH_RULES, "1.0.1"), reader(DB_CORE, "1.0.1"));
+  }
+
+  /**
+   * THE REPRODUCTION. arch-rules was released at 1.0.2 and db-core's content did not change, so
+   * the content-addressed publish never uploaded db-core at 1.0.2. Moving the property would move
+   * db-core to a version that does not exist — so the property does not move, and says why.
+   */
+  @Test
+  void aSharedPropertyDoesNotMoveToAVersionOneOfItsReadersWasNeverPublishedAt() {
+    Map<String, MtLatest> latest =
+        PendingChanges.index(
+            List.of(latest(Ecosystem.MAVEN, ARCH_RULES, "1.0.2"), latest(Ecosystem.MAVEN, DB_CORE, "1.0.1")));
+    Registry registry =
+        new Registry(Map.of(ARCH_RULES, List.of("1.0.1", "1.0.2"), DB_CORE, List.of("1.0.1")));
+
+    PendingChanges.Resolution resolution =
+        PendingChanges.resolve(sharedReaders(), latest, NOTHING_HELD, registry);
+
+    assertTrue(resolution.planned().isEmpty(), resolution.toString());
+    assertEquals(
+        List.of(
+            "property qits.integrations-quarkus.version: no version newer than 1.0.1 is published"
+                + " for every artifact reading it (" + ARCH_RULES + ", " + DB_CORE + ")"),
+        resolution.blocked());
+    assertTrue(PendingChanges.forGroup(sharedReaders(), latest, SPLIT, "dependencies", registry).isEmpty());
+  }
+
+  @Test
+  void aSharedPropertyEveryReaderHasAtTheNewVersionMovesOnceForAll() {
+    Map<String, MtLatest> latest =
+        PendingChanges.index(
+            List.of(latest(Ecosystem.MAVEN, ARCH_RULES, "1.0.2"), latest(Ecosystem.MAVEN, DB_CORE, "1.0.2")));
+    Registry registry =
+        new Registry(
+            Map.of(ARCH_RULES, List.of("1.0.1", "1.0.2"), DB_CORE, List.of("1.0.1", "1.0.2")));
+
+    List<Change> changes =
+        PendingChanges.forGroup(sharedReaders(), latest, SPLIT, "dependencies", registry);
+
+    assertEquals(
+        List.of(new Change("maven", "pom.xml", ARCH_RULES, "1.0.1", "1.0.2", PROPERTY)), changes,
+        "one change for the one line, keyed to the first reader by name");
+  }
+
+  /**
+   * The target is the highest version COMMON to the readers, not the newest of any one — and
+   * db-core, behind by its own latest or not, constrains it all the same.
+   */
+  @Test
+  void aSharedPropertyMovesToTheHighestVersionEveryReaderHasPublished() {
+    Map<String, MtLatest> latest =
+        PendingChanges.index(
+            List.of(latest(Ecosystem.MAVEN, ARCH_RULES, "1.0.3"), latest(Ecosystem.MAVEN, DB_CORE, "1.0.2")));
+    Registry registry =
+        new Registry(
+            Map.of(
+                ARCH_RULES, List.of("1.0.1", "1.0.2", "1.0.3"),
+                DB_CORE, List.of("1.0.1", "1.0.2")));
+
+    PendingChanges.Resolution resolution =
+        PendingChanges.resolve(sharedReaders(), latest, NOTHING_HELD, registry);
+
+    assertEquals(
+        List.of(new Change("maven", "pom.xml", ARCH_RULES, "1.0.1", "1.0.2", PROPERTY)),
+        resolution.changes());
+    assertTrue(resolution.blocked().isEmpty());
+  }
+
+  @Test
+  void aSharedPropertyIsNotMovedToAPrereleaseEveryReaderHas() {
+    Map<String, MtLatest> latest =
+        PendingChanges.index(
+            List.of(latest(Ecosystem.MAVEN, ARCH_RULES, "1.0.2"), latest(Ecosystem.MAVEN, DB_CORE, "1.0.1")));
+    Registry registry =
+        new Registry(
+            Map.of(
+                ARCH_RULES, List.of("1.0.1", "1.0.2", "1.1.0-SNAPSHOT"),
+                DB_CORE, List.of("1.0.1", "1.1.0-SNAPSHOT")));
+
+    PendingChanges.Resolution resolution =
+        PendingChanges.resolve(sharedReaders(), latest, NOTHING_HELD, registry);
+
+    assertTrue(resolution.planned().isEmpty(), resolution.toString());
+    assertEquals(1, resolution.blocked().size());
+  }
+
+  @Test
+  void aSharedPropertyWhosePublishedVersionsCannotBeReadIsNotMoved() {
+    Map<String, MtLatest> latest =
+        PendingChanges.index(
+            List.of(latest(Ecosystem.MAVEN, ARCH_RULES, "1.0.2"), latest(Ecosystem.MAVEN, DB_CORE, "1.0.2")));
+    Registry registry = new Registry(Map.of(ARCH_RULES, List.of("1.0.1", "1.0.2")));
+
+    PendingChanges.Resolution resolution =
+        PendingChanges.resolve(sharedReaders(), latest, NOTHING_HELD, registry);
+
+    assertTrue(resolution.planned().isEmpty());
+    assertEquals(
+        List.of(
+            "property qits.integrations-quarkus.version: the published versions of " + DB_CORE
+                + " could not be read: HTTP 503"),
+        resolution.blocked());
+  }
+
+  @Test
+  void holdingOneReaderOfASharedPropertyHoldsTheProperty() {
+    Map<String, MtLatest> latest =
+        PendingChanges.index(
+            List.of(latest(Ecosystem.MAVEN, ARCH_RULES, "1.0.2"), latest(Ecosystem.MAVEN, DB_CORE, "1.0.2")));
+    Registry registry =
+        new Registry(
+            Map.of(ARCH_RULES, List.of("1.0.1", "1.0.2"), DB_CORE, List.of("1.0.1", "1.0.2")));
+
+    PendingChanges.Resolution resolution =
+        PendingChanges.resolve(sharedReaders(), latest, DB_CORE::equals, registry);
+
+    assertTrue(resolution.planned().isEmpty());
+    assertEquals(List.of(ARCH_RULES, DB_CORE), resolution.held());
+    assertTrue(registry.asked.isEmpty(), "a held property asks no registry");
+  }
+
+  @Test
+  void aSharedPropertyNoReaderIsBehindOnAsksNothing() {
+    Map<String, MtLatest> latest =
+        PendingChanges.index(
+            List.of(latest(Ecosystem.MAVEN, ARCH_RULES, "1.0.1"), latest(Ecosystem.MAVEN, DB_CORE, "1.0.1")));
+
+    PendingChanges.Resolution resolution =
+        PendingChanges.resolve(sharedReaders(), latest, NOTHING_HELD, NO_REGISTRY);
+
+    assertTrue(resolution.planned().isEmpty());
+    assertTrue(resolution.blocked().isEmpty());
+  }
+
+  /** A property ONE artifact reads is the per-pin rule exactly, and asks no registry. */
+  @Test
+  void aPropertyOneArtifactReadsIsDecidedAsBeforeWithoutARegistry() {
+    MtPin pin = reader(ARCH_RULES, "1.0.1");
+    Map<String, MtLatest> latest =
+        PendingChanges.index(List.of(latest(Ecosystem.MAVEN, ARCH_RULES, "1.0.2")));
+
+    assertEquals(
+        List.of(new Change("maven", "pom.xml", ARCH_RULES, "1.0.1", "1.0.2", PROPERTY)),
+        PendingChanges.forGroup(List.of(pin), latest, SPLIT, "dependencies", NO_REGISTRY));
+    // Two modules repeating the same reader are still one reader, and still ask nothing.
+    assertFalse(
+        PendingChanges.resolve(List.of(pin, reader(ARCH_RULES, "1.0.1")), latest, NOTHING_HELD, NO_REGISTRY)
+            .planned()
+            .isEmpty());
+  }
+
+  /** The same property name in two manifests is two lines, and neither is shared. */
+  @Test
+  void theSamePropertyInTwoManifestsIsNotShared() {
+    MtPin other = reader(DB_CORE, "1.0.1");
+    other.manifestPath = "other/pom.xml";
+    Map<String, MtLatest> latest =
+        PendingChanges.index(
+            List.of(latest(Ecosystem.MAVEN, ARCH_RULES, "1.0.2"), latest(Ecosystem.MAVEN, DB_CORE, "1.0.2")));
+
+    assertEquals(
+        2,
+        PendingChanges.forGroup(
+                List.of(reader(ARCH_RULES, "1.0.1"), other), latest, SPLIT, "dependencies", NO_REGISTRY)
+            .size());
   }
 }

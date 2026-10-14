@@ -119,6 +119,35 @@ public class LatestResolver {
   }
 
   /**
+   * Every version a registry lists for one dependency — maven only, the one ecosystem whose
+   * properties are shared between artifacts.
+   *
+   * <p>Asked by the bump planners for a {@code ${property}} more than one artifact of the same
+   * manifest reads (qits-1206): moving that property moves every one of them, so the target has to
+   * be a version that EACH of them was published at, and only the full list says that. Asked only
+   * for such a property, never per pin — a property one artifact reads is decided by its latest
+   * row exactly as before.
+   *
+   * <p><b>Nothing throws out of here either</b>, for the reason {@link #resolve} gives.
+   */
+  public PublishedLookup published(Ecosystem ecosystem, PinKind kind, String name) {
+    if (ecosystem != Ecosystem.MAVEN) {
+      return PublishedLookup.failed(
+          null, "only maven versions are listed here; " + ecosystem.wireName() + " was asked");
+    }
+    if (name == null || name.isBlank() || !ADDRESSABLE.matcher(name).matches()) {
+      return PublishedLookup.failed(
+          null, "'" + name + "' is not a name this service can address; nothing was asked");
+    }
+    try {
+      return publishedMaven(kind, name);
+    } catch (RuntimeException e) {
+      LOG.warnf("The published versions of %s could not be read: %s", name, e.toString());
+      return PublishedLookup.failed(null, "the lookup failed: " + e);
+    }
+  }
+
+  /**
    * {@code maven-metadata.xml}, and the versions list rather than the {@code <latest>} element.
    *
    * <p>The document's own {@code <latest>} is whatever the last deploy wrote and can name a
@@ -127,9 +156,22 @@ public class LatestResolver {
    * resolver would apply.
    */
   private LatestLookup maven(PinKind kind, String name) {
+    PublishedLookup published = publishedMaven(kind, name);
+    if (!published.ok()) {
+      return LatestLookup.failed(published.sourceUrl(), published.error());
+    }
+    return pick(Ecosystem.MAVEN, published.versions(), published.sourceUrl());
+  }
+
+  /**
+   * The {@code <versions>} of one artifact's {@code maven-metadata.xml}, from qits-artifacts for an
+   * INTERNAL artifact and through the mirror for an external one. The one reader of that document,
+   * shared by {@link #maven} and {@link #published}.
+   */
+  private PublishedLookup publishedMaven(PinKind kind, String name) {
     int colon = name.indexOf(':');
     if (colon <= 0 || colon == name.length() - 1) {
-      return LatestLookup.failed(null, "'" + name + "' is not a groupId:artifactId");
+      return PublishedLookup.failed(null, "'" + name + "' is not a groupId:artifactId");
     }
     String groupPath = name.substring(0, colon).replace('.', '/');
     String artifactId = name.substring(colon + 1);
@@ -139,16 +181,16 @@ public class LatestResolver {
     String url = exchange.call().url();
     PeerAnswer answer = exchange.answer();
     if (!answer.ok()) {
-      return LatestLookup.failed(url, answer.failure());
+      return PublishedLookup.failed(url, answer.failure());
     }
     Element metadata = Xml.root(answer.body());
     if (metadata == null) {
-      return LatestLookup.failed(url, "the metadata document did not parse");
+      return PublishedLookup.failed(url, "the metadata document did not parse");
     }
     Element versioning = Xml.child(metadata, "versioning");
     Element versions = versioning == null ? null : Xml.child(versioning, "versions");
     if (versions == null) {
-      return LatestLookup.failed(url, "the metadata document carries no versions");
+      return PublishedLookup.failed(url, "the metadata document carries no versions");
     }
     List<String> published = new ArrayList<>();
     for (Element version : Xml.children(versions, "version")) {
@@ -157,7 +199,7 @@ public class LatestResolver {
         published.add(value);
       }
     }
-    return pick(Ecosystem.MAVEN, published, url);
+    return PublishedLookup.found(published, url);
   }
 
   /**
