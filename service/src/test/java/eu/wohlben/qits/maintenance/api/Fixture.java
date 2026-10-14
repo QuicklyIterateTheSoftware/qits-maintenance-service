@@ -297,6 +297,15 @@ public final class Fixture {
   }
 
   /**
+   * …and the same branch NOT THERE: a 404 on the root tree, which the reader answers GONE. Unlike
+   * {@link #scriptForeignBranchUnreachable}, that is a fact about the branch (qits-206).
+   */
+  public static void scriptForeignBranchGone(FakePeers peers, String branch) {
+    peers.answer(
+        PeerTarget.GITHOST, TREE + branch.replace("/", "%2F"), FakePeers.Scripted.status(404, ""));
+  }
+
+  /**
    * The repositories that publish the fixture's internal coordinates, as the release events would
    * have recorded them — the {@code ArtifactGraph.producers()} a bump's changelog ranges read
    * (qits-893). Without them every internal change of {@link #scriptScan}'s pins has no source

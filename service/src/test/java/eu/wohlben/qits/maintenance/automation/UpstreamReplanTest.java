@@ -459,4 +459,60 @@ class UpstreamReplanTest {
     assertTrue(
         store.releaseRequest(MAIN_REQUEST).orElseThrow().withdrawnAt == null, "and is kept");
   }
+
+  /**
+   * <b>A head that could not be read is not "nothing to bump"</b> (qits-206). It used to end the
+   * green run FRESH, and a main-only request whose bump had in fact been pushed was withdrawn as
+   * carrying nothing. The row stays RUNNING and nothing is withdrawn; the next poll, with the head
+   * readable, finds the push and joins it.
+   */
+  @Test
+  void aMainOnlyRequestIsNotWithdrawnOnAnUnreadableHead() {
+    store.recordOpenedRequest(
+        MAIN_REQUEST, Fixture.REPOSITORY, "main", MtReleaseRequest.MAIN_ONLY, List.of(),
+        Instant.now());
+    String branch = AutomationFixture.branch(DependencyBumpAutomation.KIND, MAIN_REQUEST);
+    Fixture.scriptForeignBranchAt(peers, branch, AutomationFixture.BEFORE);
+    scriptMainRequestSources("{\"kind\":\"BRANCH\",\"name\":\"main\"}");
+    String withdraw = Fixture.RELEASE_REQUESTS_PATH + "/" + MAIN_REQUEST + "/withdraw";
+    peers.answer(
+        PeerTarget.PROJECTS,
+        withdraw,
+        FakePeers.Scripted.ok(
+            "{\"request\":{\"id\":\"" + MAIN_REQUEST + "\",\"state\":\"WITHDRAWN\"}}"));
+    AutomationDto planned =
+        AutomationFixture.entry(
+            automations.trigger(
+                MAIN_REQUEST,
+                new AutomationService.Fold(
+                    Fixture.REPOSITORY, FOLD_A, null, null, List.of("main"), null, List.of())),
+            DependencyBumpAutomation.KIND);
+    queue.awaitIdle(Duration.ofSeconds(30));
+    UUID id = UUID.fromString(planned.bumpId());
+    assertEquals(BumpStatus.RUNNING.name(), store.bump(id).orElseThrow().status);
+
+    // The run pushes, and the git host fails the one read that would have seen it.
+    Fixture.scriptForeignBranchUnreachable(peers, branch);
+    Fixture.scriptRun(peers, RUN, "SUCCESS");
+    bumps.poll(id);
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    MtBump waiting = store.bump(id).orElseThrow();
+    assertEquals(BumpStatus.RUNNING.name(), waiting.status, waiting.message);
+    assertTrue(peers.bodiesFor(withdraw).isEmpty(), "never asked to withdraw");
+    assertTrue(
+        store.releaseRequest(MAIN_REQUEST).orElseThrow().withdrawnAt == null, "and is kept");
+    assertTrue(peers.bodiesFor(AutomationFixture.joinPath(MAIN_REQUEST)).isEmpty());
+
+    Fixture.scriptForeignBranchAt(peers, branch, PUSHED);
+    AutomationFixture.scriptJoin(peers, MAIN_REQUEST, AutomationFixture.joined(MAIN_REQUEST));
+    bumps.poll(id);
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    MtBump done = store.bump(id).orElseThrow();
+    assertEquals(BumpStatus.SUCCEEDED.name(), done.status, done.message);
+    assertEquals(PUSHED, done.resultSha);
+    assertEquals(1, peers.bodiesFor(AutomationFixture.joinPath(MAIN_REQUEST)).size());
+    assertTrue(peers.bodiesFor(withdraw).isEmpty(), "still never asked to withdraw");
+  }
 }

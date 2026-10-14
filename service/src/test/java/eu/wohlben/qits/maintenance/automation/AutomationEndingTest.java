@@ -119,6 +119,94 @@ class AutomationEndingTest {
     assertTrue(peers.bodiesFor(AutomationFixture.joinPath(REQUEST)).isEmpty(), "nothing to join");
   }
 
+  /**
+   * <b>A branch that is not there is a fact</b> (qits-206): no start head and no head after, so the
+   * run created nothing — FRESH, exactly as an unmoved branch is.
+   */
+  @Test
+  void aBranchThatIsGoneBeforeAndAfterIsFresh() {
+    Fixture.scriptForeignBranchGone(peers, AutomationFixture.branch(REQUEST));
+    UUID id = running();
+    assertNull(store.bump(id).orElseThrow().resultSha, "no branch, no start head");
+
+    MtBump done = end(id, "SUCCESS");
+
+    assertEquals(BumpStatus.NOTHING_TO_DO.name(), done.status, done.message);
+    assertTrue(done.message.startsWith("unchanged"), done.message);
+    assertEquals(AutomationState.FRESH.name(), entry().state());
+    assertTrue(peers.bodiesFor(AutomationFixture.joinPath(REQUEST)).isEmpty(), "nothing to join");
+  }
+
+  /**
+   * <b>A head the git host would not give after a green run is no verdict</b> (qits-206). It used to
+   * read as "did not move", which stranded a pushed commit FRESH and unjoined. The row stays RUNNING
+   * with its start head and says why, and the next poll — the head readable again — writes the
+   * verdict the push earned, joining it exactly once.
+   */
+  @Test
+  void anUnreadableHeadAfterAGreenRunWaitsForTheNextPoll() {
+    UUID id = running();
+    Fixture.scriptForeignBranchUnreachable(peers, AutomationFixture.branch(REQUEST));
+
+    MtBump waiting = end(id, "SUCCESS");
+
+    assertEquals(BumpStatus.RUNNING.name(), waiting.status, waiting.message);
+    assertTrue(waiting.message.startsWith(AutomationService.HEAD_UNREADABLE), waiting.message);
+    assertEquals(BEFORE, waiting.resultSha, "the start head is kept for the next comparison");
+    assertNull(waiting.finishedAt);
+    assertTrue(peers.bodiesFor(AutomationFixture.joinPath(REQUEST)).isEmpty(), "nothing joined");
+
+    Fixture.scriptForeignBranchAt(peers, AutomationFixture.branch(REQUEST), PUSHED);
+    MtBump done = end(id, "SUCCESS");
+
+    assertEquals(BumpStatus.SUCCEEDED.name(), done.status, done.message);
+    assertEquals(PUSHED, done.resultSha);
+    assertTrue(done.message.contains("joined to release request " + REQUEST), done.message);
+    assertEquals(AutomationState.COMMITTED.name(), entry().state());
+    assertEquals(1, peers.bodiesFor(AutomationFixture.joinPath(REQUEST)).size(), "joined once");
+  }
+
+  /**
+   * <b>A start head that could not be read sends nothing</b> (qits-206). Stored as "no branch", a run
+   * that wrote nothing onto a branch already at BEFORE would end at BEFORE and read as a push. The
+   * row stays REQUESTED and says why; once the head is readable, the next dispatch sends it.
+   */
+  @Test
+  void anUnreadableStartHeadLeavesTheRowRequested() {
+    String branch = AutomationFixture.branch(REQUEST);
+    Fixture.scriptForeignBranchUnreachable(peers, branch);
+    AutomationDto entry =
+        automations
+            .trigger(
+                REQUEST,
+                new AutomationService.Fold(
+                    Fixture.REPOSITORY, FOLD_A, null, null, List.of("work"), "qits-998"))
+            .automations()
+            .stream().filter(AutomationFixture::screenshots).findFirst().orElseThrow();
+    queue.awaitIdle(Duration.ofSeconds(30));
+    UUID id = UUID.fromString(entry.bumpId());
+
+    MtBump waiting = store.bump(id).orElseThrow();
+    assertEquals(BumpStatus.REQUESTED.name(), waiting.status, waiting.message);
+    assertTrue(waiting.message.startsWith(AutomationService.HEAD_UNREADABLE), waiting.message);
+    assertNull(waiting.resultSha);
+    assertTrue(
+        peers.bodiesFor(eu.wohlben.qits.maintenance.bump.CiClient.TRIGGER_PATH).isEmpty(),
+        "no run was sent");
+
+    Fixture.scriptForeignBranchAt(peers, branch, BEFORE);
+    automations.dispatch(id);
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    MtBump sent = store.bump(id).orElseThrow();
+    assertEquals(BumpStatus.RUNNING.name(), sent.status, sent.message);
+    assertEquals(BEFORE, sent.resultSha);
+    assertEquals(1, peers.bodiesFor(eu.wohlben.qits.maintenance.bump.CiClient.TRIGGER_PATH).size());
+
+    MtBump done = end(id, "SUCCESS");
+    assertEquals(BumpStatus.NOTHING_TO_DO.name(), done.status, "unmoved from a head that was read");
+  }
+
   @Test
   void aMovedBranchIsJoinedAndCommitted() {
     UUID id = running();

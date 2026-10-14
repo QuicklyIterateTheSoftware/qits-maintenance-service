@@ -20,6 +20,7 @@ import eu.wohlben.qits.maintenance.error.BumpDisabledException;
 import eu.wohlben.qits.maintenance.error.NoSuchAutomationException;
 import eu.wohlben.qits.maintenance.error.NoSuchRepositoryException;
 import eu.wohlben.qits.maintenance.error.ReleaseRequestNotOpenException;
+import eu.wohlben.qits.maintenance.githost.FileLookup;
 import eu.wohlben.qits.maintenance.githost.GitHostReader;
 import eu.wohlben.qits.maintenance.githost.TreeLookup;
 import eu.wohlben.qits.maintenance.model.BumpMode;
@@ -119,6 +120,11 @@ import org.jboss.logging.Logger;
  * left. Red is FAILED, and FAILED HOLDS the request: a push re-folds it, the re-run door retries it,
  * a person may waive it.
  *
+ * <p><b>An OWN_BRANCH head the git host would not give is not a head</b> (qits-206). The comparison
+ * needs both ends to be facts — a branch at a sha, or no such branch — so an unreachable read at
+ * either end decides nothing: at the dispatch the row stays REQUESTED and is sent again, and at the
+ * ending a green run stays RUNNING and the next poll reads the head again.
+ *
  * <p><b>A green outcome is recorded against its OWN fold even when the request has moved on</b>,
  * because the commonest mover is the run itself: estate pins push onto a source branch, and once a
  * kind's own branch is a source of the request every later run's push re-folds it before the poll
@@ -159,6 +165,12 @@ public class AutomationService {
 
   /** What a tripped breaker says, and what keeps it tripped on the next automation-only fold. */
   public static final String NOT_CONVERGING = "not converging after " + BREAKER_COMMITS + " commits";
+
+  /**
+   * What a row says while its own branch's head cannot be read (qits-206) — before its run, which is
+   * then sent again, or after a green one, whose verdict the next poll writes.
+   */
+  public static final String HEAD_UNREADABLE = "the head of the automation's branch could not be read";
 
   /** A release request id as qits-projects mints it. */
   private static final Pattern REQUEST_ID =
@@ -947,6 +959,12 @@ public class AutomationService {
    * An own-branch run on qits-ci's shared core. The branch head is read first: nothing else writes
    * {@code maintenance/automations/<kind>/<request>}, so the ending can tell a run that pushed from
    * one that found nothing to write.
+   *
+   * <p><b>A head that could not be read sends nothing</b> (qits-206). Stored as "no branch" it would
+   * be a start the ending compares against: the branch already at X, a run that wrote nothing, and
+   * an after-head of X read as a push — COMMITTED and joined for a commit the run never made. The
+   * row stays REQUESTED, as it does on an unreadable docs store, and the bump sweep or the next
+   * ending sends it again. A branch the git host says does not exist is a fact, and starts at null.
    */
   private void dispatchOwnBranch(
       MtBump row, ReleaseRequestAutomation kind, MtRepository repository) {
@@ -981,7 +999,20 @@ public class AutomationService {
       }
       changelogs = resolved.get();
     }
-    store.bumpStartHead(row.id, branchHead(repository, row.branch));
+    TreeLookup start = headOf(repository, row.branch);
+    if (start.status() == FileLookup.Status.UNREACHABLE) {
+      store.bumpFinished(
+          row.id,
+          BumpStatus.REQUESTED,
+          null,
+          HEAD_UNREADABLE + " before the run (" + start.message()
+              + "); the automation will be sent again",
+          Instant.now());
+      LOG.infof("The automation %s waits: the head of %s could not be read: %s", row.id,
+          row.branch, start.message());
+      return;
+    }
+    store.bumpStartHead(row.id, start.found() ? start.headSha() : null);
     AutomationSubject subject =
         subject(
             repository, row.releaseRequestId, row.foldSha, List.of(), row.workItem, baseRef,
@@ -1219,7 +1250,10 @@ public class AutomationService {
     } else {
       finishSourceBranch(row, repository, ciRunStatus, now);
     }
-    // An ending frees a slot, and the newest waiting fold of this request may be behind it.
+    // An ending frees a slot, and the newest waiting fold of this request may be behind it. A green
+    // own-branch run whose head could not be read did not end (qits-206) and frees nothing — it is
+    // still RUNNING, so it still holds its branch and its share of MAX_RUNNING — and the dispatch
+    // this asks for then declines exactly as it would have before the run went green.
     queue.submit("dispatch the waiting automations", this::dispatchWaiting);
   }
 
@@ -1255,11 +1289,33 @@ public class AutomationService {
    * qits-projects refuses fails the outcome with its reason; one it did not answer leaves it
    * COMMITTED with the reason on the row — the commit is on the branch, and joining by hand adds it.
    * A moved branch is written COMMITTED before the join is sent, never after (qits-1226).
+   *
+   * <p><b>An unreadable head is no verdict at all</b> (qits-206). It used to read as "did not move":
+   * the git host failing the one read after a green run that DID push left the commit stranded on
+   * the branch — FRESH, never joined — and, for {@code dependency-bump}, withdrew a main-only
+   * request as having nothing to bump. The row stays RUNNING with {@link #HEAD_UNREADABLE} as its
+   * sentence, and the poll, which only follows RUNNING rows, calls this again and reads the head
+   * again — the rule it already keeps for a ci run it could not read. A branch that is GONE is a
+   * fact: with no start head either, the run never created it, which is unmoved.
    */
   private void finishOwnBranch(
       MtBump row, String label, Optional<MtRepository> repository, String ciRunStatus,
       Instant now) {
-    String after = repository.map(repo -> branchHead(repo, row.branch)).orElse(null);
+    TreeLookup read = repository.map(repo -> headOf(repo, row.branch)).orElse(null);
+    if (read != null && read.status() == FileLookup.Status.UNREACHABLE) {
+      // Not an ending: RUNNING, the start head untouched, nothing joined and nothing withdrawn.
+      store.bumpFinished(
+          row.id,
+          BumpStatus.RUNNING,
+          ciRunStatus,
+          HEAD_UNREADABLE + " after the run passed (" + read.message()
+              + "); the next poll reads it again",
+          now);
+      LOG.infof("The %s automation %s of %s passed and the head of %s could not be read: %s",
+          row.automationKind, row.id, row.repository, row.branch, read.message());
+      return;
+    }
+    String after = read != null && read.found() ? read.headSha() : null;
     String before = row.resultSha;
     if (after == null || after.equals(before)) {
       store.bumpFinished(
@@ -1950,8 +2006,18 @@ public class AutomationService {
     }
   }
 
+  /**
+   * The branch's head as the git host answered it (qits-206): FOUND and GONE are facts about the
+   * branch, UNREACHABLE is a fact about the git host — which is why an own-branch comparison reads
+   * this and never {@link #branchHead}.
+   */
+  private TreeLookup headOf(MtRepository repository, String branch) {
+    return gitHost.head(repository.project, repository.name, branch);
+  }
+
+  /** The branch's head, or null when there is none or it could not be read — a reporting read. */
   private String branchHead(MtRepository repository, String branch) {
-    TreeLookup lookup = gitHost.head(repository.project, repository.name, branch);
+    TreeLookup lookup = headOf(repository, branch);
     return lookup.found() ? lookup.headSha() : null;
   }
 
