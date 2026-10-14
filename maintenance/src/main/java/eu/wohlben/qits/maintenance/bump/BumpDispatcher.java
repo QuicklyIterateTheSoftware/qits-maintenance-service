@@ -408,8 +408,11 @@ public class BumpDispatcher {
   /**
    * Whether a repository owed a bump is HELD: it has ANY open release request — whose pre-run
    * carries the bump, and which the upstream hook re-plans — or the main-only request this service
-   * last opened for the same pending set is on its way, shipped, or was withdrawn because its
-   * pre-run found nothing to write. A person's withdrawal frees it; an unreadable answer holds.
+   * last opened for the same pending set is on its way, shipped, or was withdrawn with no bump
+   * anywhere in its history. A withdrawal that DID write one does not hold (qits-1173): before
+   * qits-1226 a request was withdrawn as "nothing to bump" by the re-fold onto its own bump commit,
+   * and that memo held the repository on the same pending set for good. A person's withdrawal frees
+   * it; an unreadable answer holds.
    */
   private boolean held(MtRepository row, List<Change> pending) {
     if (row.catalogId == null || row.catalogId.isBlank()) {
@@ -424,10 +427,11 @@ public class BumpDispatcher {
     if (newest.isEmpty() || !sameChanges(storedChanges(newest.get().changes), pending)) {
       return false;
     }
-    if (newest.get().withdrawnAt != null) {
-      return true;
-    }
     String requestId = newest.get().requestId;
+    if (newest.get().withdrawnAt != null) {
+      return !MaintenanceStore.wroteABump(
+          store.automationHistory(requestId, DependencyBumpAutomation.KIND));
+    }
     Instant now = Instant.now();
     Seen seen = releaseStates.get(requestId);
     ReleaseRequestClient.ReleaseState state;

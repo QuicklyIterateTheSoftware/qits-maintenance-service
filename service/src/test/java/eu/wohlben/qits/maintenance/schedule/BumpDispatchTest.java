@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.maintenance.api.Fixture;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
+import eu.wohlben.qits.maintenance.automation.DependencyBumpAutomation;
 import eu.wohlben.qits.maintenance.automation.EstatePinsAutomation;
 import eu.wohlben.qits.maintenance.bump.BumpDispatcher;
 import eu.wohlben.qits.maintenance.bump.BumpOrder;
@@ -240,6 +241,60 @@ class BumpDispatchTest {
 
     assertTrue(dispatcher.tick().isEmpty());
     assertEquals(1, asks(Fixture.CATALOG_ID));
+  }
+
+  /**
+   * <b>A withdrawal that carried a bump does not hold the repository</b> (qits-1173). The
+   * dependency-bump history here is exactly what the qits-1226 bug left behind: a SUCCEEDED row
+   * from an earlier fold, then a NOTHING_TO_DO row the pre-run's last fold ended on, which is what
+   * the withdrawal read as "nothing to bump". The row DID write one, so the withdrawal must not
+   * hold — the repository is asked again, not held on the same pending set for ever.
+   */
+  @Test
+  void aWithdrawalThatCarriedABumpDoesNotHoldTheRepository() {
+    Fixture.scriptCiQueueEmpty(peers);
+    UUID id = only(dispatcher.tick());
+    String branch = "maintenance/automations/" + id;
+    store.openAutomation(
+        new MaintenanceStore.AutomationOpening(
+            Fixture.REPOSITORY,
+            DependencyBumpAutomation.KIND,
+            id.toString(),
+            null,
+            null,
+            null,
+            branch,
+            null,
+            "dev",
+            BumpTrigger.MANUAL,
+            List.of(),
+            Map.of(),
+            BumpStatus.SUCCEEDED,
+            "wrote a bump"),
+        false,
+        Instant.now());
+    store.openAutomation(
+        new MaintenanceStore.AutomationOpening(
+            Fixture.REPOSITORY,
+            DependencyBumpAutomation.KIND,
+            id.toString(),
+            null,
+            null,
+            null,
+            branch,
+            null,
+            "dev",
+            BumpTrigger.MANUAL,
+            List.of(),
+            Map.of(),
+            BumpStatus.NOTHING_TO_DO,
+            "nothing left to write"),
+        false,
+        Instant.now().plusSeconds(1));
+    store.requestWithdrawn(id.toString(), "nothing to bump", Instant.now());
+
+    only(dispatcher.tick());
+    assertEquals(2, asks(Fixture.CATALOG_ID));
   }
 
   /** A PERSON withdrew it: a withdrawn request counts as none, and the repository is asked again. */

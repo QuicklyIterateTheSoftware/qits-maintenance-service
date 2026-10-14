@@ -1587,6 +1587,18 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
   }
 
   /**
+   * Whether a {@code dependency-bump} history actually wrote a bump — any row that is not
+   * SUPERSEDED and ended SUCCEEDED (qits-1173). Shared by {@code BumpDispatcher.held} and {@code
+   * AutomationService.withdrawIfNothingToBump}: a withdrawn request's "nothing to bump" is only
+   * true when this is false, never on the strength of a later NOTHING_TO_DO row alone.
+   */
+  public static boolean wroteABump(List<MtBump> history) {
+    return history.stream()
+        .filter(row -> !BumpStatus.SUPERSEDED.name().equals(row.status))
+        .anyMatch(row -> BumpStatus.SUCCEEDED.name().equals(row.status));
+  }
+
+  /**
    * The fold the newest automation row of one request is for — what the read door answers when it
    * is not told which fold. Empty when the request has none.
    */
