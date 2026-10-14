@@ -760,6 +760,7 @@ environment without a rebuild.
 | `qits.maintenance.bump.dispatch.quiet-hours` | *(empty)* | hours the dispatcher opens nothing in: `HH:MM-HH:MM[,…]` in `time-zone`, end exclusive, midnight-wrapping allowed |
 | `qits.maintenance.bump.dispatch.retry-attempts` | `5` | how many times an automation is sent when qits-ci cannot be reached, answers 5xx (not 503) or records no run, before it ends FAILED |
 | `qits.maintenance.bump.dispatch.retry-backoff` | `30s` | the wait before the second such send; it doubles before each later one |
+| `qits.maintenance.bump.changelog-wait` | `PT1H` | how long an automation waits for a changelog whose release is RELEASED and still publishing (qits-1235), counted from the first dispatch that found it pending; it stays REQUESTED and is sent again every `poll-interval`, and once the wait is spent the missing changelog FAILS it |
 | `qits.maintenance.bump.dispatch.refusal-ttl` | `6h` | how long a repository whose main-only request could not be opened (no catalog id, a refusal) is left alone before it is asked again |
 | `qits.maintenance.environment` | `dev` | which environment's CI is recorded on a bump row |
 | `qits.maintenance.automations.dependency-bump.enabled` | `true` | **the `dependency-bump` automation (qits-1133), and since R5 the one kill switch of the bump path.** Off (emergency only): the kind is not listed, planned or started, a row it opened before ends FRESH, a moved `mt_latest` re-plans nothing and the dispatcher opens no main-only request |

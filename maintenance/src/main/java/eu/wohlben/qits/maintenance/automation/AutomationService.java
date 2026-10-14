@@ -1074,16 +1074,42 @@ public class AutomationService {
 
   /**
    * THE CHANGELOGS, as a group bump proves them (qits-893), for either target's changes: the ranges
-   * when every one resolved and is valid; otherwise empty, with the row already ended — a missing
-   * changelog (or a range {@link BumpPayload#changelogProblems} refuses) FAILS it with the problems
-   * joined "; ", and an unreadable docs store leaves it REQUESTED with {@link
-   * BumpService#CHANGELOGS_UNREADABLE} for the sweep to send again. The same two answers a refused
-   * payload and a 503 get, and nothing is triggered by either.
+   * when every one resolved and is valid; otherwise empty, with the row already ended or left
+   * waiting. In this order:
+   *
+   * <ol>
+   *   <li>a missing changelog (or a range {@link BumpPayload#changelogProblems} refuses) FAILS it
+   *       with the problems joined "; ";
+   *   <li>a changelog still being published — its release RELEASED, its publish run not ended
+   *       (qits-1235) — leaves it REQUESTED with {@link BumpService#changelogsPending}, and records
+   *       when that was first found. The sweep sends it again every poll-interval and the range is
+   *       recomputed then. Once {@code qits.maintenance.bump.changelog-wait} has passed since the
+   *       first such answer, the pending releases are the missing-changelog sentence after all, and
+   *       the row FAILS;
+   *   <li>an unreadable docs store leaves it REQUESTED with {@link
+   *       BumpService#CHANGELOGS_UNREADABLE} for the sweep to send again.
+   * </ol>
+   *
+   * <p>The same answers a refused payload and a 503 get, and nothing is triggered by any of them.
+   * No event wakes a waiting row: the changelog is stored by the publish run, and the sweep is what
+   * asks again.
    */
   private Optional<Map<Change, ChangelogRange>> changelogs(MtBump row, List<Change> changes) {
     ChangelogRanges.Result resolved = changelogRanges.resolve(changes);
     List<String> problems = new ArrayList<>(resolved.problems());
     problems.addAll(BumpPayload.changelogProblems(resolved.ranges()));
+    Instant now = Instant.now();
+    if (problems.isEmpty() && !resolved.pending().isEmpty()) {
+      Instant since = row.changelogPendingSince == null ? now : row.changelogPendingSince;
+      if (Duration.between(since, now).compareTo(config.bumpChangelogWait()) <= 0) {
+        String message = BumpService.changelogsPending(resolved.pending());
+        store.bumpChangelogPending(row.id, since, message);
+        LOG.infof("The automation %s waits: %s", row.id, message);
+        return Optional.empty();
+      }
+      // A publish run that has not ended in all this time is one that broke.
+      resolved.pending().forEach(pending -> problems.add(pending.problem()));
+    }
     if (!problems.isEmpty()) {
       fail(row, String.join("; ", problems));
       LOG.warnf("The automation %s was not sent: %s", row.id, problems);
@@ -1091,7 +1117,7 @@ public class AutomationService {
     }
     if (resolved.transientFailure()) {
       store.bumpFinished(
-          row.id, BumpStatus.REQUESTED, null, BumpService.CHANGELOGS_UNREADABLE, Instant.now());
+          row.id, BumpStatus.REQUESTED, null, BumpService.CHANGELOGS_UNREADABLE, now);
       return Optional.empty();
     }
     return Optional.of(resolved.ranges());

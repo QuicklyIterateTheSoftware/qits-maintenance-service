@@ -456,6 +456,24 @@ public class ReleaseRequestClient {
     public boolean publishFailedForGood() {
       return state != null && CLOSED.contains(state) && "FAILED".equals(publish);
     }
+
+    /**
+     * The publish states of a run that has not ended: qits-projects maps qits-ci's QUEUED to
+     * PENDING and RUNNING to RUNNING, and anything it cannot name to UNKNOWN. SUCCESS, FAILED and
+     * CANCELLED are endings.
+     */
+    private static final Set<String> STILL_RUNNING = Set.of("PENDING", "RUNNING", "UNKNOWN");
+
+    /**
+     * <b>Whether this release's publish may still store its changelog</b> (qits-1235). The request
+     * is RELEASED — tagged, not yet FINALIZED — and its newest publish run has not begun or has not
+     * ended. Seconds after a tag this is every release: {@code SCMRelease} fires before the publish
+     * run does. A RELEASED request whose run FAILED or was CANCELLED is not this case: a person may
+     * retry it, but nothing will on its own.
+     */
+    public boolean publishStillOpen() {
+      return "RELEASED".equals(state) && (publish == null || STILL_RUNNING.contains(publish));
+    }
   }
 
   /**

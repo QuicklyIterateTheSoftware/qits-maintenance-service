@@ -267,4 +267,13 @@ public class MtBump extends PanacheEntityBase {
   /** The earliest time the sweep sends this REQUESTED row again, or null for now (qits-1183). */
   @Column(name = "dispatch_retry_at")
   public Instant dispatchRetryAt;
+
+  /**
+   * When a dispatch first found a changelog of this row's changes still being published
+   * (qits-1235), or null. Kept by every later dispatch that finds one pending, so the wait is
+   * counted from the first; once it is longer than {@code qits.maintenance.bump.changelog-wait},
+   * the missing changelog FAILS the row. A re-planned row is a new row and starts over.
+   */
+  @Column(name = "changelog_pending_since")
+  public Instant changelogPendingSince;
 }

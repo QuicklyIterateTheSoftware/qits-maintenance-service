@@ -118,6 +118,25 @@ public class BumpService {
       "the changelogs could not be read from qits-artifacts yet; the bump will be sent again";
 
   /**
+   * How the message a row keeps while a changelog is still being published ends (qits-1235); it is
+   * sent again. {@link #changelogsPending} composes the whole sentence.
+   */
+  public static final String CHANGELOGS_PENDING =
+      "still being published; the automation will be sent again";
+
+  /**
+   * The message a row keeps while these releases' changelogs are still being published, each named
+   * {@code <repository> <version>}: {@code the changelog of qits-ci 2026.1014.92409 is still being
+   * published; the automation will be sent again}.
+   */
+  public static String changelogsPending(List<?> releases) {
+    List<String> named = releases.stream().map(String::valueOf).toList();
+    return named.size() == 1
+        ? "the changelog of " + named.getFirst() + " is " + CHANGELOGS_PENDING
+        : "the changelogs of " + String.join(", ", named) + " are " + CHANGELOGS_PENDING;
+  }
+
+  /**
    * How long a FAILED run is given for qits-ci's automatic retry of it to appear. qits-ci commits
    * the red row first and records the retry right after — a read of the git host apart — so a poll
    * can land in between. A run that ended longer ago than this with no retry was not retried.

@@ -985,6 +985,30 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
         });
   }
 
+  /**
+   * Keeps a row REQUESTED while a changelog of its changes is still being published (qits-1235),
+   * with the time that was first found. A row that already has one keeps it: the wait is counted
+   * from the first pending answer, not the last.
+   */
+  @ActivateRequestContext
+  public void bumpChangelogPending(UUID id, Instant since, String message) {
+    DbRetry.runInNewTx(
+        "keep bump " + id + " waiting for its changelogs",
+        () -> {
+          MtBump row = MtBump.findById(id);
+          if (row == null) {
+            return;
+          }
+          row.status = BumpStatus.REQUESTED.name();
+          if (row.changelogPendingSince == null) {
+            row.changelogPendingSince = since;
+          }
+          row.message = message;
+          row.finishedAt = null;
+          getEntityManager().flush();
+        });
+  }
+
   /** Records that qits-ci accepted the trigger and named its runs. */
   @ActivateRequestContext
   public void bumpDispatched(UUID id, String eventId, List<String> runIds) {

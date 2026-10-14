@@ -43,6 +43,9 @@ public class MaintenanceConfig {
   @ConfigProperty(name = "qits.maintenance.bump.dispatch.retry-backoff", defaultValue = "30s")
   Duration bumpDispatchRetryBackoff;
 
+  @ConfigProperty(name = "qits.maintenance.bump.changelog-wait", defaultValue = "PT1H")
+  Duration bumpChangelogWait;
+
   @ConfigProperty(name = "qits.maintenance.bump.dispatch.release-state-ttl")
   Duration bumpReleaseStateTtl;
 
@@ -145,6 +148,17 @@ public class MaintenanceConfig {
     return bumpDispatchRetryBackoff == null || bumpDispatchRetryBackoff.isNegative()
         ? Duration.ofSeconds(30)
         : bumpDispatchRetryBackoff;
+  }
+
+  /**
+   * How long an automation waits for a changelog whose release is still publishing it (qits-1235)
+   * before the missing changelog FAILS it. Counted from the first dispatch that found it pending.
+   * An hour is several times the length of any publish run; one still not done is one that broke.
+   */
+  public Duration bumpChangelogWait() {
+    return bumpChangelogWait == null || bumpChangelogWait.isNegative()
+        ? Duration.ofHours(1)
+        : bumpChangelogWait;
   }
 
   public Duration bumpRefusalTtl() {

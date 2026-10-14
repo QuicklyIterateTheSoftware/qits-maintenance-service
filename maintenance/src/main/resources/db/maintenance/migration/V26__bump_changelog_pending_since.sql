@@ -1,0 +1,11 @@
+-- WHEN AN AUTOMATION FIRST FOUND A CHANGELOG STILL BEING PUBLISHED (qits-1235).
+--
+-- A tag re-plans the estate pins within seconds, minutes before the release's PUBLISH run stores its
+-- changelog, and a missing changelog FAILED the row and with it the wrapper's release request. A
+-- release still RELEASED whose publish run has not ended is now waited for: the row stays REQUESTED
+-- and the sweep sends it again. The wait is bounded by `qits.maintenance.bump.changelog-wait`,
+-- counted from this column.
+--
+-- Its own column rather than `dispatch_retry_at`: that one is qits-ci's backoff, and the two waits
+-- must not reset each other. Null on every row before this column and on every row that never waited.
+alter table mt_bump add column changelog_pending_since timestamp(6) with time zone;

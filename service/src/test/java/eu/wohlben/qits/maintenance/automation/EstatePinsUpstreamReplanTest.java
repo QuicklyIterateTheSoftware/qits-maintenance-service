@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import eu.wohlben.qits.maintenance.api.Fixture;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
 import eu.wohlben.qits.maintenance.bump.BumpService;
 import eu.wohlben.qits.maintenance.bump.CiClient;
@@ -268,6 +269,66 @@ class EstatePinsUpstreamReplanTest {
     assertEquals(AutomationState.FRESH.name(), next.state(), next.detail());
     assertTrue(next.detail().contains("carried"), next.detail());
     assertEquals(1, peers.bodiesFor(CiClient.TRIGGER_PATH).size(), "no second run");
+  }
+
+  /** qits-projects' history of the member: the one request that cut {@link #NEW_VERSION}. */
+  private void memberCut(String state, String publish) {
+    peers.answer(
+        PeerTarget.PROJECTS,
+        ReleaseRequestClient.REQUESTS_PATH_PREFIX + "id-" + MEMBER
+            + ReleaseRequestClient.REQUESTS_PATH_SUFFIX + ReleaseRequestClient.HISTORY_QUERY,
+        FakePeers.Scripted.ok(
+            "{\"requests\":[{\"id\":\"rr-member\",\"version\":\"" + NEW_VERSION
+                + "\",\"state\":\"" + state + "\",\"pipeline\":{\"phases\":[{\"phase\":"
+                + "\"PUBLISH\",\"state\":\"" + publish + "\"}]}}]}"));
+  }
+
+  /**
+   * THE LIVE TIMELINE (qits-1235): the member is tagged, and the re-plan reaches the estate pins
+   * seconds later, while the member's publish run is still RUNNING and its changelog is not stored.
+   * The row waits REQUESTED rather than FAILING the wrapper's request; once the changelog is stored
+   * and the request reads FINALIZED, the next dispatch sends it, naming that changelog.
+   */
+  @Test
+  void aMemberReleaseStillPublishingItsChangelogIsWaitedForThenSent() throws Exception {
+    foldedBeforeTheRelease();
+    Fixture.scriptChangelogs(peers, MEMBER, OLD_VERSION);
+    memberCut("RELEASED", "RUNNING");
+    store.recordRelease(
+        MEMBER, NEW_VERSION, NEW_SHA, Instant.parse("2026-10-14T09:24:08Z"), List.of());
+
+    released(MEMBER);
+
+    MtBump row =
+        estateRows().stream()
+            .filter(candidate -> BumpTrigger.UPSTREAM.name().equals(candidate.trigger))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("no upstream row: " + estateRows()));
+    assertEquals(BumpStatus.REQUESTED.name(), row.status, row.message);
+    assertEquals(
+        "the changelog of " + MEMBER + " " + NEW_VERSION + " is " + BumpService.CHANGELOGS_PENDING,
+        row.message);
+    assertTrue(peers.bodiesFor(CiClient.TRIGGER_PATH).isEmpty(), "nothing sent while it waits");
+    AutomationDto waiting =
+        AutomationFixture.entry(automations.automations(REQUEST, FOLD), EstatePinsAutomation.KIND);
+    assertEquals(AutomationState.REQUESTED.name(), waiting.state(), waiting.detail());
+
+    // 09:31:39: the publish run stored the changelog and the request finalized.
+    Fixture.scriptChangelogs(peers, MEMBER, OLD_VERSION, NEW_VERSION);
+    memberCut("FINALIZED", "SUCCESS");
+    bumps.sweep();
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    MtBump sent = store.bump(row.id).orElseThrow();
+    assertEquals(BumpStatus.RUNNING.name(), sent.status, sent.message);
+    List<String> triggers = peers.bodiesFor(CiClient.TRIGGER_PATH);
+    assertEquals(1, triggers.size(), triggers.toString());
+    JsonNode change = JSON.readTree(triggers.getFirst()).get("payload").get("changes").get(0);
+    assertEquals(NEW_VERSION, change.get("to").asText());
+    assertEquals(
+        JSON.readTree(
+            "{\"repository\":\"" + MEMBER + "\",\"versions\":[\"" + NEW_VERSION + "\"]}"),
+        change.get("changelog"));
   }
 
   /** A release the fold already pins opens nothing and counts nothing. */

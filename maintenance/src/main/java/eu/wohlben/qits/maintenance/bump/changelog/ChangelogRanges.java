@@ -87,11 +87,20 @@ import org.jboss.logging.Logger;
  *       publish (measured: qits-projects-golden-masters 2026.1011.230000 held six bumps). The range
  *       then names the earliest later published changelog, which lists the pin's commits
  *       (qits-1193), so it can end above the pin. Without a later changelog it stays a PROBLEM.
- *   <li><b>Every other candidate the store did not publish is a PROBLEM</b> naming the repository
- *       and the version: every release publishes one, so that release's publish did not complete.
- *       That covers a publish run that went green without the changelog; a run that went red in
- *       a FINALIZED request; a release still RELEASED, whose run a retry can still finish; and a
- *       version the history does not name at all.
+ *   <li><b>Every other candidate the store did not publish is either still being published, or a
+ *       PROBLEM.</b> It is <b>PENDING</b> (qits-1235) when none of the requests that cut it is
+ *       FINALIZED and at least one is still RELEASED with its publish run not begun, PENDING,
+ *       RUNNING or UNKNOWN ({@link ReleaseRequestClient.Cut#publishStillOpen}): a tag fires {@code
+ *       SCMRelease} at once and the estate pins are re-planned on it within seconds ({@code
+ *       UpstreamReplan}), minutes before that run stores {@code @changelog/<repository>}
+ *       (measured: qits-workspaces-service 2026.1014.92409, tagged 09:24:08, its estate pins FAILED
+ *       at 09:24:27, its changelog stored at 09:31:39). A pending version STAYS in the range and is
+ *       named in {@link Result#pending}; the caller waits for it instead of failing the bump.
+ *       <p>Otherwise it is a <b>PROBLEM</b> naming the repository and the version: every release
+ *       publishes one, so that release's publish did not complete. That covers a publish run that
+ *       went green without the changelog; any FINALIZED request without one; a release still
+ *       RELEASED whose run FAILED or was CANCELLED, which nothing retries until somebody asks; and
+ *       a version the history does not name at all.
  *   <li>No candidate, no range — the change carries no {@code changelog} field.
  * </ol>
  *
@@ -99,6 +108,12 @@ import org.jboss.logging.Logger;
  * tells the caller to leave the bump REQUESTED, exactly as a 503 from qits-ci's trigger does; a
  * changelog that is really missing is a sentence on a FAILED row, and those two must never be
  * confused.
+ *
+ * <p><b>A changelog still being published is not a problem either, it is a WAIT</b> (qits-1235).
+ * {@link Result#pending} names each such release; the caller leaves the bump REQUESTED and the
+ * sweep asks again, which recomputes the range. Unlike a retry it is bounded: a release that is
+ * still pending after {@code qits.maintenance.bump.changelog-wait} is the problem sentence after
+ * all ({@link Pending#problem}), because a publish run that long is one that broke.
  *
  * <p><b>One read per repository per call.</b> Several coordinates of one multi-module reactor share
  * a repository, so the listing and the ledger are cached for the duration of one {@link #resolve} —
@@ -127,14 +142,57 @@ public class ChangelogRanges {
    * @param problems every reason the bump must not be sent, deduplicated, in the order met
    * @param transientFailure the docs store could not be read for at least one repository: send
    *     nothing now and ask again later
+   * @param pending every release whose changelog is missing while its publish run has not finished
+   *     (rule 8, qits-1235), deduplicated, in the order met. Each is still in its range: send
+   *     nothing now, ask again later, and report {@link Pending#problem} once the wait is spent
    */
   public record Result(
-      Map<Change, ChangelogRange> ranges, List<String> problems, boolean transientFailure) {
+      Map<Change, ChangelogRange> ranges,
+      List<String> problems,
+      boolean transientFailure,
+      List<Pending> pending) {
 
     public Result {
       ranges = ranges == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(ranges));
       problems = problems == null ? List.of() : List.copyOf(problems);
+      pending = pending == null ? List.of() : List.copyOf(pending);
     }
+
+    public Result(
+        Map<Change, ChangelogRange> ranges, List<String> problems, boolean transientFailure) {
+      this(ranges, problems, transientFailure, List.of());
+    }
+  }
+
+  /**
+   * One release whose changelog is still being published (qits-1235).
+   *
+   * @param repository the source repository
+   * @param version the release
+   */
+  public record Pending(String repository, String version) {
+
+    /** The sentence this release is once the wait is spent — the one every missing changelog gets. */
+    public String problem() {
+      return missing(repository, version);
+    }
+
+    /** {@code <repository> <version>}, as a sentence names it. */
+    @Override
+    public String toString() {
+      return repository + " " + version;
+    }
+  }
+
+  /** The sentence of a release with no changelog. */
+  static String missing(String repository, String version) {
+    return "no changelog for "
+        + repository
+        + " "
+        + version
+        + " (@changelog/"
+        + repository
+        + "): every release publishes one, so this release's publish did not complete";
   }
 
   /** One row of a repository's release ledger, as much of it as a range needs. */
@@ -146,24 +204,31 @@ public class ChangelogRanges {
    * @param versions the versions that published nothing; empty when none is known
    * @param failed the versions whose publish FAILED in a closed request (qits-1191): skipped only
    *     below the new pin, never as the pin itself
+   * @param pending the versions whose publish has not finished yet (rule 8, qits-1235): kept in
+   *     the range, and waited for rather than reported
    * @param error why qits-projects could not be read, or null — a RETRY, like an unreadable store
    */
-  record Unpublished(Set<String> versions, Set<String> failed, String error) {
+  record Unpublished(Set<String> versions, Set<String> failed, Set<String> pending, String error) {
 
     Unpublished {
       versions = versions == null ? Set.of() : Set.copyOf(versions);
       failed = failed == null ? Set.of() : Set.copyOf(failed);
+      pending = pending == null ? Set.of() : Set.copyOf(pending);
     }
 
     Unpublished(Set<String> versions, String error) {
-      this(versions, Set.of(), error);
+      this(versions, Set.of(), Set.of(), error);
     }
 
-    static final Unpublished NONE = new Unpublished(Set.of(), Set.of(), null);
+    static final Unpublished NONE = new Unpublished(Set.of(), Set.of(), Set.of(), null);
 
-    /** What a readable history says: {@link #neverPublished} and {@link #failedForGood}. */
+    /**
+     * What a readable history says: {@link #neverPublished}, {@link #failedForGood} and {@link
+     * #stillPublishing}.
+     */
     static Unpublished of(List<ReleaseRequestClient.Cut> cuts) {
-      return new Unpublished(neverPublished(cuts), failedForGood(cuts), null);
+      return new Unpublished(
+          neverPublished(cuts), failedForGood(cuts), stillPublishing(cuts), null);
     }
   }
 
@@ -182,7 +247,7 @@ public class ChangelogRanges {
     /** Rule 4: the docs store's listing. */
     ChangelogClient.Result published(String repository);
 
-    /** Rule 7: the versions qits-projects says published nothing. */
+    /** Rules 7 and 8: what qits-projects says of the versions with no changelog. */
     Unpublished unpublished(String repository);
   }
 
@@ -236,6 +301,7 @@ public class ChangelogRanges {
   static Result resolve(List<Change> changes, Sources sources) {
     Map<Change, ChangelogRange> ranges = new LinkedHashMap<>();
     Set<String> problems = new LinkedHashSet<>();
+    Set<Pending> pending = new LinkedHashSet<>();
     boolean transientFailure = false;
 
     // Read once per call, lazily: a bump of external dependencies only never touches the graph.
@@ -337,8 +403,9 @@ public class ChangelogRanges {
       // 7. Every candidate published — or published nothing, for good.
       List<String> missing =
           candidates.stream().filter(version -> !publishedVersions.contains(version)).toList();
+      Unpublished nothing = Unpublished.NONE;
       if (!missing.isEmpty()) {
-        Unpublished nothing = unpublished.computeIfAbsent(repository, sources::unpublished);
+        nothing = unpublished.computeIfAbsent(repository, sources::unpublished);
         if (nothing.error() != null) {
           transientFailure = true;
           LOG.warnf(
@@ -370,25 +437,29 @@ public class ChangelogRanges {
           }
         }
       }
+      // 8. Still being published — a wait, and the version stays in the range (qits-1235); or a
+      // problem.
       for (String version : candidates) {
-        if (!publishedVersions.contains(version)) {
-          problems.add(
-              "no changelog for "
-                  + repository
-                  + " "
-                  + version
-                  + " (@changelog/"
-                  + repository
-                  + "): every release publishes one, so this release's publish did not complete");
+        if (publishedVersions.contains(version)) {
+          continue;
+        }
+        if (nothing.pending().contains(version)) {
+          pending.add(new Pending(repository, version));
+          LOG.infof(
+              "%s %s has no changelog yet and its publish run has not finished; the bump waits"
+                  + " for it",
+              repository, version);
+        } else {
+          problems.add(missing(repository, version));
         }
       }
 
-      // 8. No candidate, no range.
+      // 9. No candidate, no range.
       if (!candidates.isEmpty()) {
         ranges.put(change, new ChangelogRange(repository, List.copyOf(candidates)));
       }
     }
-    return new Result(ranges, List.copyOf(problems), transientFailure);
+    return new Result(ranges, List.copyOf(problems), transientFailure, List.copyOf(pending));
   }
 
   /**
@@ -422,6 +493,26 @@ public class ChangelogRanges {
     }
     failed.removeAll(other);
     return failed;
+  }
+
+  /**
+   * The versions whose publish has not finished yet (qits-1235): at least one request that cut it is
+   * still RELEASED with its publish run not begun or not ended ({@link
+   * ReleaseRequestClient.Cut#publishStillOpen}), and none is FINALIZED — a completed release without
+   * its changelog is a broken publish whatever another request is doing.
+   */
+  static Set<String> stillPublishing(List<ReleaseRequestClient.Cut> cuts) {
+    Set<String> open = new HashSet<>();
+    Set<String> finalized = new HashSet<>();
+    for (ReleaseRequestClient.Cut cut : cuts) {
+      if (cut.publishStillOpen()) {
+        open.add(cut.version());
+      } else if ("FINALIZED".equals(cut.state())) {
+        finalized.add(cut.version());
+      }
+    }
+    open.removeAll(finalized);
+    return open;
   }
 
   /**

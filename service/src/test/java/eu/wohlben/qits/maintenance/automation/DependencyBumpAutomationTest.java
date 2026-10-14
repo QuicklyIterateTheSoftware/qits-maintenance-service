@@ -19,6 +19,7 @@ import eu.wohlben.qits.maintenance.api.Fixture;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
 import eu.wohlben.qits.maintenance.bump.BumpService;
 import eu.wohlben.qits.maintenance.bump.CiClient;
+import eu.wohlben.qits.maintenance.bump.ReleaseRequestClient;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto.AutomationDto;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto;
 import eu.wohlben.qits.maintenance.entity.MtBump;
@@ -27,6 +28,9 @@ import eu.wohlben.qits.maintenance.entity.MtRepository;
 import eu.wohlben.qits.maintenance.latest.GitlinkSha;
 import eu.wohlben.qits.maintenance.model.BumpStatus;
 import eu.wohlben.qits.maintenance.model.Ecosystem;
+import eu.wohlben.qits.maintenance.model.GroupSource;
+import eu.wohlben.qits.maintenance.model.PinKind;
+import eu.wohlben.qits.maintenance.model.RepositoryStatus;
 import eu.wohlben.qits.maintenance.model.ScanScope;
 import eu.wohlben.qits.maintenance.peer.FakePeers;
 import eu.wohlben.qits.maintenance.pending.Change;
@@ -259,6 +263,143 @@ class DependencyBumpAutomationTest {
     assertEquals(BumpStatus.REQUESTED.name(), row.status, row.message);
     assertEquals(BumpService.CHANGELOGS_UNREADABLE, row.message);
     assertTrue(triggers().isEmpty());
+  }
+
+  // --- a changelog still being published (qits-1235) ---------------------------------------------
+
+  /** The history route of qits-eventstream, the source repository of the fixture's internal pin. */
+  private static final String EVENTSTREAM_HISTORY =
+      ReleaseRequestClient.REQUESTS_PATH_PREFIX + "id-qits-eventstream"
+          + ReleaseRequestClient.REQUESTS_PATH_SUFFIX + ReleaseRequestClient.HISTORY_QUERY;
+
+  /**
+   * qits-eventstream catalogued, so qits-projects can be asked about its releases, and its history
+   * naming one request that cut the new pin {@code 2026.821.3}, in {@code state} with its newest
+   * publish run {@code publish} (null: none began).
+   */
+  private void eventstreamCut(String state, String publish) {
+    store.replaceInventory(
+        "qits-eventstream", Fixture.PROJECT, "id-qits-eventstream", "SERVICE", "main",
+        RepositoryStatus.OK, "head", null, List.of(), List.of(), GroupSource.DEFAULT,
+        pin -> PinKind.INTERNAL, Instant.now());
+    String phases =
+        publish == null
+            ? "[]"
+            : "[{\"phase\":\"PUBLISH\",\"state\":\"" + publish + "\"}]";
+    peers.answer(
+        PeerTarget.PROJECTS,
+        EVENTSTREAM_HISTORY,
+        FakePeers.Scripted.ok(
+            "{\"requests\":[{\"id\":\"rr-821\",\"version\":\"2026.821.3\",\"state\":\""
+                + state + "\",\"pipeline\":{\"phases\":" + phases + "}}]}"));
+  }
+
+  private static final String PENDING_DETAIL =
+      "the changelog of qits-eventstream 2026.821.3 is " + BumpService.CHANGELOGS_PENDING;
+
+  /**
+   * THE LIVE CASE (qits-1235): the new pin was tagged seconds ago and its publish run is still
+   * going, so its changelog is not stored yet. The bump waits REQUESTED, says why, and records when
+   * it began waiting — and a second dispatch that still finds it pending keeps that time.
+   */
+  @Test
+  void aChangelogStillBeingPublishedLeavesTheBumpRequested() {
+    Fixture.scriptChangelogs(peers, "qits-eventstream", "2026.811.1");
+    eventstreamCut("RELEASED", "RUNNING");
+    AutomationFixture.scriptManifests(peers, FOLD_A, STALE_POM, null);
+
+    MtBump row =
+        row(AutomationFixture.entry(trigger(FOLD_A, null, null, ACCEPTS),
+            DependencyBumpAutomation.KIND));
+
+    assertEquals(BumpStatus.REQUESTED.name(), row.status, row.message);
+    assertEquals(PENDING_DETAIL, row.message);
+    assertNotNull(row.changelogPendingSince, "the wait is recorded");
+    assertNull(row.finishedAt);
+    assertTrue(triggers().isEmpty(), "nothing is sent to qits-ci: " + triggers());
+
+    automations.dispatch(row.id);
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    MtBump again = store.bump(row.id).orElseThrow();
+    assertEquals(BumpStatus.REQUESTED.name(), again.status, again.message);
+    assertEquals(
+        row.changelogPendingSince, again.changelogPendingSince, "counted from the first answer");
+    assertTrue(triggers().isEmpty());
+  }
+
+  /**
+   * Once the publish run has stored the changelog and the request is FINALIZED, the next dispatch
+   * — the sweep's — sends the bump, its range naming the version it waited for.
+   */
+  @Test
+  void aPendingBumpIsSentOnceItsChangelogIsStored() throws Exception {
+    Fixture.scriptChangelogs(peers, "qits-eventstream", "2026.811.1");
+    eventstreamCut("RELEASED", null);
+    AutomationFixture.scriptManifests(peers, FOLD_A, STALE_POM, null);
+    MtBump row =
+        row(AutomationFixture.entry(trigger(FOLD_A, null, null, ACCEPTS),
+            DependencyBumpAutomation.KIND));
+    assertEquals(BumpStatus.REQUESTED.name(), row.status, row.message);
+    assertEquals(PENDING_DETAIL, row.message);
+
+    Fixture.scriptChangelogs(peers, "qits-eventstream", "2026.811.1", "2026.821.3");
+    eventstreamCut("FINALIZED", "SUCCESS");
+    bumps.sweep();
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    MtBump sent = store.bump(row.id).orElseThrow();
+    assertEquals(BumpStatus.RUNNING.name(), sent.status, sent.message);
+    assertEquals(1, triggers().size(), triggers().toString());
+    JsonNode change = JSON.readTree(triggers().getFirst()).path("payload").path("changes").get(0);
+    assertEquals(
+        JSON.readTree("{\"repository\":\"qits-eventstream\",\"versions\":[\"2026.821.3\"]}"),
+        change.get("changelog"));
+  }
+
+  /**
+   * A publish run that has not ended an hour after the bump first waited for it is one that broke:
+   * the pending release is the missing-changelog sentence after all, and the bump FAILS.
+   */
+  @Test
+  void aChangelogPendingLongerThanTheWaitFailsTheBump() {
+    Fixture.scriptChangelogs(peers, "qits-eventstream", "2026.811.1");
+    eventstreamCut("RELEASED", "PENDING");
+    AutomationFixture.scriptManifests(peers, FOLD_A, STALE_POM, null);
+    MtBump row =
+        row(AutomationFixture.entry(trigger(FOLD_A, null, null, ACCEPTS),
+            DependencyBumpAutomation.KIND));
+    assertEquals(BumpStatus.REQUESTED.name(), row.status, row.message);
+
+    // The first pending answer, backdated past the shipped hour.
+    row.changelogPendingSince = Instant.now().minus(Duration.ofHours(1)).minusSeconds(1);
+    automations.dispatch(row);
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    MtBump failed = store.bump(row.id).orElseThrow();
+    assertEquals(BumpStatus.FAILED.name(), failed.status, failed.message);
+    assertEquals(
+        "no changelog for qits-eventstream 2026.821.3 (@changelog/qits-eventstream): every release"
+            + " publishes one, so this release's publish did not complete",
+        failed.message);
+    assertTrue(triggers().isEmpty(), "nothing is sent to qits-ci: " + triggers());
+  }
+
+  /** A RELEASED request whose publish run went red is not waited for: the bump fails at once. */
+  @Test
+  void aReleasedRequestWhosePublishFailedFailsTheBumpAtOnce() {
+    Fixture.scriptChangelogs(peers, "qits-eventstream", "2026.811.1");
+    eventstreamCut("RELEASED", "FAILED");
+    AutomationFixture.scriptManifests(peers, FOLD_A, STALE_POM, null);
+
+    MtBump row =
+        row(AutomationFixture.entry(trigger(FOLD_A, null, null, ACCEPTS),
+            DependencyBumpAutomation.KIND));
+
+    assertEquals(BumpStatus.FAILED.name(), row.status, row.message);
+    assertTrue(
+        row.message.contains("no changelog for qits-eventstream 2026.821.3"), row.message);
+    assertNull(row.changelogPendingSince);
   }
 
   /**

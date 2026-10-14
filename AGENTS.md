@@ -357,7 +357,12 @@ one, floored at the repository's oldest published changelog, and `ChangelogClien
 store's listing (`PeerTarget.ARTIFACTS_DOCS`, the same bare-host key as the SBOM route). A missing
 changelog, or an internal coordinate `ArtifactGraph.producers()` cannot name a repository for, FAILS
 the bump with the sentence — the owner's rule is "error, not workaround" — and an unreadable store
-is a RETRY. Every path that carries changes proves them: `estate-pins`' source-branch runs and
+is a RETRY. **A changelog still being published is a WAIT (qits-1235)**: a tag re-plans the estate
+pins within seconds, minutes before the release's PUBLISH run stores the changelog, so a version no
+FINALIZED request cut and some RELEASED request cut with its publish run not begun, PENDING, RUNNING
+or UNKNOWN stays in the range and leaves the row REQUESTED (`BumpService.changelogsPending`). The
+sweep sends it again; `mt_bump.changelog_pending_since` (V26) counts from the first such answer, and
+past `bump.changelog-wait` the pending release is the missing-changelog sentence and the row FAILS. Every path that carries changes proves them: `estate-pins`' source-branch runs and
 `dependency-bump`'s own-branch payload (`AutomationService.changelogs`, serialized by the
 shared `CiClient.changes`). The payload NAMES the changelogs (`changelog: {repository, versions}`) and never carries
 their text: it reaches the step as one environment string, so the step's CLI fetches them. Tests

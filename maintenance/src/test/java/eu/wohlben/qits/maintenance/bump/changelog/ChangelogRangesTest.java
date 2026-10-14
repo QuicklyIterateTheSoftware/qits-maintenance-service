@@ -620,17 +620,145 @@ class ChangelogRangesTest {
     assertEquals(List.of(HOLE), result.problems());
   }
 
-  /** One closed request failed, a later one of the same version is still open: it stays a problem. */
+  /**
+   * One closed request failed, a later one of the same version is still publishing: it is not
+   * skipped, and since qits-1235 it is waited for rather than reported.
+   */
   @Test
-  void aFailedVersionAnotherRequestCanStillPublishStillFails() {
+  void aFailedVersionAnotherRequestIsStillPublishingIsPending() {
     released(REPO, "2026.1002.1", SHA_B);
     published(REPO, "2026.1001.1", "2026.1003.1");
     cut(REPO, "2026.1002.1", "OBSOLETE", "FAILED");
     cut(REPO, "2026.1002.1", "RELEASED", "RUNNING");
 
+    Change change = maven("2026.1001.1", "2026.1003.1");
+    ChangelogRanges.Result result = resolve(change);
+
+    assertEquals(List.of(), result.problems());
+    assertEquals(List.of(new ChangelogRanges.Pending(REPO, "2026.1002.1")), result.pending());
+    assertEquals(
+        new ChangelogRange(REPO, List.of("2026.1002.1", "2026.1003.1")),
+        result.ranges().get(change));
+  }
+
+  // --- a changelog still being published (qits-1235) ---------------------------------------------
+
+  /**
+   * THE LIVE CASE (qits-1235): the new pin was tagged seconds ago, its request is RELEASED and its
+   * publish run has not begun, is queued or is running. That is a wait, not a problem — and the
+   * version stays in the range, so the payload names it once it is sent.
+   */
+  @Test
+  void aReleaseWhosePublishHasNotEndedIsPendingAndStaysInTheRange() {
+    for (String publish : java.util.Arrays.asList(null, "PENDING", "RUNNING", "UNKNOWN")) {
+      history.clear();
+      published(REPO, "2026.1001.1");
+      cut(REPO, "2026.1002.1", "RELEASED", publish);
+
+      Change change = maven("2026.1001.1", "2026.1002.1");
+      ChangelogRanges.Result result = resolve(change);
+
+      assertEquals(List.of(), result.problems(), String.valueOf(publish));
+      assertFalse(result.transientFailure());
+      assertEquals(
+          List.of(new ChangelogRanges.Pending(REPO, "2026.1002.1")), result.pending(),
+          String.valueOf(publish));
+      assertEquals(
+          new ChangelogRange(REPO, List.of("2026.1002.1")), result.ranges().get(change),
+          String.valueOf(publish));
+    }
+  }
+
+  /** A pending release names itself in a sentence, and is the missing-changelog problem later. */
+  @Test
+  void aPendingReleaseNamesItselfAndItsProblem() {
+    ChangelogRanges.Pending pending = new ChangelogRanges.Pending(REPO, "2026.1002.1");
+
+    assertEquals("qits-eventstream 2026.1002.1", pending.toString());
+    assertEquals(HOLE, pending.problem());
+  }
+
+  /** A hole between the pins whose release is still publishing is pending as the pin is. */
+  @Test
+  void aHoleBelowThePinThatIsStillPublishingIsPending() {
+    released(REPO, "2026.1002.1", SHA_B);
+    published(REPO, "2026.1001.1", "2026.1003.1");
+    cut(REPO, "2026.1002.1", "RELEASED", "RUNNING");
+
+    ChangelogRanges.Result result = resolve(maven("2026.1001.1", "2026.1003.1"));
+
+    assertEquals(List.of(), result.problems());
+    assertEquals(List.of(new ChangelogRanges.Pending(REPO, "2026.1002.1")), result.pending());
+  }
+
+  /**
+   * A publish run that ENDED is no wait: RELEASED with a run that went red, or green without the
+   * changelog, and a FINALIZED request without one, stay the problem they always were.
+   */
+  @Test
+  void aReleaseWhosePublishEndedIsNeverPending() {
+    for (String[] shape :
+        List.of(
+            new String[] {"RELEASED", "FAILED"},
+            new String[] {"RELEASED", "CANCELLED"},
+            new String[] {"RELEASED", "SUCCESS"},
+            new String[] {"FINALIZED", "SUCCESS"},
+            new String[] {"FINALIZED", "RUNNING"},
+            new String[] {"FINALIZED", null})) {
+      history.clear();
+      released(REPO, "2026.1002.1", SHA_B);
+      published(REPO, "2026.1001.1", "2026.1003.1");
+      cut(REPO, "2026.1002.1", shape[0], shape[1]);
+
+      ChangelogRanges.Result result = resolve(maven("2026.1001.1", "2026.1003.1"));
+
+      String label = shape[0] + " " + shape[1];
+      assertEquals(List.of(HOLE), result.problems(), label);
+      assertEquals(List.of(), result.pending(), label);
+    }
+  }
+
+  /**
+   * A version a FINALIZED request also cut completed its release, so another request of it still
+   * publishing makes it no wait: it fails.
+   */
+  @Test
+  void aVersionAlsoCutByAFinalizedRequestIsNotPending() {
+    released(REPO, "2026.1002.1", SHA_B);
+    published(REPO, "2026.1001.1", "2026.1003.1");
+    cut(REPO, "2026.1002.1", "RELEASED", "RUNNING");
+    cut(REPO, "2026.1002.1", "FINALIZED", "SUCCESS");
+
     ChangelogRanges.Result result = resolve(maven("2026.1001.1", "2026.1003.1"));
 
     assertEquals(List.of(HOLE), result.problems());
+    assertEquals(List.of(), result.pending());
+  }
+
+  /** A version the history does not name is no wait: nothing says a publish is on its way. */
+  @Test
+  void aVersionTheHistoryDoesNotNameIsNotPending() {
+    published(REPO, "2026.1001.1");
+    cut(REPO, "2026.1003.1", "RELEASED", "RUNNING");
+
+    ChangelogRanges.Result result = resolve(maven("2026.1001.1", "2026.1002.1"));
+
+    assertEquals(List.of(PIN_HOLE), result.problems());
+    assertEquals(List.of(), result.pending());
+  }
+
+  /** A real problem beside a pending release is still a problem; the pending one is named too. */
+  @Test
+  void aProblemBesideAPendingReleaseIsStillReported() {
+    released(REPO, "2026.1002.1", SHA_B);
+    published(REPO, "2026.1001.1");
+    cut(REPO, "2026.1002.1", "RELEASED", "SUCCESS");
+    cut(REPO, "2026.1003.1", "RELEASED", "RUNNING");
+
+    ChangelogRanges.Result result = resolve(maven("2026.1001.1", "2026.1003.1"));
+
+    assertEquals(List.of(HOLE), result.problems());
+    assertEquals(List.of(new ChangelogRanges.Pending(REPO, "2026.1003.1")), result.pending());
   }
 
   /** A failed run and a cancelled run of the same version, both closed: nothing can publish it. */
