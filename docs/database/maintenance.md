@@ -56,6 +56,7 @@ erDiagram
     boolean automation_only
     string base_ref "length 255"
     string branch "not null, length 512"
+    instant changelog_pending_since
     text changes
     string ci_event_id "length 255"
     text ci_run_id
