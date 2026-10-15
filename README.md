@@ -207,7 +207,9 @@ A library release re-plans the bump of every open, not-READY consumer request
 (`automation/UpstreamReplan`; three upstream restarts without a QA verdict and a request is left
 alone until it has one); a member's release recorded in the ledger likewise re-plans the
 `estate-pins` of every open, not-READY request of every wrapper of its project (qits-1224), whose
-per-fold FRESH would otherwise never be asked again. The automation engine — kinds, stages, carry-over, the payload, the
+per-fold FRESH would otherwise never be asked again. `estate-pins` works the same way since
+qits-1258: it plans the wrapper's FOLD (its `.gitmodules` and one recursive tree read, never the
+request's source branches) and writes one commit onto `maintenance/automations/estate-pins/<request>`. The automation engine — kinds, stages, carry-over, the payload, the
 changelog ranges every internal change proves before it is sent (qits-893) — is under "The event
 bus" and in AGENTS.md.
 
@@ -545,7 +547,11 @@ POST /release-requests/{id}/automations           → {requestId, foldSha,
                                                     and the kind is then not run;
                                                     `backingBranch` is the fold an own-branch run
                                                     starts from — absent, it is read from
-                                                    qits-projects, else `release/<id>` (qits-1158)
+                                                    qits-projects, else `release/<id>` (qits-1158);
+                                                    answered within `automations.settle.budget`
+                                                    (qits-1258): a settle still running then reads
+                                                    UNKNOWN "settling: …" for every kind it has
+                                                    not stored yet, and the next ask joins it
                                                                 400 not a uuid/sha  404 unknown repo
 GET  /release-requests/{id}/automations[?foldSha=] → the same answer, newest fold when unnamed
 POST /release-requests/{id}/automations/{kind}/runs
@@ -765,6 +771,8 @@ environment without a rebuild.
 | `qits.maintenance.environment` | `dev` | which environment's CI is recorded on a bump row |
 | `qits.maintenance.automations.dependency-bump.enabled` | `true` | **the `dependency-bump` automation (qits-1133), and since R5 the one kill switch of the bump path.** Off (emergency only): the kind is not listed, planned or started, a row it opened before ends FRESH, a moved `mt_latest` re-plans nothing and the dispatcher opens no main-only request |
 | `qits.maintenance.automations.packaged-recipes.project` / `.repository` | `qits` / `qits-ci-service` | where qits-ci's packaged release recipes live (qits-1178). `entity-diagram` and `screenshot-baselines` are answered DEFERRED and not run before QA, for a trigger that accepts `DEFERRED`, when the repository's QA names them under `check-outputs:`. That is read from the fold's `.config/qits/release.yml` (its own `release-request:` slot wins), else the repository's own recipe copy, else the packaged recipe read here at `main`. In doubt, the pre-run stays. The re-run door still runs them |
+| `qits.maintenance.automations.settle.budget` | `5s` | how long `POST /release-requests/{id}/automations` waits for its settle (qits-1258, `SettleGate`) before answering what is stored and UNKNOWN "settling" for the rest; the settle keeps running. Keep it well under qits-projects' 10 s |
+| `qits.maintenance.automations.settle.threads` | `4` | how many settles run at once, each of a different request (one per request at a time), on a pool of their own |
 
 **The registry keys carry a PATH as well as a host**, because a registry is mounted under a prefix
 and the prefix names the repository row it serves. Moving a row is then a deployment's decision.
@@ -885,7 +893,8 @@ work and nothing is lost.
 
 **qits-ci answers the events with its packaged platform pipelines**:
 `ci/src/main/resources/platform-pipelines/maintenance-bump.yml` for `MaintenanceBump` (its
-`estate-pins` arm — the group arm is retired with qits-1133), and the shared
+`estate-pins` arm, left for the source-branch rows opened before qits-1258 — the group arm is
+retired with qits-1133), and the shared
 release-request-automation core for `ReleaseRequestAutomation`, which composes one kind file per
 kind under `ci/src/main/resources/platform-pipelines/automations/<kind>.yml` (qits-978; this service no
 longer sends `ScreenshotBaselines`). Until 2026-10-02 the bump pipeline was a wrapper file. A qits-ci without them records no run, and every bump ends FAILED with `no run

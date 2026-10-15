@@ -236,19 +236,48 @@ run's verdict. Rows are `mode = AUTOMATION` with `automation_kind`, `fold_sha`, 
 rows V18 has not reached. **Carry-over is the loop's terminator**: a fold whose changed paths all lie
 under the applicable kinds' committable paths, after a FRESH or COMMITTED fold, is FRESH with no
 run — which only holds while no automation's output is another automation's input, so keep kinds'
-paths disjoint (`AutomationRegistryTest`). The re-run door opens a row the same way the retired
-doors used to: an OWN_BRANCH kind through `AutomationService.run`, and `estate-pins` — the one
-SOURCE_BRANCHES kind — with no request when it is opened directly against a branch rather than
-through a fold. **`estate-pins` is qits-projects' `EstatePinRefresh`, ported** (qits-999): a wrapper
-(archetype `PROJECT`), per source branch but never main, each `.gitmodules` entry naming a sibling of
-the same project with an `mt_release` is compared against the branch's gitlink, and the change list
-is byte for byte what `HttpEstatePins` used to send — which is why `automation/WrapperGitmodules`
-ports the wrapper's own reader rather than using `GitmodulesParser`. No difference is FRESH with no
-run, and that is the estate loop's terminator. The sentinel the commit subject reads,
-`EstatePinsAutomation.TARGETED_GROUP` (`"targeted"`, moved here from `BumpService` once the
-`/branches/bumps` door it served was retired), is a LABEL rather than a key — `mt_bump.mode` is the
-discriminator, so a repository that really does declare a group spelled `targeted` collides with
-nothing.
+paths disjoint (`AutomationRegistryTest`). The re-run door opens a row the
+same way the retired doors used to, through `AutomationService.run`; a kind whose plan IS its
+change list (`planIsTheChangeList()`: `estate-pins`, and any SOURCE_BRANCHES kind) is planned there
+too, and a FRESH plan is recorded rather than run. **`estate-pins` is qits-projects'
+`EstatePinRefresh`, ported** (qits-999): a wrapper (archetype `PROJECT`), each `.gitmodules` entry
+naming a sibling of the same project with an `mt_release` is compared against the gitlink at its
+path, and the change list is byte for byte what `HttpEstatePins` used to send — which is why
+`automation/WrapperGitmodules` ports the wrapper's own reader rather than using `GitmodulesParser`.
+No difference is FRESH with no run, and that is the estate loop's terminator.
+
+**SINCE qits-1258 ESTATE PINS ARE AN OWN-BRANCH KIND, PLANNED AT THE FOLD.** It used to be the one
+SOURCE_BRANCHES kind: per source branch (never main) it read the root, `.gitmodules` and one listing
+per component directory, and wrote one `bump(targeted)` commit onto each lagging branch. A
+nine-branch wrapper request (qits-qits-rr-137) made that hundreds of git-host reads per settle —
+past qits-projects' 10 s timeout, whose retries then piled up until no request on the estate moved
+for an hour — and dozens of commits on agents' branches that folded into each other until the
+breaker tripped. Now it reads the FOLD: `.gitmodules` and ONE recursive listing
+(`GitHostReader.recursiveTree`, `GET …/tree/<sha>?recursive=true`, answered with `"recursive":
+true` and every entry's `path`); a git host that answers without the flag gets the old
+per-directory listings, each directory once. A RUN plan is ONE commit onto
+`maintenance/automations/estate-pins/<request>` through the shared core (`automations/
+estate-pins.yml` in qits-ci: `changes` in the `Change` entry shape, gitlinks only, plus
+`commitPaths`), joined at `LOWEST`. Its `inputPaths` are `.gitmodules` and the declared gitlink
+paths, so its own commit's re-fold is planned again (and found FRESH), while a fold that touched
+none of them carries. **Rows opened before qits-1258 are still on source branches**:
+`AutomationService.target` reads a row of an OWN_BRANCH kind whose branch is not an automation's own
+as SOURCE_BRANCHES, so it is still sent through `maintenance-bump.yml` under the sentinel
+`EstatePinsAutomation.TARGETED_GROUP` (`"targeted"`, a LABEL rather than a key — `mt_bump.mode` is
+the discriminator) and ended by its run's verdict. `Target.SOURCE_BRANCHES`, `dispatchSourceBranch`
+and `finishSourceBranch` stay for exactly those rows.
+
+**THE SETTLE DOOR IS GATED (qits-1258, `automation/SettleGate`).** `POST
+/release-requests/{id}/automations` no longer settles on the HTTP thread: one settle per request at
+a time (an ask for the fold in flight joins it; a newer fold waits for the older, within its
+budget), on a pool of its own (`qits.maintenance.automations.settle.threads`, 4 named daemon
+threads, a bounded queue of 64 — never the `WorkQueue` thread), and the door answers within
+`qits.maintenance.automations.settle.budget` (5 s): what is stored for the fold, every other kind
+UNKNOWN "settling: …" (`AutomationService.settling`). The settle keeps running and stores its rows;
+the next ask joins it or, once it has finished and left the table, runs `trigger` again, which is
+answered from those rows. The cheap checks (`AutomationService.validate`) run before anything goes
+to the pool, and a settle that fails within the budget rethrows its own exception, so a 400 or a
+404 reaches the caller as before (`SettleGateTest`).
 
 **THE PRE-RUN HAS TWO STAGES (qits-1133), AND `dependency-bump` IS THE FOURTH KIND.** Every kind
 says its `Stage`: SOURCE (`estate-pins`, `dependency-bump` — build inputs) is settled first, DERIVED
@@ -256,7 +285,8 @@ says its `Stage`: SOURCE (`estate-pins`, `dependency-bump` — build inputs) is 
 until every applicable SOURCE kind is FRESH at the fold, and answers WAITING until then. Carry-over is
 per stage: a DERIVED kind's union is its own stage's paths, so a SOURCE commit (a pom the bump moved)
 re-runs it, and a kind that declares `inputPaths()` (`entity-diagram`: `**/*.java`, `**/pom.xml`;
-`dependency-bump`: its manifests, `.gitmodules`, `maintenance.yml`) carries exactly when the fold
+`dependency-bump`: its manifests, `.gitmodules`, `maintenance.yml`; `estate-pins`: `.gitmodules` and
+its gitlinks) carries exactly when the fold
 touched none of them. `committablePaths` stay pairwise disjoint across ALL kinds; "no output is
 another's input" holds within a stage and from DERIVED to SOURCE (`AutomationRegistryTest`), and a
 RUN plan naming another applicable kind's path is refused FAILED at run time (`AutomationService.clash`).
@@ -298,7 +328,7 @@ written for the old service must not turn its repository into a CONFIG_ERROR —
 `external` EXTERNAL). A GROUP row found REQUESTED or RUNNING (V22 closed them all, so only a hand
 insert gets here) is closed NOTHING_TO_DO with `converged`, unsent and unread. The only
 `CiClient.trigger` with the MaintenanceBump event left is `AutomationService.dispatchSourceBranch`
-(`estate-pins`, label `targeted`, the request's own source branches). **`bump/LegacyGroupBranchSweep`
+(`estate-pins` rows opened on a request's source branch before qits-1258, label `targeted`). **`bump/LegacyGroupBranchSweep`
 is kept** — idempotent, and it cleans up a group branch somebody pushes by hand: it rides
 `AutomationBranchSweepSchedule`, per repository it lists the branches, retires `mt_branch` rows whose
 branch is gone, and for each `maintenance/<group>` (one segment — never `automations/` or
@@ -362,8 +392,8 @@ pins within seconds, minutes before the release's PUBLISH run stores the changel
 FINALIZED request cut and some RELEASED request cut with its publish run not begun, PENDING, RUNNING
 or UNKNOWN stays in the range and leaves the row REQUESTED (`BumpService.changelogsPending`). The
 sweep sends it again; `mt_bump.changelog_pending_since` (V26) counts from the first such answer, and
-past `bump.changelog-wait` the pending release is the missing-changelog sentence and the row FAILS. Every path that carries changes proves them: `estate-pins`' source-branch runs and
-`dependency-bump`'s own-branch payload (`AutomationService.changelogs`, serialized by the
+past `bump.changelog-wait` the pending release is the missing-changelog sentence and the row FAILS. Every path that carries changes proves them: the own-branch payloads of `estate-pins` and
+`dependency-bump`, and a legacy estate-pins source-branch run (`AutomationService.changelogs`, serialized by the
 shared `CiClient.changes`). The payload NAMES the changelogs (`changelog: {repository, versions}`) and never carries
 their text: it reaches the step as one environment string, so the step's CLI fetches them. Tests
 that bump the fixture's internal pins seed the producers first (`Fixture.seedProducers`,

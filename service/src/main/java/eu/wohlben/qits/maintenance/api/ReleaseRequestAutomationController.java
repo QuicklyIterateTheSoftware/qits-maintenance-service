@@ -1,6 +1,7 @@
 package eu.wohlben.qits.maintenance.api;
 
 import eu.wohlben.qits.maintenance.automation.AutomationService;
+import eu.wohlben.qits.maintenance.automation.SettleGate;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto;
 import eu.wohlben.qits.maintenance.error.BadRequestException;
 import eu.wohlben.qits.maintenance.model.BumpTrigger;
@@ -41,6 +42,9 @@ import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
 public class ReleaseRequestAutomationController {
 
   @Inject AutomationService automations;
+
+  /** The trigger's gate: one settle per request, off this thread, answered within a budget. */
+  @Inject SettleGate settles;
 
   /**
    * One fold, as qits-projects posts it after every fold of a request.
@@ -97,13 +101,23 @@ public class ReleaseRequestAutomationController {
    *
    * <p>A repository no scan has read yet — a new one's first request — is still a 404, but it queues
    * a scan of that repository (one at a time), so the next thirty-second ask finds it.
+   *
+   * <p><b>Answered within a budget, never after it</b> (qits-1258, {@link SettleGate}): the settle
+   * runs on a pool of its own, at most one per request, and an ask for a fold being settled joins
+   * it. One not done within {@code qits.maintenance.automations.settle.budget} (5 s) is answered at
+   * once — the rows stored so far, every other kind UNKNOWN "settling: …" — and keeps running; the
+   * next ask joins it or finds it done.
    */
   @POST
   @Path("/{requestId}/automations")
   @Operation(
       operationId = "triggerReleaseRequestAutomations",
       summary = "Settle a release request's automations at one fold")
-  @APIResponse(responseCode = "200", description = "Every applicable kind's state at the fold")
+  @APIResponse(
+      responseCode = "200",
+      description =
+          "Every applicable kind's state at the fold; UNKNOWN \"settling\" for a kind still being"
+              + " decided when the settle outlasts its budget")
   @APIResponse(responseCode = "400", description = "Not a request id, not a sha, or not a work item")
   @APIResponse(
       responseCode = "404",
@@ -114,7 +128,7 @@ public class ReleaseRequestAutomationController {
     if (request == null) {
       throw new BadRequestException("the trigger names the repository and the fold");
     }
-    return automations.trigger(
+    return settles.settle(
         requestId == null ? null : requestId.trim(),
         new AutomationService.Fold(
             request.repository(),

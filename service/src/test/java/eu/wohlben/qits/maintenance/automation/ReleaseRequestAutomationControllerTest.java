@@ -3,8 +3,10 @@ package eu.wohlben.qits.maintenance.automation;
 import static eu.wohlben.qits.maintenance.automation.AutomationFixture.FOLD_A;
 import static eu.wohlben.qits.maintenance.automation.AutomationFixture.REQUEST;
 import static io.restassured.RestAssured.given;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.hamcrest.Matchers.anyOf;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.everyItem;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
@@ -120,6 +122,46 @@ class ReleaseRequestAutomationControllerTest {
     given().when().get(DOOR).then().statusCode(200).body("foldSha", equalTo(FOLD_A));
     given().when().get("/maintenance/api/bumps/" + bumpId).then().statusCode(200)
         .body("mode", equalTo("AUTOMATION"));
+  }
+
+  /**
+   * <b>A settle that outlasts its budget is answered, not waited for</b> (qits-1258). With every peer
+   * held, the settle cannot finish; the door still answers inside qits-projects' ten seconds — every
+   * kind UNKNOWN, "settling" — and the settle carries on. Once the peers answer, the next ask gets
+   * the real answer.
+   */
+  @Test
+  void aSettleOutlastingItsBudgetIsAnsweredSettlingAndTheNextAskGetsTheAnswer() {
+    peers.hold();
+    try {
+      long start = System.nanoTime();
+      given()
+          .contentType(ContentType.JSON)
+          .body(TRIGGER_BODY)
+          .when()
+          .post(DOOR)
+          .then()
+          .statusCode(200)
+          .body("foldSha", equalTo(FOLD_A))
+          .body("automations", not(hasSize(0)))
+          .body("automations.state", everyItem(equalTo("UNKNOWN")))
+          .body("automations.detail", everyItem(equalTo(SettleGate.SETTLING)));
+      long took = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+      assertTrue(took < 9_000, "inside qits-projects' ten seconds: " + took + " ms");
+    } finally {
+      peers.release();
+    }
+
+    given()
+        .contentType(ContentType.JSON)
+        .body(TRIGGER_BODY)
+        .when()
+        .post(DOOR)
+        .then()
+        .statusCode(200)
+        .body("automations", hasSize(2))
+        .body(SCREENSHOTS + ".state", anyOf(equalTo("REQUESTED"), equalTo("RUNNING")));
+    queue.awaitIdle(Duration.ofSeconds(30));
   }
 
   /** A read about a request nothing was asked about is empty, not a 404. */
