@@ -6,9 +6,10 @@ import java.util.Map;
 /**
  * <b>A release-request automation</b> (epic qits-978): a regeneration that has to land INSIDE a
  * release request, run on every fold of that request, joined to it, and held against it until it is
- * fresh for the sha the request is about to release. Estate pins and screenshot baselines are the two
- * this service ships; qits-760's entity diagram is the third, and it is one more implementation of
- * this interface plus one kind file in qits-ci — no page, no gate and no door changes.
+ * fresh for the sha the request is about to release. Estate pins and screenshot baselines were the
+ * first two; qits-760's entity diagram and qits-1133's dependency bump followed, each one more
+ * implementation of this interface plus one kind file in qits-ci — no page, no gate and no door
+ * changes.
  *
  * <p><b>Everything that is not on this interface is shared</b>, in {@link AutomationService}: the
  * carry-over that ends the loop an automation's own commit starts, the row, the dispatch, the caps,
@@ -87,6 +88,17 @@ public interface ReleaseRequestAutomation {
   /** {@link #inputPaths()} for ONE subject; a kind whose inputs are read from the fold overrides it. */
   default List<String> inputPaths(AutomationSubject subject) {
     return inputPaths();
+  }
+
+  /**
+   * Whether this kind's plan IS its change list, so the re-run door plans it and honours a FRESH or
+   * undecided answer rather than running anyway: a run with no changes would write nothing. True for
+   * a {@link Target#SOURCE_BRANCHES} kind, whose runs are the branches the plan names, and for {@code
+   * estate-pins} (qits-1258). A kind that regenerates output — screenshots, a diagram — is run when
+   * somebody asks, whatever its plan said.
+   */
+  default boolean planIsTheChangeList() {
+    return target() == Target.SOURCE_BRANCHES;
   }
 
   /** {@link Target#OWN_BRANCH} only: the branch is this plus the request id. */

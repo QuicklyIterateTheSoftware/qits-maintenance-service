@@ -15,9 +15,23 @@ import java.util.List;
  * @param headSha the commit the revision resolved to, non-null for {@link FileLookup.Status#FOUND}
  * @param entries the directory's entries, empty unless FOUND
  * @param message the sentence, for UNREACHABLE
+ * @param recursive whether the git host answered a RECURSIVE listing (qits-1258): every blob and
+ *     gitlink under the directory, each with its {@link TreeEntry#path() path} relative to it. False
+ *     for a plain listing — and for a recursive ASK that a git host predating {@code ?recursive=true}
+ *     answered with the plain listing it has always given, which is what lets a reader fall back
  */
 public record TreeLookup(
-    FileLookup.Status status, String headSha, List<TreeEntry> entries, String message) {
+    FileLookup.Status status,
+    String headSha,
+    List<TreeEntry> entries,
+    String message,
+    boolean recursive) {
+
+  /** A plain, one-directory answer: what every read but {@code GitHostReader#recursiveTree} gets. */
+  public TreeLookup(
+      FileLookup.Status status, String headSha, List<TreeEntry> entries, String message) {
+    this(status, headSha, entries, message, false);
+  }
 
   /**
    * One entry of a tree, and the two fields the git host reports beyond its name.
@@ -37,15 +51,27 @@ public record TreeLookup(
    * @param type {@code tree}, {@code blob}, or {@code commit} on a host that spells a gitlink out
    * @param mode the octal file mode as text ({@code 160000} for a gitlink), null when not reported
    * @param sha the entry's object name, null when not reported
+   * @param path the entry's path RELATIVE TO THE LISTED DIRECTORY, which only a recursive listing
+   *     reports (qits-1258); null on a plain one, where it would only repeat {@code name}
    */
-  public record TreeEntry(String name, String type, String mode, String sha) {
+  public record TreeEntry(String name, String type, String mode, String sha, String path) {
 
     /** Git's mode for a gitlink — a commit recorded inside a tree. */
     public static final String GITLINK_MODE = "160000";
 
+    /** The four-field entry of a plain listing: no path beyond the name. */
+    public TreeEntry(String name, String type, String mode, String sha) {
+      this(name, type, mode, sha, null);
+    }
+
     /** The two-field entry a git host without modes or shas answers. */
     public TreeEntry(String name, String type) {
-      this(name, type, null, null);
+      this(name, type, null, null, null);
+    }
+
+    /** Where the entry sits under the listed directory: its path when reported, else its name. */
+    public String relativePath() {
+      return path == null ? name : path;
     }
 
     public boolean isBlob() {
@@ -64,6 +90,14 @@ public record TreeLookup(
 
   public static TreeLookup found(String headSha, List<TreeEntry> entries) {
     return new TreeLookup(FileLookup.Status.FOUND, headSha, List.copyOf(entries), null);
+  }
+
+  /**
+   * A listing the git host answered with {@code "recursive": true}: every entry carries its path
+   * under the listed directory.
+   */
+  public static TreeLookup foundRecursive(String headSha, List<TreeEntry> entries) {
+    return new TreeLookup(FileLookup.Status.FOUND, headSha, List.copyOf(entries), null, true);
   }
 
   public static TreeLookup absent() {
@@ -85,6 +119,14 @@ public record TreeLookup(
   /** Whether the listing holds a blob of that exact name. */
   public boolean hasBlob(String name) {
     return entries.stream().anyMatch(entry -> entry.isBlob() && entry.name().equals(name));
+  }
+
+  /**
+   * The entry at that path under the listed directory, whatever its kind — on a plain listing the
+   * same as {@link #entry}, since every path there is a bare name.
+   */
+  public java.util.Optional<TreeEntry> entryAt(String path) {
+    return entries.stream().filter(entry -> entry.relativePath().equals(path)).findFirst();
   }
 
   /** The entry of that exact name, whatever its kind. */

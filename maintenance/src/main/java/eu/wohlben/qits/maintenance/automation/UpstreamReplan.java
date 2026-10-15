@@ -57,10 +57,12 @@ import org.jboss.logging.Logger;
  * request folded before a member released is FRESH at that fold for ever. {@link #released} closes
  * that: a release recorded in the ledger re-plans {@code estate-pins} on every open, not-READY
  * request of every wrapper of the member's project, through the same door, guard and restart
- * count. The plan itself reads each source branch's {@code .gitmodules} and answers FRESH where the
- * member is not declared or its pin is current, so "of the member's project" is the membership rule
- * the plan already applies ({@code EstatePinsAutomation.newestRelease}), and nothing finer is
- * guessed at from main's gitlinks — a source branch may declare a submodule main does not.
+ * count. The plan itself reads the request's FOLD — its {@code .gitmodules} and one recursive tree
+ * listing (qits-1258) — and answers FRESH where the member is not declared or its pin is current, so
+ * "of the member's project" is the membership rule the plan already applies ({@code
+ * EstatePinsAutomation.newestRelease}), and nothing finer is guessed at from main's gitlinks — a
+ * request's fold may declare a submodule main does not. A RUN plan is one commit on the kind's own
+ * branch, joined like any other automation's.
  *
  * <p><b>Never inside the caller's transaction.</b> Two of the three callers are bus listeners whose
  * claim transaction must not hold an HTTP call open; the hook submits to {@link WorkQueue} and

@@ -152,6 +152,14 @@ public class FakePeers extends PeerClient {
     return bodies;
   }
 
+  /**
+   * The url of every call made, in order — a method for the same reason as {@link #deleteCount}:
+   * how a test counts the reads a plan made (qits-1258) through the client proxy it holds.
+   */
+  public List<String> urls() {
+    return calls.stream().map(PeerCall::url).toList();
+  }
+
   /** Whether any call went to that target and path. */
   public boolean called(PeerTarget target, String path) {
     String url = url(target, path);

@@ -12,6 +12,7 @@ import eu.wohlben.qits.maintenance.bump.CiClient;
 import eu.wohlben.qits.maintenance.bump.ReleaseRequestClient;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto.AutomationDto;
 import eu.wohlben.qits.maintenance.entity.MtBump;
+import eu.wohlben.qits.maintenance.githost.GitHostReader;
 import eu.wohlben.qits.maintenance.model.BumpStatus;
 import eu.wohlben.qits.maintenance.model.BumpTrigger;
 import eu.wohlben.qits.maintenance.model.GroupSource;
@@ -35,9 +36,9 @@ import org.junit.jupiter.api.Test;
  * <b>A member's release re-plans the estate</b> (qits-1224). A wrapper request folded before a
  * member released has {@code estate-pins} FRESH at that fold, and the per-fold verdict is never
  * planned again by the fold trigger. The release recorded in the ledger is what asks again: through
- * {@link UpstreamReplan#released}, past the stored FRESH, onto the request's own non-main source
- * branch — and the re-fold that run's commit causes is carried FRESH as any estate commit is. A
- * release of a repository of another project reaches no wrapper of this one.
+ * {@link UpstreamReplan#released}, past the stored FRESH, as one commit onto the kind's own branch
+ * (qits-1258) — and the re-fold that commit's join causes is planned again and found FRESH, as any
+ * estate commit's is. A release of a repository of another project reaches no wrapper of this one.
  */
 @QuarkusTest
 class EstatePinsUpstreamReplanTest {
@@ -66,7 +67,8 @@ class EstatePinsUpstreamReplanTest {
 
   private static final String NEW_SHA = "0aa0aa0aa0aa0aa0aa0aa0aa0aa0aa0aa0aa0aa0";
 
-  private static final String WORK_HEAD = "2000000000000000000000000000000000000001";
+  private static final String OWN_BRANCH =
+      AutomationService.BRANCH_PREFIX + EstatePinsAutomation.KIND + "/" + REQUEST;
 
   private static final String RUN = "run-estate-upstream";
 
@@ -116,9 +118,8 @@ class EstatePinsUpstreamReplanTest {
         FakePeers.Scripted.ok(
             "{\"eventId\":\"e1\",\"runIds\":[\"" + RUN + "\"],\"repositoriesRead\":1,"
                 + "\"repositoriesSkipped\":[]}"));
-    branch("work", WORK_HEAD, OLD_SHA);
-    fold(FOLD);
-    fold(NEXT_FOLD);
+    fold(FOLD, OLD_SHA);
+    fold(NEXT_FOLD, NEW_SHA);
     request(FOLD);
     peers.answer(
         PeerTarget.PROJECTS,
@@ -140,36 +141,23 @@ class EstatePinsUpstreamReplanTest {
         List.of(), List.of(), GroupSource.DEFAULT, pin -> PinKind.INTERNAL, Instant.now());
   }
 
-  /** One wrapper source branch declaring the member, its gitlink at {@code pinned}. */
-  private void branch(String branch, String head, String pinned) {
-    Map<String, String> sha = Map.of("Git-Commit-Sha", head);
-    peers.answer(
-        PeerTarget.GITHOST,
-        TREE + branch,
-        FakePeers.Scripted.ok(
-            "{\"entries\":[{\"name\":\".gitmodules\",\"type\":\"blob\"},"
-                + "{\"name\":\"components\",\"type\":\"tree\"}]}",
-            sha));
-    peers.answer(
-        PeerTarget.GITHOST, BLOB + head + "/.gitmodules", FakePeers.Scripted.ok(GITMODULES, sha));
-    peers.answer(
-        PeerTarget.GITHOST,
-        TREE + head + "/components/qits-member",
-        FakePeers.Scripted.ok(
-            "{\"entries\":[{\"name\":\"member-a\",\"type\":\"commit\",\"mode\":\"160000\","
-                + "\"sha\":\"" + pinned + "\"}]}",
-            sha));
-  }
-
-  /** The wrapper's fold: a root that answers, and its declaration. */
-  private void fold(String fold) {
+  /** The wrapper's fold: a root that answers, its declaration, and its gitlink at {@code pinned}. */
+  private void fold(String fold, String pinned) {
     Map<String, String> sha = Map.of("Git-Commit-Sha", fold);
     peers.answer(PeerTarget.GITHOST, TREE + fold, FakePeers.Scripted.ok("{\"entries\":[]}", sha));
     peers.answer(
         PeerTarget.GITHOST, BLOB + fold + "/.gitmodules", FakePeers.Scripted.ok(GITMODULES, sha));
+    peers.answer(
+        PeerTarget.GITHOST,
+        TREE + fold + GitHostReader.RECURSIVE_QUERY,
+        FakePeers.Scripted.ok(
+            "{\"recursive\":true,\"entries\":[{\"name\":\"member-a\",\"path\":\""
+                + MEMBER_PATH + "\",\"type\":\"commit\",\"mode\":\"160000\",\"sha\":\""
+                + pinned + "\"}]}",
+            sha));
   }
 
-  /** The request: PENDING at that fold, releasing main and the non-main source branch "work". */
+  /** The request: PENDING at that fold, releasing main and the source branch "work". */
   private void request(String mergedSha) {
     peers.answer(
         PeerTarget.PROJECTS,
@@ -209,11 +197,11 @@ class EstatePinsUpstreamReplanTest {
 
   /**
    * The whole loop: FRESH at the fold, the member releases, the estate pins are re-planned past the
-   * stored verdict and a bump goes onto "work" (never main) — and the re-fold its commit causes is
-   * carried FRESH with no second run.
+   * stored verdict and one commit goes onto the kind's own branch (never a source branch) and is
+   * joined — and the re-fold that join causes is planned again and FRESH, with no second run.
    */
   @Test
-  void aMemberReleaseReplansAFreshFoldOntoTheNonMainSourceBranch() throws Exception {
+  void aMemberReleaseReplansAFreshFoldOntoTheOwnBranch() throws Exception {
     foldedBeforeTheRelease();
     store.recordRelease(
         MEMBER, NEW_VERSION, NEW_SHA, Instant.parse("2026-10-13T09:00:00Z"), List.of());
@@ -221,10 +209,12 @@ class EstatePinsUpstreamReplanTest {
     released(MEMBER);
 
     List<String> triggers = peers.bodiesFor(CiClient.TRIGGER_PATH);
-    assertEquals(1, triggers.size(), "one run, for the one branch whose pin lags");
-    JsonNode payload = JSON.readTree(triggers.getFirst()).get("payload");
-    assertEquals("work", payload.get("branch").asText());
-    assertEquals(EstatePinsAutomation.TARGETED_GROUP, payload.get("group").asText());
+    assertEquals(1, triggers.size(), "one run, for the fold whose pin lags");
+    JsonNode body = JSON.readTree(triggers.getFirst());
+    assertEquals(CiClient.AUTOMATION_EVENT_NAME, body.get("name").asText());
+    JsonNode payload = body.get("payload");
+    assertEquals(OWN_BRANCH, payload.get("branch").asText());
+    assertEquals("[\"" + MEMBER_PATH + "\"]", payload.get("commitPaths").toString());
     JsonNode change = payload.get("changes").get(0);
     assertEquals(MEMBER_PATH, change.get("manifestPath").asText());
     assertEquals(OLD_SHA, change.get("from").asText());
@@ -236,17 +226,23 @@ class EstatePinsUpstreamReplanTest {
             .findFirst()
             .orElseThrow(() -> new AssertionError("no upstream row: " + estateRows()));
     assertEquals(FOLD, row.foldSha);
-    assertEquals("work", row.branch);
+    assertEquals(OWN_BRANCH, row.branch);
     assertEquals(BumpStatus.RUNNING.name(), row.status, row.message);
     assertEquals(1, store.upstreamRestarts(REQUEST));
     AutomationDto atFold =
         AutomationFixture.entry(automations.automations(REQUEST, FOLD), EstatePinsAutomation.KIND);
     assertEquals(AutomationState.RUNNING.name(), atFold.state(), "the fold no longer reads FRESH");
 
-    // The run's push onto "work" re-folds the request; its green ending is COMMITTED at FOLD.
+    // The run pushed onto its own branch; its green ending is COMMITTED at FOLD and joined.
     String written = "2000000000000000000000000000000000000009";
-    branch("work", written, NEW_SHA);
-    request(NEXT_FOLD);
+    peers.answer(
+        PeerTarget.GITHOST,
+        TREE + OWN_BRANCH.replace("/", "%2F"),
+        FakePeers.Scripted.ok("{\"entries\":[]}", Map.of("Git-Commit-Sha", written)));
+    peers.answer(
+        PeerTarget.PROJECTS,
+        REQUESTS + "/" + REQUEST + "/sources",
+        FakePeers.Scripted.ok("{\"request\":{\"id\":\"" + REQUEST + "\",\"state\":\"PENDING\"}}"));
     peers.answer(
         PeerTarget.CI,
         "/ci/api/runs/" + RUN,
@@ -256,6 +252,8 @@ class EstatePinsUpstreamReplanTest {
     AutomationDto committed =
         AutomationFixture.entry(automations.automations(REQUEST, FOLD), EstatePinsAutomation.KIND);
     assertEquals(AutomationState.COMMITTED.name(), committed.state(), committed.detail());
+    assertEquals(1, peers.bodiesFor(REQUESTS + "/" + REQUEST + "/sources").size(), "joined");
+    request(NEXT_FOLD);
 
     AutomationDto next =
         AutomationFixture.entry(
@@ -267,7 +265,10 @@ class EstatePinsUpstreamReplanTest {
             EstatePinsAutomation.KIND);
     queue.awaitIdle(Duration.ofSeconds(30));
     assertEquals(AutomationState.FRESH.name(), next.state(), next.detail());
-    assertTrue(next.detail().contains("carried"), next.detail());
+    assertTrue(
+        next.detail().contains("already name what the members released"),
+        "the gitlink is this kind's input, so it is planned again and found current: "
+            + next.detail());
     assertEquals(1, peers.bodiesFor(CiClient.TRIGGER_PATH).size(), "no second run");
   }
 

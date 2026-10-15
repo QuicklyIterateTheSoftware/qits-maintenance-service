@@ -9,10 +9,11 @@ import java.util.Map;
  * spent finding that out), RUN (with the runs it wants), or UNKNOWN (it could not tell — answered,
  * never stored, and asked again by the sweep).
  *
- * <p><b>A plan may ask for more than one run.</b> An {@link Target#OWN_BRANCH} kind has one branch
- * per request and so one run; a {@link Target#SOURCE_BRANCHES} kind writes each source branch that
- * needs it, and each of those is a run of its own with its own change list — estate pins asks for one
- * per branch whose gitlinks are behind and never for a branch that is already right.
+ * <p><b>A plan may ask for more than one run</b>, though no kind registered today does. An {@link
+ * Target#OWN_BRANCH} kind has one branch per request and so one run — estate pins included since
+ * qits-1258, which used to ask for one run per source branch whose gitlinks were behind; a {@link
+ * Target#SOURCE_BRANCHES} kind would write each source branch that needs it, each a run of its own
+ * with its own change list.
  *
  * @param kind which of the three
  * @param reason the sentence for FRESH and UNKNOWN
@@ -30,7 +31,7 @@ public record Plan(Kind kind, String reason, List<Run> runs) {
    * One run a plan asks for.
    *
    * @param branch the branch it writes, or null for the kind's own ({@code branchPrefix() +
-   *     requestId}); a SOURCE_BRANCHES kind always names one
+   *     requestId}); a SOURCE_BRANCHES kind would always name one
    * @param changes what a {@code MaintenanceBump} run writes; empty for the shared core
    * @param extras the kind's own payload fields, sent beside the shared ones
    */

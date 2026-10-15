@@ -83,6 +83,12 @@ import org.jboss.logging.Logger;
  * <p>Idempotent per (request, fold): a fold that already has rows is answered from them, so the
  * thirty-second re-ask costs one read.
  *
+ * <p><b>The door does not call {@link #trigger} on its own thread</b> (qits-1258): {@link SettleGate}
+ * runs one settle per request at a time on a small pool of its own and answers within a budget under
+ * qits-projects' timeout, the kinds not decided yet UNKNOWN ({@link #settling}). A settle is still
+ * expected to be cheap — each kind reads the fold a handful of times, never once per source branch —
+ * and the gate is what keeps one that is not from holding up every other request's.
+ *
  * <h2>Two stages (qits-1133)</h2>
  *
  * <p>The kinds are settled in their {@link Stage} order: every SOURCE kind first ({@code
@@ -126,9 +132,9 @@ import org.jboss.logging.Logger;
  * ending a green run stays RUNNING and the next poll reads the head again.
  *
  * <p><b>A green outcome is recorded against its OWN fold even when the request has moved on</b>,
- * because the commonest mover is the run itself: estate pins push onto a source branch, and once a
- * kind's own branch is a source of the request every later run's push re-folds it before the poll
- * sees the run end. Superseding those would leave the next fold nothing to carry from and cost a
+ * because the commonest mover is the run itself: once a kind's own branch is a source of the
+ * request, every later run's push re-folds it before the poll sees the run end (and a legacy
+ * source-branch row's push always did). Superseding those would leave the next fold nothing to carry from and cost a
  * second run on every push. It is safe whatever moved the fold — the outcome is a statement about
  * the fold the run fetched (the core refuses a fold that is no longer {@code foldSha} before it
  * starts), the gate only ever reads the rows of the sha it is about to release, and carry-over onto
@@ -362,19 +368,12 @@ public class AutomationService {
    *     queueing a scan of that one repository unless one is already queued or running
    */
   public ReleaseRequestAutomationsDto trigger(String requestId, Fold fold) {
-    requireRequestId(requestId);
-    if (fold == null) {
-      throw new BadRequestException("the trigger names the repository and the fold");
-    }
-    String foldSha = requireSha("foldSha", fold.foldSha());
+    String foldSha = validate(requestId, fold);
     String previous =
         fold.previousFoldSha() == null || fold.previousFoldSha().isBlank()
             ? null
             : requireSha("previousFoldSha", fold.previousFoldSha());
     String item = workItem(fold.workItem());
-    if (fold.repository() == null || fold.repository().isBlank()) {
-      throw new BadRequestException("the trigger names the repository the request belongs to");
-    }
     String name = fold.repository().trim();
     MtRepository row = store.repository(name).orElseThrow(() -> unscanned(name));
     RequestNames names = names(row, requestId, fold.backingBranch(), fold.qualifiedId());
@@ -399,7 +398,8 @@ public class AutomationService {
 
     // THE UNION IS OVER THE KINDS THAT APPLY, and that is what lets one kind's commit be carried by
     // another: the re-fold a screenshot join causes changes only __screenshots__ paths, which lie
-    // under the union, so estate pins is carried on it too rather than asked to plan again. A
+    // under the union, so a kind that declares no inputs is carried on it too rather than asked to
+    // plan again (estate pins and the bump declare theirs, and are carried on it for that reason). A
     // DERIVED kind reads its own stage's union only (qits-1133): a SOURCE commit is a build input,
     // never "automation output" as far as what is built from it is concerned.
     Map<String, List<String>> paths = new LinkedHashMap<>();
@@ -455,6 +455,43 @@ public class AutomationService {
     return answer(
         requestId, foldSha, unknown, waiting, notApplicable,
         deferred == null ? Map.of() : deferred, accepts);
+  }
+
+  /**
+   * The checks a trigger makes before it reads anything — what {@link SettleGate} asks before it
+   * hands a settle to its pool, so a malformed ask is a 400 at once rather than a settle.
+   *
+   * @return the fold's sha, trimmed
+   * @throws BadRequestException not a request id, not a sha, not a work item, no repository
+   */
+  public static String validate(String requestId, Fold fold) {
+    requireRequestId(requestId);
+    if (fold == null) {
+      throw new BadRequestException("the trigger names the repository and the fold");
+    }
+    String foldSha = requireSha("foldSha", fold.foldSha());
+    if (fold.previousFoldSha() != null && !fold.previousFoldSha().isBlank()) {
+      requireSha("previousFoldSha", fold.previousFoldSha());
+    }
+    workItem(fold.workItem());
+    if (fold.repository() == null || fold.repository().isBlank()) {
+      throw new BadRequestException("the trigger names the repository the request belongs to");
+    }
+    return foldSha;
+  }
+
+  /**
+   * <b>The answer while a settle of this fold is still running</b> (qits-1258): every row already
+   * stored for the fold as usual, and every offered kind without one UNKNOWN with this sentence.
+   * UNKNOWN is the word every caller already holds the request on and asks again about, so a caller
+   * that predates the gate needs nothing new; nothing is decided or stored here.
+   */
+  public ReleaseRequestAutomationsDto settling(String requestId, String foldSha, String detail) {
+    Map<String, String> unknown = new LinkedHashMap<>();
+    for (ReleaseRequestAutomation kind : kinds()) {
+      unknown.put(kind.kind(), detail);
+    }
+    return answer(requestId, foldSha, unknown, Map.of(), Map.of(), Map.of(), Set.of());
   }
 
   /**
@@ -842,7 +879,9 @@ public class AutomationService {
         throw new AutomationNotRunnableException(clash);
       }
       runs = plan.runs();
-    } else if (kind.target() == Target.SOURCE_BRANCHES) {
+    } else if (kind.planIsTheChangeList()) {
+      // A kind whose plan IS its change list (estate pins, and any SOURCE_BRANCHES kind): FRESH is
+      // recorded rather than run, because a run with nothing to change writes nothing.
       switch (plan.kind()) {
         case FRESH -> {
           return openOutcome(kind, subject, trigger, BumpStatus.NOTHING_TO_DO,
@@ -1023,11 +1062,13 @@ public class AutomationService {
     // MaintenanceBump entry shape — the same records, and the same `changelog` field on each one
     // that has a range, serialized by the same CiClient code the bump pipeline is sent.
     Map<String, Object> extras = new LinkedHashMap<>(extras(row));
-    List<String> commitPaths = committablePaths(kind, subject);
     Object planned = extras.remove(DependencyBumpAutomation.COMMIT_PATHS);
-    if (planned instanceof List<?> list && !list.isEmpty()) {
-      commitPaths = list.stream().map(String::valueOf).toList();
-    }
+    // The kind's own paths are read from the fold only when the plan named none (qits-1258): a
+    // planned list replaces them, so reading them anyway would be a git-host call for nothing.
+    List<String> commitPaths =
+        planned instanceof List<?> list && !list.isEmpty()
+            ? list.stream().map(String::valueOf).toList()
+            : committablePaths(kind, subject);
     if (!changes.isEmpty()) {
       extras.put("changes", CiClient.changes(changes, changelogs));
     }
@@ -1065,7 +1106,10 @@ public class AutomationService {
           Instant.now());
       return;
     }
-    String pipeline = kind == null ? CiClient.EVENT_NAME : kind.pipeline();
+    // A kind that writes its own branch now (estate pins, qits-1258) still owns the source-branch
+    // rows it opened before: those were planned for the bump pipeline and are sent to it.
+    String pipeline =
+        kind == null || kind.target() == Target.OWN_BRANCH ? CiClient.EVENT_NAME : kind.pipeline();
     if (!CiClient.EVENT_NAME.equals(pipeline)) {
       fail(row, row.automationKind + " names the pipeline " + pipeline
           + ", which does not write a request's own branches");
@@ -1904,15 +1948,28 @@ public class AutomationService {
     return value == null || value.isBlank();
   }
 
-  /** Where a row's commit lands — the kind's answer, or, for a kind this build no longer has, the branch's. */
-  private static Target target(MtBump row, ReleaseRequestAutomation kind) {
-    if (kind != null) {
-      return kind.target();
+  /**
+   * Where a row's commit lands — the kind's answer, or the BRANCH's when the two disagree.
+   *
+   * <p>A kind this build no longer has is read from its branch alone. So is <b>a row of a kind that
+   * has since moved to a branch of its own</b> (qits-1258): {@code estate-pins} answered
+   * SOURCE_BRANCHES until then, and a release that changes the kind's answer may find its rows still
+   * REQUESTED or RUNNING on a request's source branch. Such a row was planned, and must be sent and
+   * ended, as what it is — its branch is not an automation's own, so it is a source-branch row,
+   * whatever the kind says now.
+   */
+  static Target target(MtBump row, ReleaseRequestAutomation kind) {
+    boolean ownShaped =
+        row.branch != null
+            && (row.branch.startsWith(BRANCH_PREFIX)
+                || row.branch.startsWith("maintenance/baselines/"));
+    if (kind == null) {
+      return ownShaped ? Target.OWN_BRANCH : Target.SOURCE_BRANCHES;
     }
-    return row.branch != null
-            && (row.branch.startsWith(BRANCH_PREFIX) || row.branch.startsWith("maintenance/baselines/"))
-        ? Target.OWN_BRANCH
-        : Target.SOURCE_BRANCHES;
+    if (kind.target() == Target.OWN_BRANCH && row.branch != null && !ownShaped) {
+      return Target.SOURCE_BRANCHES;
+    }
+    return kind.target();
   }
 
   /**
@@ -1921,10 +1978,10 @@ public class AutomationService {
    */
   public String configPath(MtBump row) {
     ReleaseRequestAutomation kind = registeredKind(row.automationKind).orElse(null);
+    // A source-branch row is the bump pipeline's whatever its kind says now (qits-1258).
     boolean core =
-        kind != null
-            ? CiClient.AUTOMATION_EVENT_NAME.equals(kind.pipeline())
-            : target(row, null) == Target.OWN_BRANCH;
+        target(row, kind) == Target.OWN_BRANCH
+            && (kind == null || CiClient.AUTOMATION_EVENT_NAME.equals(kind.pipeline()));
     return core
         ? CiClient.AUTOMATION_CONFIG_DIR + row.automationKind + ".yml"
         : CiClient.CONFIG_PATH;

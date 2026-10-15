@@ -654,9 +654,9 @@ public class ReleaseRequestClient {
    * @param mergedSha the request's current FOLD — the sha its gates settle and the one a
    *     release-request automation compares its own fold against: a row whose fold is not this one
    *     has been SUPERSEDED. Null when unread or not folded yet
-   * @param branches the request's named BRANCH sources, in the order the answer lists them — what an
-   *     automation that writes onto the request's own branches (estate pins) reads when a re-run
-   *     carries no list of its own. Empty when unread
+   * @param branches the request's named BRANCH sources, in the order the answer lists them — what a
+   *     re-run hands a kind as its subject's source branches when it carries no list of its own
+   *     (estate pins planned per branch from these until qits-1258). Empty when unread
    * @param unknown qits-projects answered 404: it holds no such request. Unreadable like any other
    *     failure, and kept apart only because the automation-branch sweep may act on it — every other
    *     reader treats it as the peer that could not be asked, which is what it was before

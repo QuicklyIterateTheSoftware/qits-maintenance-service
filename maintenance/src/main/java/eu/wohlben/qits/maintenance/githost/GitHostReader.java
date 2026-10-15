@@ -54,7 +54,38 @@ public class GitHostReader {
 
   /** One directory listing. An empty path is the repository root. */
   public TreeLookup tree(String project, String repository, String revision, String path) {
-    PeerAnswer answer = peers.get(PeerTarget.GITHOST, treePath(project, repository, revision, path)).answer();
+    return listing(project, repository, revision, path, treePath(project, repository, revision, path));
+  }
+
+  /** What a tree route takes to answer every entry under the directory rather than its children. */
+  public static final String RECURSIVE_QUERY = "?recursive=true";
+
+  /**
+   * <b>The whole tree under the repository root, in ONE call</b> (qits-1258) — {@code GET
+   * /git/<project>/<repo>/tree/<rev>?recursive=true}, answered with a top-level {@code "recursive":
+   * true} and every blob and gitlink under the root, each entry carrying its {@code path} beside
+   * {@code name}, {@code type} and, for a gitlink, {@code sha} and {@code mode}.
+   *
+   * <p><b>Why one call</b>: the wrapper's estate pins used to list every component directory one
+   * call at a time, for every source branch — hundreds of reads per settle — and a nine-branch
+   * request queued the git host behind it until no request on the estate could be settled inside
+   * qits-projects' timeout.
+   *
+   * <p><b>Read {@link TreeLookup#recursive()} before believing the entries are all of them.</b> A git
+   * host that predates the parameter ignores it and answers the root's own listing, with no {@code
+   * "recursive"} field; that answer is passed back as an ordinary FOUND listing of the root, so the
+   * caller can fall back to the per-directory listings rather than read "absent" into every path
+   * below the root.
+   */
+  public TreeLookup recursiveTree(String project, String repository, String revision) {
+    return listing(
+        project, repository, revision, "",
+        treePath(project, repository, revision, "") + RECURSIVE_QUERY);
+  }
+
+  private TreeLookup listing(
+      String project, String repository, String revision, String path, String route) {
+    PeerAnswer answer = peers.get(PeerTarget.GITHOST, route).answer();
     if (answer.ok()) {
       Optional<String> sha = answer.header(COMMIT_SHA_HEADER);
       if (sha.isEmpty() || sha.get().isBlank()) {
@@ -64,7 +95,12 @@ public class GitHostReader {
         return TreeLookup.unreachable(
             "the git host answered a tree of " + repository + " with no " + COMMIT_SHA_HEADER);
       }
-      return TreeLookup.found(sha.get(), entries(answer.json()));
+      JsonNode body = answer.json();
+      boolean recursive =
+          body != null && body.hasNonNull("recursive") && body.get("recursive").asBoolean(false);
+      return recursive
+          ? TreeLookup.foundRecursive(sha.get(), entries(body))
+          : TreeLookup.found(sha.get(), entries(body));
     }
     if (!answer.notFound()) {
       return TreeLookup.unreachable(
@@ -72,7 +108,7 @@ public class GitHostReader {
     }
     // 404 on the ROOT of a repository is the revision, not the path — there is no path left to be
     // missing. Deeper, the second call tells them apart.
-    if (path.isEmpty()) {
+    if (path == null || path.isEmpty()) {
       return TreeLookup.gone();
     }
     return switch (rootStatus(project, repository, revision)) {
@@ -220,9 +256,15 @@ public class GitHostReader {
         // rather than required so a git host that starts reporting them arms the gitlink half
         // without a second release here — and so that until it does, no gitlink is pinned at a sha
         // this service made up. See TreeLookup.TreeEntry.
+        // `path` is a recursive listing's (qits-1258): where the entry sits under the listed
+        // directory. A plain listing carries none, and the name is the whole of it there.
         entries.add(
             new TreeLookup.TreeEntry(
-                name.asText(), type.asText(), text(entry, "mode"), text(entry, "sha")));
+                name.asText(),
+                type.asText(),
+                text(entry, "mode"),
+                text(entry, "sha"),
+                text(entry, "path")));
       }
     }
     return entries;

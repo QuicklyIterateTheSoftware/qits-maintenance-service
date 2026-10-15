@@ -15,7 +15,8 @@ import java.util.List;
  *     and checks against {@link #foldSha} before it starts
  * @param sourceBranches the request's named branches that are not its main branch and not one of
  *     the automations' own ({@code maintenance/automations/**}): the branches a SOURCE_BRANCHES kind
- *     may write
+ *     may write. No registered kind reads them since {@code estate-pins} plans at the fold
+ *     (qits-1258); they stay because the subject is what every kind is handed
  * @param workItem the work item a commit subject names, or null
  * @param fold the tree at {@link #foldSha}
  * @param qualifiedId the request's logical id, {@code <repository>-rr-<n>}, or null when qits-projects
