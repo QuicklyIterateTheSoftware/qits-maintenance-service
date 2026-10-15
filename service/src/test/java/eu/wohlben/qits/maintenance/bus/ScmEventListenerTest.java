@@ -13,11 +13,12 @@ import eu.wohlben.qits.maintenance.adoption.ReleaseLedger;
 import eu.wohlben.qits.maintenance.entity.MtBranch;
 import eu.wohlben.qits.maintenance.entity.MtGroup;
 import eu.wohlben.qits.maintenance.entity.MtLatest;
+import eu.wohlben.qits.maintenance.entity.MtRelease;
 import eu.wohlben.qits.maintenance.entity.MtRepository;
 import eu.wohlben.qits.maintenance.githost.GitHostReader;
 import eu.wohlben.qits.maintenance.githost.TreeLookup;
 import eu.wohlben.qits.maintenance.latest.GitlinkSha;
-import eu.wohlben.qits.maintenance.latest.VersionOrder;
+import eu.wohlben.qits.maintenance.latest.MainHeadLatest;
 import eu.wohlben.qits.maintenance.model.BranchState;
 import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.ScanScope;
@@ -137,25 +138,43 @@ class ScmEventListenerTest {
       return branches.get(repository + "/" + group);
     }
 
-    /** {@code mt_latest}, as the forward-only writer sees it: a version and its provenance. */
+    /**
+     * {@code mt_latest}, as the main-head writer sees it (qits-1257): a version and its provenance,
+     * overwritten when either differs, untouched when neither does.
+     */
     final Map<String, MtLatest> latest = new LinkedHashMap<>();
 
+    /** {@code mt_release}, oldest first: what the ledger stand-in recorded. */
+    final List<MtRelease> releases = new ArrayList<>();
+
     @Override
-    public boolean recordLatestIfNewer(
-        Ecosystem ecosystem, String name, String version, String sourceUrl, Instant now) {
-      String key = PendingChanges.key(ecosystem.wireName(), name);
+    public boolean recordGitlinkLatest(
+        String name, String version, String sourceUrl, Instant now) {
+      String key = PendingChanges.key(Ecosystem.GITLINK.wireName(), name);
       MtLatest row = latest.get(key);
-      if (row != null && row.latest != null && !VersionOrder.newer(ecosystem, row.latest, version)) {
+      if (row != null
+          && version.equals(row.latest)
+          && java.util.Objects.equals(sourceUrl, row.sourceUrl)) {
         return false;
       }
       MtLatest written = new MtLatest();
-      written.ecosystem = ecosystem.wireName();
+      written.ecosystem = Ecosystem.GITLINK.wireName();
       written.name = name;
       written.latest = version;
       written.sourceUrl = sourceUrl;
       written.checkedAt = now;
       latest.put(key, written);
       return true;
+    }
+
+    @Override
+    public Optional<MtLatest> latest(Ecosystem ecosystem, String name) {
+      return Optional.ofNullable(latest.get(PendingChanges.key(ecosystem.wireName(), name)));
+    }
+
+    @Override
+    public List<MtRelease> releasesOf(String repository) {
+      return releases.stream().filter(row -> row.repository.equals(repository)).toList();
     }
 
     MtLatest latestRow(Ecosystem ecosystem, String name) {
@@ -197,6 +216,9 @@ class ScmEventListenerTest {
     final List<Recorded> recorded = new ArrayList<>();
     RuntimeException failWith;
 
+    /** Where a recorded release lands, so a later main head can be named by it. */
+    RecordingStore store;
+
     @Override
     public boolean record(
         String project, String repository, String version, String sha, Instant occurredAt) {
@@ -204,6 +226,13 @@ class ScmEventListenerTest {
         throw failWith;
       }
       recorded.add(new Recorded(project, repository, version, sha));
+      MtRelease row = new MtRelease();
+      row.id = UUID.randomUUID();
+      row.repository = repository;
+      row.version = version;
+      row.sha = sha;
+      row.occurredAt = occurredAt;
+      store.releases.add(row);
       return true;
     }
   }
@@ -260,13 +289,18 @@ class ScmEventListenerTest {
     scans = new RecordingScans();
     gitHost = new RecordingGitHost();
     ledger = new RecordingLedger();
+    ledger.store = store;
     listener = new ScmEventListener();
     listener.store = store;
     listener.scans = scans;
     listener.gitHost = gitHost;
     listener.ledger = ledger;
     upstream = new RecordingUpstream();
-    listener.upstream = upstream;
+    // The real rule over the stand-ins: which release a head carries is the decision under test.
+    MainHeadLatest mainHead = new MainHeadLatest();
+    mainHead.store = store;
+    mainHead.upstream = upstream;
+    listener.mainHead = mainHead;
     store.repository(REPOSITORY, MAIN, GROUP, "external");
   }
 
@@ -338,89 +372,81 @@ class ScmEventListenerTest {
     assertTrue(store.branches.isEmpty());
   }
 
-  // --- the gitlink latest -----------------------------------------------------------------------
+  // --- a release is no gitlink latest (qits-1257) ------------------------------------------------
 
   private static final String FRONTEND = "qits-artifacts-frontend";
   private static final String VERSION = "2026.901.1";
   private static final String RELEASE_SHA = "0011223344556677889900aabbccddeeff001122";
+
+  /** qits-qits-rr-137's two edge releases: the one main carries, and the one cut after it. */
+  private static final String FINALIZED = "2026.1014.173542";
+  private static final String FINALIZED_SHA = "1734217342173421734217342173421734217342";
+  private static final String UNFINALIZED = "2026.1014.232301";
+  private static final String UNFINALIZED_SHA = "2323023230232302323023230232302323023230";
 
   private void released(String repository, String branch, String version) {
     listener.onFrame(frame("SCMRelease", scmReleasePayload(repository, branch, version)));
   }
 
   /**
-   * THE HOP FILES' REPLACEMENT. A frontend releases on its own main branch — no maintenance branch
-   * anywhere in it — and every gitlink pinned at that repository now has somewhere to move.
+   * <b>THE BUG (qits-1257).</b> A release is a tag CUT at RELEASED; it reaches {@code main} only at
+   * FINALIZED, and between the two its publish can fail — which is what qits-qits-rr-137 pinned. So
+   * an {@code SCMRelease} no longer writes the gitlink latest and tells no re-plan hook anything; it
+   * resolves the tag and records the ledger row, at the tag's commit, and that is all. Until
+   * qits-1257 this test asserted the opposite: that the release WROTE the latest, version and sha.
    */
   @Test
-  void anyReleaseRecordsTheGitlinkLatestWithTheCommitItsTagResolvesTo() {
+  void aReleaseRecordsTheLedgerAtItsTagsCommitAndMovesNoGitlinkLatest() {
     gitHost.holds(FRONTEND, "refs/tags/" + VERSION, RELEASE_SHA);
 
     released(FRONTEND, MAIN, VERSION);
 
-    MtLatest row = store.latestRow(Ecosystem.GITLINK, FRONTEND);
-    assertEquals(VERSION, row.latest, "the version is what the bump step fetches as a tag");
     assertEquals(
-        RELEASE_SHA,
-        GitlinkSha.read(row.sourceUrl).orElseThrow(),
-        "and the sha is what the pending rule compares a pin against");
+        List.of(new RecordingLedger.Recorded("qits", FRONTEND, VERSION, RELEASE_SHA)),
+        ledger.recorded);
     assertEquals(
         List.of("qits/" + FRONTEND + " refs/tags/" + VERSION),
         gitHost.asked,
         "the tag is spelled in full, so no branch of that name can answer for it");
+    assertNull(store.latestRow(Ecosystem.GITLINK, FRONTEND), "a cut release is not finalized");
+    assertTrue(upstream.moved.isEmpty(), "no gitlink consumer is re-planned on a cut tag");
+    assertTrue(upstream.released.isEmpty(), "and no wrapper's estate either");
   }
 
   /**
-   * A release of a repository whose maintenance branch is pushed records the gitlink and leaves the
+   * A release of a repository whose maintenance branch is pushed records the ledger and leaves the
    * branch alone — the two facts are independent, and only one of them is this event's to state.
    */
   @Test
-  void aReleaseWritesTheGitlinkLatestAndLeavesThePushedBranchWhereItIs() {
+  void aReleaseRecordsTheLedgerAndLeavesThePushedBranchWhereItIs() {
     store.branch(REPOSITORY, GROUP, BranchState.PUSHED, "abc1234");
     gitHost.holds(REPOSITORY, "refs/tags/" + VERSION, RELEASE_SHA);
 
     released(REPOSITORY, BRANCH, VERSION);
 
     assertEquals(BranchState.PUSHED.name(), store.branchRow(REPOSITORY, GROUP).state);
-    assertEquals(VERSION, store.latestRow(Ecosystem.GITLINK, REPOSITORY).latest);
+    assertEquals(1, ledger.recorded.size());
   }
 
   /**
    * A tag the git host does not hold is POISON — the same question has the same answer for ever —
-   * so it is settled rather than left owed.
+   * so it is settled rather than left owed, and nothing is recorded.
    */
   @Test
   void aReleaseWhoseTagTheGitHostDoesNotHoldRecordsNothingAndIsSettled() {
     released(FRONTEND, MAIN, VERSION);
 
+    assertTrue(ledger.recorded.isEmpty());
     assertNull(store.latestRow(Ecosystem.GITLINK, FRONTEND));
+    assertTrue(upstream.released.isEmpty());
   }
 
-  /**
-   * A git host that cannot be ASKED is retryable, and it is the only thing that can recover a
-   * latest nothing else ever writes — no scan refreshes a gitlink.
-   */
+  /** A git host that cannot be ASKED is retryable: the release stays owed until its row is written. */
   @Test
   void aGitHostThatWillNotAnswerIsLeftToThrowSoTheReleaseStaysOwed() {
     gitHost.unreachable(FRONTEND, "refs/tags/" + VERSION);
 
     assertThrows(IllegalStateException.class, () -> released(FRONTEND, MAIN, VERSION));
-  }
-
-  /** The bus's write is forward-only, gitlinks included: a catch-up frame rewinds nothing. */
-  @Test
-  void anOlderReleaseArrivingLateDoesNotRewindTheGitlinkLatest() {
-    gitHost.holds(FRONTEND, "refs/tags/2026.902.1", RELEASE_SHA);
-    gitHost.holds(FRONTEND, "refs/tags/2026.801.1", "cccccccccccccccccccccccccccccccccccccccc");
-
-    released(FRONTEND, MAIN, "2026.902.1");
-    released(FRONTEND, MAIN, "2026.801.1");
-
-    MtLatest row = store.latestRow(Ecosystem.GITLINK, FRONTEND);
-    assertEquals("2026.902.1", row.latest);
-    assertEquals(RELEASE_SHA, GitlinkSha.read(row.sourceUrl).orElseThrow());
-    assertEquals(
-        List.of("gitlink:" + FRONTEND), upstream.moved, "the hook hears the one that moved");
   }
 
   /**
@@ -435,35 +461,13 @@ class ScmEventListenerTest {
     released(FRONTEND, MAIN, VERSION);
 
     assertEquals(List.of("qits/" + FRONTEND + " refs/tags/" + VERSION), gitHost.asked);
-    assertEquals(VERSION, store.latestRow(Ecosystem.GITLINK, FRONTEND).latest);
-  }
-
-  // --- the release ledger -----------------------------------------------------------------------
-
-  /**
-   * <b>A release writes TWO rows, and they are two different facts about one tag.</b> The gitlink
-   * latest says where a submodule pinned at this repository can move to; the ledger says what the
-   * released tree was itself carrying, which is how an adoption of somebody ELSE's release is later
-   * proved. The tag sha is already resolved above, so the ledger is handed it rather than resolving
-   * it again.
-   */
-  @Test
-  void aReleaseRecordsTheLedgerBesideTheGitlinkLatest() {
-    gitHost.holds(REPOSITORY, "refs/tags/" + VERSION, RELEASE_SHA);
-
-    released(REPOSITORY, MAIN, VERSION);
-
-    assertEquals(
-        List.of(new RecordingLedger.Recorded("qits", REPOSITORY, VERSION, RELEASE_SHA)),
-        ledger.recorded);
-    assertEquals(VERSION, store.latestRow(Ecosystem.GITLINK, REPOSITORY).latest);
+    assertEquals("qits", ledger.recorded.get(0).project());
   }
 
   /**
-   * <b>WHETHER OR NOT THE COLUMN MOVED.</b> {@code mt_latest} is forward-only because it answers
-   * "where can a pin move to", which a catch-up frame must not rewind. A ledger row answers "what
-   * did THIS release declare" — a fact about a version rather than about the newest one — so a
-   * late-announced older release deserves its row exactly as much as this morning's does.
+   * A ledger row answers "what did THIS release declare" — a fact about a version rather than about
+   * the newest one — so a late-announced older release deserves its row exactly as much as this
+   * morning's does.
    */
   @Test
   void anOlderReleaseArrivingLateStillGetsItsLedgerRow() {
@@ -473,19 +477,10 @@ class ScmEventListenerTest {
     released(FRONTEND, MAIN, "2026.902.1");
     released(FRONTEND, MAIN, "2026.801.1");
 
-    assertEquals("2026.902.1", store.latestRow(Ecosystem.GITLINK, FRONTEND).latest);
     assertEquals(
         List.of("2026.902.1", "2026.801.1"),
         ledger.recorded.stream().map(RecordingLedger.Recorded::version).toList(),
         "both releases happened, and both declared something");
-  }
-
-  /** A tag the git host does not hold is settled before either write is reached. */
-  @Test
-  void aReleaseWhoseTagIsNotThereRecordsNoLedgerRowEither() {
-    released(FRONTEND, MAIN, VERSION);
-
-    assertTrue(ledger.recorded.isEmpty());
   }
 
   /**
@@ -502,29 +497,124 @@ class ScmEventListenerTest {
     assertTrue(upstream.released.isEmpty(), "no estate re-plan against a row never written");
   }
 
+  // --- main's head is the gitlink latest (qits-1257) --------------------------------------------
+
   /**
-   * <b>The estate's half of the hook</b> (qits-1224): every release the ledger records is announced
-   * — after the row is written, since that row is what the estate plan reads — whether or not the
-   * gitlink latest moved, so a redelivered frame whose column already moved still re-plans.
+   * <b>THE FIX.</b> edge's two releases are both cut and both in the ledger; only the first was
+   * finalized, so only the first is on {@code main}. The finalize merge is a push to main: the head
+   * is read at the git host, named by the ledger row whose commit it is, and that release — NOT the
+   * newer ledger row — becomes the gitlink latest, with both re-plan hooks told.
    */
   @Test
-  void everyReleaseTheLedgerRecordsReplansTheEstate() {
-    gitHost.holds(FRONTEND, "refs/tags/2026.902.1", RELEASE_SHA);
-    gitHost.holds(FRONTEND, "refs/tags/2026.801.1", "cccccccccccccccccccccccccccccccccccccccc");
+  void aMainPushMovesTheGitlinkLatestToTheReleaseMainsHeadCarriesAndReplans() {
+    gitHost.holds(REPOSITORY, "refs/tags/" + FINALIZED, FINALIZED_SHA);
+    gitHost.holds(REPOSITORY, "refs/tags/" + UNFINALIZED, UNFINALIZED_SHA);
+    released(REPOSITORY, MAIN, FINALIZED);
+    released(REPOSITORY, MAIN, UNFINALIZED);
+    gitHost.holds(REPOSITORY, MAIN, FINALIZED_SHA);
+    gitHost.asked.clear();
 
-    released(FRONTEND, MAIN, "2026.902.1");
-    released(FRONTEND, MAIN, "2026.801.1");
+    pushed(REPOSITORY, MAIN, "an-older-frame-sha-that-is-never-trusted");
 
-    assertEquals(List.of("gitlink:" + FRONTEND), upstream.moved);
-    assertEquals(List.of(FRONTEND, FRONTEND), upstream.released);
+    MtLatest row = store.latestRow(Ecosystem.GITLINK, REPOSITORY);
+    assertEquals(FINALIZED, row.latest, "the release main carries, not the newest one cut");
+    assertEquals(FINALIZED_SHA, GitlinkSha.read(row.sourceUrl).orElseThrow());
+    assertEquals(
+        List.of("qits/" + REPOSITORY + " " + MAIN), gitHost.asked, "main's head, read now");
+    assertEquals(List.of("gitlink:" + REPOSITORY), upstream.moved);
+    assertEquals(
+        List.of(REPOSITORY), upstream.released, "open wrapper requests re-plan their estate pins");
   }
 
-  /** A tag the git host does not hold records no row, and announces nothing to the estate. */
+  /**
+   * A head no release was cut from — a direct push to main, or a release the ledger could not read —
+   * leaves the row as it was. A version is never invented for a commit, and nothing is re-planned.
+   */
   @Test
-  void aReleaseWhoseTagIsNotThereReplansNoEstate() {
-    released(FRONTEND, MAIN, VERSION);
+  void aMainHeadThatCarriesNoKnownReleaseLeavesTheGitlinkLatestUnchanged() {
+    gitHost.holds(REPOSITORY, "refs/tags/" + FINALIZED, FINALIZED_SHA);
+    released(REPOSITORY, MAIN, FINALIZED);
+    gitHost.holds(REPOSITORY, MAIN, FINALIZED_SHA);
+    pushed(REPOSITORY, MAIN, FINALIZED_SHA);
+    upstream.moved.clear();
+    upstream.released.clear();
 
+    gitHost.holds(REPOSITORY, MAIN, "dddddddddddddddddddddddddddddddddddddddd");
+    pushed(REPOSITORY, MAIN, "dddddddddddddddddddddddddddddddddddddddd");
+
+    MtLatest row = store.latestRow(Ecosystem.GITLINK, REPOSITORY);
+    assertEquals(FINALIZED, row.latest);
+    assertEquals(FINALIZED_SHA, GitlinkSha.read(row.sourceUrl).orElseThrow());
+    assertTrue(upstream.moved.isEmpty());
     assertTrue(upstream.released.isEmpty());
+  }
+
+  /** A push whose head is the row's already — a redelivery, a burst — writes and re-plans nothing. */
+  @Test
+  void aSecondPushAtTheSameHeadReplansNothing() {
+    gitHost.holds(REPOSITORY, "refs/tags/" + FINALIZED, FINALIZED_SHA);
+    released(REPOSITORY, MAIN, FINALIZED);
+    gitHost.holds(REPOSITORY, MAIN, FINALIZED_SHA);
+
+    pushed(REPOSITORY, MAIN, FINALIZED_SHA);
+    pushed(REPOSITORY, MAIN, FINALIZED_SHA);
+
+    assertEquals(List.of("gitlink:" + REPOSITORY), upstream.moved);
+    assertEquals(List.of(REPOSITORY), upstream.released);
+  }
+
+  /**
+   * <b>The scan debounce does not reach the latest.</b> A scan already queued would set the same
+   * row, but whenever the worker gets to it; the acceptance is "pinnable soon after it finalizes".
+   */
+  @Test
+  void theGitlinkLatestIsWrittenEvenWhenTheScanIsDebounced() {
+    gitHost.holds(REPOSITORY, "refs/tags/" + FINALIZED, FINALIZED_SHA);
+    released(REPOSITORY, MAIN, FINALIZED);
+    scans.requested.clear();
+    store.pendingScans.add(REPOSITORY);
+    gitHost.holds(REPOSITORY, MAIN, FINALIZED_SHA);
+
+    pushed(REPOSITORY, MAIN, FINALIZED_SHA);
+
+    assertTrue(scans.requested.isEmpty(), "the scan is debounced");
+    assertEquals(FINALIZED, store.latestRow(Ecosystem.GITLINK, REPOSITORY).latest);
+  }
+
+  /**
+   * A repository no scan has read is addressed the way the release half addresses it — the
+   * payload's project, on {@code main} — so its latest does not wait for the first scan. It is
+   * still not scanned: there is no row to refresh.
+   */
+  @Test
+  void aMainPushToARepositoryThisInventoryDoesNotHoldStillMovesItsGitlinkLatest() {
+    gitHost.holds(FRONTEND, "refs/tags/" + VERSION, RELEASE_SHA);
+    released(FRONTEND, MAIN, VERSION);
+    gitHost.holds(FRONTEND, MAIN, RELEASE_SHA);
+
+    pushed(FRONTEND, MAIN, RELEASE_SHA);
+
+    assertEquals(VERSION, store.latestRow(Ecosystem.GITLINK, FRONTEND).latest);
+    assertTrue(scans.requested.isEmpty());
+    assertEquals(List.of(FRONTEND), upstream.released);
+  }
+
+  /** A git host that cannot be asked for main's head is retryable, so the push stays owed. */
+  @Test
+  void aMainHeadTheGitHostWillNotResolveIsLeftToThrow() {
+    gitHost.unreachable(REPOSITORY, MAIN);
+
+    assertThrows(IllegalStateException.class, () -> pushed(REPOSITORY, MAIN, "abc1234"));
+  }
+
+  /** Only main's head is a finalized release; a push anywhere else reads nothing at all. */
+  @Test
+  void aPushToAnyOtherBranchReadsNoHead() {
+    pushed(REPOSITORY, BRANCH, "abc1234");
+    pushed(REPOSITORY, "release/6f0d1f2e-0000-4000-8000-000000000000", "abc1234");
+
+    assertTrue(gitHost.asked.isEmpty());
+    assertTrue(store.latest.isEmpty());
   }
 
   // --- the release's manifests ------------------------------------------------------------------
@@ -556,7 +646,7 @@ class ScmEventListenerTest {
   }
 
   /**
-   * The scan is asked for BEFORE the tag is resolved for the gitlink latest, so a git host that will
+   * The scan is asked for BEFORE the tag is resolved for the ledger, so a git host that will
    * not answer leaves the frame owed without the manifest refresh depending on that retry.
    */
   @Test
@@ -566,7 +656,7 @@ class ScmEventListenerTest {
     assertThrows(
         IllegalStateException.class,
         () -> released(REPOSITORY, MAIN, VERSION),
-        "the gitlink half is retryable and stays owed");
+        "the ledger half is retryable and stays owed");
     assertEquals(1, scans.requested.size(), "the scan was already asked for");
   }
 
@@ -584,16 +674,16 @@ class ScmEventListenerTest {
 
   /**
    * The guard is on the scan half ALONE. A repository no scan has read has no row to refresh — but
-   * its gitlink latest is keyed by name and needs no row to be true, so that half still writes.
+   * its ledger row is keyed by name and needs no inventory row to be true, so that half still writes.
    */
   @Test
-  void aReleaseOfARepositoryThisInventoryDoesNotHoldStillRecordsTheGitlinkLatest() {
+  void aReleaseOfARepositoryThisInventoryDoesNotHoldStillRecordsTheLedger() {
     gitHost.holds(FRONTEND, "refs/tags/" + VERSION, RELEASE_SHA);
 
     released(FRONTEND, MAIN, VERSION);
 
     assertTrue(scans.requested.isEmpty(), "there is no row to refresh yet");
-    assertEquals(VERSION, store.latestRow(Ecosystem.GITLINK, FRONTEND).latest);
+    assertEquals(1, ledger.recorded.size());
   }
 
   // --- the push ---------------------------------------------------------------------------------

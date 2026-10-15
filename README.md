@@ -289,7 +289,7 @@ where v1 waited up to six hours for a poll.
 | listener | `consumerId` (storage — never change it) | events | what it does |
 |---|---|---|---|
 | `bus/SoftwareReleaseListener` | `maintenance-internal-latest` | `SoftwareRelease` (qits-ci) | moves `mt_latest` **forward only**, so every pin of that dependency is pending the moment the package is in the registry |
-| `bus/ScmEventListener` | `maintenance-branch-tracking` | `SCMRelease` (qits-projects), `SCMDeleteBranch`, `SCMPublishCommit` (qits-githost) | records every release as the latest of a **gitlink** and in the **release ledger**, clears a maintenance branch when it is deleted, and re-reads one repository's manifests after a push to its main branch |
+| `bus/ScmEventListener` | `maintenance-branch-tracking` | `SCMRelease` (qits-projects), `SCMDeleteBranch`, `SCMPublishCommit` (qits-githost) | records every release in the **release ledger**, clears a maintenance branch when it is deleted, and after a push to a repository's main branch sets its **gitlink** latest to the release main's head carries and re-reads its manifests |
 
 - **`SoftwareRelease` is the only writer of `mt_latest` that moves it forward only**, and that is the
   difference between an announcement and a poll. A poll ASKS a registry what the newest version is
@@ -319,26 +319,27 @@ where v1 waited up to six hours for a poll.
   (`artifacts`|`contracts`) and `runId`, the three facts the daily SBOM check reads. All optional on
   the wire; filled when a frame names them, never overwriting a stored value, and a `runId` that is
   not a uuid is dropped rather than failing the decode.
-- **`SCMRelease` is also the ONLY source of a gitlink's latest.** There is no registry to poll — a
-  submodule is a git repository and nothing publishes one — so the daily scan neither fills that row
-  nor clears it, and `LatestResolver.resolvable` refuses the ecosystem outright. Every release is
-  recorded, not only those of repositories something pins today: the gate would be wrong in the one
-  direction that costs, leaving a repository that grew a submodule between two releases with no
-  latest for weeks. Two facts are written — the calver `version`, which is what the step fetches as
-  `refs/tags/<version>`, and the **commit that tag resolves to**, carried in `source_url` as
-  `sha:<hex>`. The tag is read from the git host rather than correlated with the `SCMPublishCommit`
-  a moment earlier: a release is an atomic push of the branch and its tag, so one read answers it,
-  while pairing two publishers' frames by repository and time is wrong exactly when two releases are
-  close together. A tag the git host does not hold is settled; a git host that cannot be *asked* is
-  thrown, because nothing else ever writes this row.
-- **`SCMRelease` makes a SECOND write here too, and it is the release ledger.** One hop after the
-  gitlink latest, the tree at `refs/tags/<version>` is read and its INTERNAL pins are recorded as
-  what that release DECLARED — see **The release ledger**. It runs **whether or not the latest
-  column moved**: `mt_latest` is forward-only because it answers "where can a pin move to", which a
-  catch-up frame must not rewind, while a ledger row answers "what did THIS release declare", and a
-  late-announced older release deserves its row exactly as much as this morning's does. The failure
-  split is the same one: an unreachable git host is thrown, a tag it does not hold is a WARN, and a
-  manifest that would not parse records whatever parsed.
+- **A gitlink's latest is its repository's `main` head (qits-1257), and `SCMRelease` no longer
+  writes it.** There is no registry to poll — a submodule is a git repository and nothing publishes
+  one — so `LatestResolver.resolvable` refuses the ecosystem outright. Until qits-1257 the row moved
+  on every `SCMRelease`, to the tag just cut; but a release request tags at RELEASED and merges the
+  tag into `main` only at FINALIZED, and qits-qits-rr-137 was rejected for pinning
+  `qits-edge-service 2026.1014.232301` and `qits-workspace-oci 2026.1015.21231`, cut, publish FAILED,
+  never finalized. Only finalization merges into `main`, so `main`'s head is the newest finalized
+  release: `latest/MainHeadLatest` reads it, names its version through the release ledger row whose
+  commit it is, and **overwrites** the row (`MaintenanceStore.recordGitlinkLatest`) — the calver
+  `version`, which is what the step fetches as `refs/tags/<version>`, and the commit, carried in
+  `source_url` as `sha:<hex>`. Three callers: a push to a repository's main branch (the finalize
+  merge is one since qits-886), ahead of the scan debounce; every scan at main, from the head it
+  already resolved; and once after every boot, one head read per repository, which heals rows the
+  old rule wrote. A head carrying no known release leaves the row alone — no version is invented.
+  A row that changed tells both re-plan hooks, the gitlink bump's and the estate's.
+- **`SCMRelease` writes the release ledger.** The tag is resolved at the git host and the tree at
+  `refs/tags/<version>` is read and its INTERNAL pins are recorded as what that release DECLARED —
+  see **The release ledger**. A ledger row answers "what did THIS release declare", and a
+  late-announced older release deserves its row exactly as much as this morning's does; its commit
+  is also how a `main` head is later named. An unreachable git host is thrown, a tag it does not
+  hold is a WARN, and a manifest that would not parse records whatever parsed.
 - **`SCMRelease` says nothing about a maintenance branch any more, and `BranchState.RELEASED` is a
   word nothing writes.** It used to: qits-workspaces' door published the event naming the branch it
   had just tagged over, which was the one fact nothing else could tell this service. A release is now

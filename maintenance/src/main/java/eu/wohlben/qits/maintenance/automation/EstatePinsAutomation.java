@@ -1,10 +1,11 @@
 package eu.wohlben.qits.maintenance.automation;
 
 import eu.wohlben.qits.maintenance.bump.CiClient;
-import eu.wohlben.qits.maintenance.entity.MtRelease;
+import eu.wohlben.qits.maintenance.entity.MtLatest;
 import eu.wohlben.qits.maintenance.entity.MtRepository;
 import eu.wohlben.qits.maintenance.githost.FileLookup;
 import eu.wohlben.qits.maintenance.githost.TreeLookup;
+import eu.wohlben.qits.maintenance.latest.GitlinkSha;
 import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.RepositoryArchetype;
 import eu.wohlben.qits.maintenance.pending.Change;
@@ -28,9 +29,23 @@ import java.util.Set;
  * <p><b>The decision moved here from qits-projects</b> (qits-999), where {@code EstatePinRefresh}
  * computed it and {@code HttpEstatePins} posted one TARGETED bump per branch. The entries, the skips
  * and the change list are still that port's — byte for byte the six fields that door was sent —
- * and the facts are this service's own: the inventory row's archetype, its release ledger ({@code
- * mt_release}, written from {@code SCMRelease}) for each sibling's newest version, and the git host
- * for the fold.
+ * and the facts are this service's own: the inventory row's archetype, each sibling's GITLINK
+ * latest ({@code mt_latest}: the release its {@code main} head carries, version and commit), and the
+ * git host for the fold.
+ *
+ * <h2>What a member is pinned at: its {@code main} head (qits-1257)</h2>
+ *
+ * <p>Until qits-1257 a member was pinned at the newest row of its release LEDGER ({@code
+ * mt_release}, written from {@code SCMRelease} the moment a tag is cut). But a release request tags
+ * at RELEASED and merges the tag into {@code main} only at FINALIZED, and a release can fail in
+ * between: qits-qits-rr-137 pinned {@code qits-edge-service 2026.1014.232301} and {@code
+ * qits-workspace-oci 2026.1015.21231}, both cut, both with a FAILED publish, neither finalized — and
+ * was rejected for it. Only finalization merges into {@code main}, so {@code main}'s head is the
+ * newest finalized release, and that is what a wrapper's estate names: {@code latest/MainHeadLatest}
+ * keeps the GITLINK latest row at it (on the finalize merge's push, on every scan at main, and once
+ * after every boot), and this plan reads that row — one store read per member, no git-host read, so
+ * a settle stays at the fold's two reads (qits-1258). A member with no row is not in the estate,
+ * exactly as one with no release was.
  *
  * <h2>Why its own branch, and why the fold (qits-1258)</h2>
  *
@@ -56,10 +71,11 @@ import java.util.Set;
  *   <li><b>Applies</b> when the inventory's archetype is {@code PROJECT} — a wrapper. Every other
  *       repository answers NOT_APPLICABLE with no read at all.
  *   <li><b>Plans AT THE FOLD.</b> A fold without {@code .gitmodules} pins nothing. Each declared
- *       entry naming a sibling of the same project that has a release is compared against the
- *       gitlink the fold holds at its path, and a difference — a gitlink at another sha, or none at
- *       all yet — is a change. A sibling with no release is simply not in the estate: pinning it to
- *       a branch head would invent a release nobody made.
+ *       entry naming a sibling of the same project whose {@code main} head carries a release is
+ *       compared against the gitlink the fold holds at its path, and a difference — a gitlink at
+ *       another sha, or none at all yet — is a change. A sibling with no finalized release is
+ *       simply not in the estate: pinning it to a commit no finalized release names would invent a
+ *       release nobody made.
  *   <li><b>One tree read.</b> The gitlinks come from ONE recursive listing of the fold's root
  *       ({@link FoldReader#recursiveTree}). A git host that predates {@code ?recursive=true} answers
  *       the root's plain listing instead, and only then are the component directories listed one by
@@ -119,7 +135,7 @@ public class EstatePinsAutomation implements ReleaseRequestAutomation {
   /** One declared entry of the fold. */
   private record Declared(String path, String name) {}
 
-  /** A declared entry whose sibling has a release, so there is a version to pin at. */
+  /** A declared entry whose sibling's main head carries a release, so there is a version to pin at. */
   private record Candidate(String path, String name, String version, String releasedSha) {}
 
   /**
@@ -350,40 +366,46 @@ public class EstatePinsAutomation implements ReleaseRequestAutomation {
 
   /**
    * The declared entries that have a version to be pinned at: a repository of the wrapper's own
-   * project under that name, with a release in the ledger. An entry naming nothing here, or a
-   * sibling never released, is skipped — the wrapper is edited by people and reconciled
-   * asynchronously, and a pin cannot name a release nobody made.
+   * project under that name, whose GITLINK latest names a finalized release — the one its {@code
+   * main} head carries (qits-1257). An entry naming nothing here, or a sibling with no such row, is
+   * skipped — the wrapper is edited by people and reconciled asynchronously, and a pin cannot name
+   * a release nobody finalized.
    */
   private List<Candidate> released(MtRepository wrapper, List<Declared> declared) {
     List<Candidate> out = new ArrayList<>();
-    Map<String, Optional<MtRelease>> newest = new HashMap<>();
+    Map<String, Optional<Candidate>> heads = new HashMap<>();
     for (Declared entry : declared) {
-      Optional<MtRelease> latest =
-          newest.computeIfAbsent(entry.name(), name -> newestRelease(wrapper, name));
-      if (latest.isEmpty()) {
+      Optional<Candidate> head =
+          heads.computeIfAbsent(entry.name(), name -> mainHeadRelease(wrapper, name));
+      if (head.isEmpty()) {
         continue;
       }
       out.add(
-          new Candidate(
-              entry.path(),
-              entry.name(),
-              latest.get().version,
-              latest.get().sha));
+          new Candidate(entry.path(), entry.name(), head.get().version(), head.get().releasedSha()));
     }
     return out;
   }
 
-  private Optional<MtRelease> newestRelease(MtRepository wrapper, String name) {
+  /**
+   * The release a sibling's {@code main} head carries, as its GITLINK latest row records it —
+   * version and commit — or empty for a stranger, a sibling of another project, or one with no row
+   * or no commit on it.
+   *
+   * <p><b>Never "the newest ledger row"</b>: that is a release that was CUT, and qits-qits-rr-137
+   * is what pinning one that never finalized costs. And never a git-host read: this runs on every
+   * settle, which qits-1258 brought down to the fold's two reads.
+   */
+  private Optional<Candidate> mainHeadRelease(MtRepository wrapper, String name) {
     Optional<MtRepository> sibling = store.repository(name);
     if (sibling.isEmpty() || !Objects.equals(sibling.get().project, wrapper.project)) {
       return Optional.empty();
     }
-    List<MtRelease> releases = store.releasesOf(name);
-    if (releases.isEmpty()) {
+    Optional<MtLatest> latest = store.latest(Ecosystem.GITLINK, name);
+    if (latest.isEmpty() || latest.get().latest == null || latest.get().latest.isBlank()) {
       return Optional.empty();
     }
-    MtRelease last = releases.get(releases.size() - 1);
-    return last.version == null || last.sha == null ? Optional.empty() : Optional.of(last);
+    return GitlinkSha.read(latest.get().sourceUrl)
+        .map(sha -> new Candidate(null, name, latest.get().latest, sha));
   }
 
   private static String describe(FileLookup.Status status, String message) {

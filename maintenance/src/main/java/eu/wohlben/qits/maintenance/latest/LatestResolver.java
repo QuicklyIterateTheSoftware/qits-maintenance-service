@@ -102,11 +102,11 @@ public class LatestResolver {
    *
    * <p><b>A GITLINK is never looked up, and the daily scan therefore neither refreshes nor CLEARS
    * one.</b> There is no registry to ask — a submodule is a git repository and nothing publishes
-   * it — so its {@code mt_latest} row has exactly one writer, {@code bus/ScmEventListener}, off the
-   * {@code SCMRelease} the frontend's own release publishes. Two consequences worth stating: a
-   * repository released before that listener was deployed has NO latest until its next release, and
-   * a scan will never write an {@code error} column over one, which is what keeps a bus-written row
-   * from being reset to "we could not find out" every night.
+   * it — so its {@code mt_latest} row is written by one rule and never by this resolver: {@code
+   * latest/MainHeadLatest}, the release the repository's {@code main} head carries (qits-1257),
+   * applied on a push to main, on every scan at main and once after every boot. A scan will never
+   * write an {@code error} column over one, which is what keeps that row from being reset to "we
+   * could not find out" every night.
    */
   public boolean resolvable(Ecosystem ecosystem, PinKind kind) {
     if (!kind.actionable()) {

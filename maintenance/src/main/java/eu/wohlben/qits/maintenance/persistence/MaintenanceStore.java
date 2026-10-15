@@ -573,6 +573,64 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
         });
   }
 
+  /**
+   * A GITLINK latest set to the release one repository's {@code main} head carries — OVERWRITTEN,
+   * not moved forward (qits-1257).
+   *
+   * <p><b>The third writer of {@code mt_latest}, and deliberately neither of the other two.</b>
+   * {@link #recordLatestIfNewer} is forward-only because an announcement is evidence that a version
+   * EXISTS and never that a higher one does not. That was the gitlink's writer until qits-1257, fed
+   * by {@code SCMRelease} — and a release that is cut is not a release that is finalized: on this
+   * platform the tag is merged into {@code main} only at FINALIZED, and qits-qits-rr-137 pinned
+   * {@code qits-edge-service 2026.1014.232301}, cut, published FAILED, never finalized. Forward-only,
+   * that row could never heal: every later finalized release of edge was older. The gitlink's
+   * latest is now "the release the repository's {@code main} head carries", which every caller
+   * resolves from a head it read at handling time, so a late caller cannot rewind it — and
+   * repairing a row naming an unfinalized tag is precisely a move BACKWARDS in version order.
+   *
+   * <p>Like the forward-only writer it writes <b>nothing at all</b> when nothing differs — {@code
+   * checked_at} included — so the sweeps that call it on every repository are reads where nothing
+   * moved, and the caller's "it changed" is exactly what the re-plan hooks are told.
+   *
+   * @return whether the row was written: new, a different version or commit, or a failed lookup
+   *     replaced
+   */
+  @ActivateRequestContext
+  public boolean recordGitlinkLatest(String name, String version, String sourceUrl, Instant now) {
+    if (name == null || name.isBlank() || version == null || version.isBlank()) {
+      return false;
+    }
+    return DbRetry.inNewTx(
+        "record the main-head gitlink latest of " + name,
+        () -> {
+          MtLatest row =
+              MtLatest.find("ecosystem = ?1 and name = ?2", Ecosystem.GITLINK.wireName(), name)
+                  .firstResult();
+          if (row != null
+              && version.equals(row.latest)
+              && java.util.Objects.equals(sourceUrl, row.sourceUrl)
+              && row.error == null) {
+            return false;
+          }
+          boolean fresh = row == null;
+          if (fresh) {
+            row = new MtLatest();
+            row.id = UUID.randomUUID();
+            row.ecosystem = Ecosystem.GITLINK.wireName();
+            row.name = name;
+          }
+          row.latest = version;
+          row.sourceUrl = sourceUrl;
+          row.error = null;
+          row.checkedAt = now;
+          if (fresh) {
+            row.persist();
+          }
+          getEntityManager().flush();
+          return true;
+        });
+  }
+
   @ActivateRequestContext
   public List<MtRepository> repositories() {
     return DbRetry.inNewTx("read every repository row", () -> listAll(Sort.by("name")));

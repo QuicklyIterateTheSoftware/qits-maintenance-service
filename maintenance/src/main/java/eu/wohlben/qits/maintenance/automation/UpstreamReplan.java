@@ -23,7 +23,9 @@ import org.jboss.logging.Logger;
 
 /**
  * <b>The one "latest moved" hook</b> (qits-1133): where {@code mt_latest} advances — a scan's poll,
- * a {@code SoftwareRelease}, an {@code SCMRelease} — every consumer of that dependency with an OPEN
+ * a {@code SoftwareRelease}, and for a GITLINK a repository's {@code main} head moving to another
+ * release ({@code latest/MainHeadLatest}, qits-1257; it was the {@code SCMRelease} before) — every
+ * consumer of that dependency with an OPEN
  * release request has its {@code dependency-bump} re-planned on the request's current fold, so the
  * upgrade lands in the release that is already on its way instead of on a branch of its own.
  *
@@ -55,12 +57,14 @@ import org.jboss.logging.Logger;
  * <p>A wrapper holds no INTERNAL pin — its gitlinks are {@code estate-pins}', never the bump's —
  * so the hook above never reaches it, and its {@code estate-pins} verdict is stored per fold: a
  * request folded before a member released is FRESH at that fold for ever. {@link #released} closes
- * that: a release recorded in the ledger re-plans {@code estate-pins} on every open, not-READY
+ * that: a member whose {@code main} head moved to another release — its finalize merge, since
+ * qits-1257; the cut tag before, which is how unfinalized releases reached a wrapper — re-plans
+ * {@code estate-pins} on every open, not-READY
  * request of every wrapper of the member's project, through the same door, guard and restart
  * count. The plan itself reads the request's FOLD — its {@code .gitmodules} and one recursive tree
  * listing (qits-1258) — and answers FRESH where the member is not declared or its pin is current, so
  * "of the member's project" is the membership rule the plan already applies ({@code
- * EstatePinsAutomation.newestRelease}), and nothing finer is guessed at from main's gitlinks — a
+ * EstatePinsAutomation.mainHeadRelease}), and nothing finer is guessed at from main's gitlinks — a
  * request's fold may declare a submodule main does not. A RUN plan is one commit on the kind's own
  * branch, joined like any other automation's.
  *
@@ -127,13 +131,15 @@ public class UpstreamReplan {
   }
 
   /**
-   * A release of one repository was recorded in the release ledger (qits-1224). A no-op while
-   * estate-pins is off.
+   * One repository's GITLINK latest moved to the release its {@code main} head now carries
+   * (qits-1224, qits-1257). A no-op while estate-pins is off.
    *
-   * <p><b>After the ledger write, and not off {@link #latestMoved}</b>: the estate plan reads a
-   * member's newest release from {@code mt_release}, so a re-plan queued before that row is written
-   * could plan against the previous release and answer FRESH. And it fires on a durable redelivery
-   * too, where the latest column has already moved and {@code latestMoved} is not called again.
+   * <p><b>After the row is written, and separate from {@link #latestMoved}</b>: the estate plan reads
+   * a member's GITLINK latest, so a re-plan queued before that row is written could plan against the
+   * previous release and answer FRESH; and {@link #latestMoved} is a no-op while dependency-bump is
+   * off, which says nothing about estate pins. Until qits-1257 this fired on every ledger write of an
+   * {@code SCMRelease} — on a tag that was cut, finalized or not, which is how qits-qits-rr-137 came
+   * to pin two releases that never finalized.
    */
   public void released(String repository) {
     if (!estatePins.enabled() || repository == null) {

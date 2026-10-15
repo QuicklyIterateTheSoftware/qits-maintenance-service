@@ -390,7 +390,8 @@ public final class PendingChanges {
    * And rule 2 has nothing to work on: a sha is neither a release nor a prerelease.
    *
    * <p>So the question is the only one that can be asked honestly — <b>is the submodule pinned at
-   * the commit the newest release of that repository was cut from</b> — and both halves have to be
+   * the commit that repository's {@code main} head is, the newest FINALIZED release</b> (qits-1257:
+   * a release that was only cut is never a target) — and both halves have to be
    * KNOWN for the answer to be no. The latest row carries the release's sha in
    * {@code source_url} ({@code latest/GitlinkSha}); a row without one is a release this service
    * could not tie to a commit, and pending must not be guessed from a version alone: the step

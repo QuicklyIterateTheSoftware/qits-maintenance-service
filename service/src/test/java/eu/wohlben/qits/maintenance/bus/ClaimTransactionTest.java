@@ -1,6 +1,7 @@
 package eu.wohlben.qits.maintenance.bus;
 
 import static eu.wohlben.qits.maintenance.bus.ForeignEventContractTest.frame;
+import static eu.wohlben.qits.maintenance.bus.ForeignEventContractTest.scmPublishCommitPayload;
 import static eu.wohlben.qits.maintenance.bus.ForeignEventContractTest.scmReleasePayload;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -183,13 +184,14 @@ class ClaimTransactionTest {
    *
    * <p>The 2026-09-03 wedge came through {@code onMaintenanceBranchReleased -> group -> groups},
    * which is gone: a release names its request's fold, never a {@code maintenance/} branch, so that
-   * arm was removed with the release door. What is left is the GITLINK half, and it is the same
-   * shape — a store read ({@code repository}), a peer call, and a store WRITE behind them, all
-   * inside the claim. The read is what enlists and the write is what dies, so this is the path that
-   * has to be pinned now.
+   * arm was removed with the release door. What is left is the ledger half — and, since qits-1257,
+   * the main-head gitlink latest on the push that finalizes it — and both are the same shape: a
+   * store read ({@code repository}), a peer call, and a store WRITE behind them, all inside the
+   * claim. The read is what enlists and the write is what dies, so these are the paths that have
+   * to be pinned now.
    */
   @Test
-  void aReleasedGitlinkIsRecordedWhenTheFrameArrivesInsideItsClaim() {
+  void aReleaseAndItsFinalizeMergeAreRecordedWhenTheFramesArriveInsideTheirClaims() {
     String version = "2026.903.1";
     // The tag, spelled the way GitHostReader asks for it: one path segment, slashes encoded.
     peers.answer(
@@ -197,16 +199,30 @@ class ClaimTransactionTest {
         "/git/qits/" + REPOSITORY + "/tree/refs%2Ftags%2F" + version,
         FakePeers.Scripted.ok("{\"entries\":[]}", Map.of("Git-Commit-Sha", RELEASE_SHA)));
 
+    // And main, once the finalize merge has made the release's commit its head (qits-1257).
+    peers.answer(
+        PeerTarget.GITHOST,
+        "/git/qits/" + REPOSITORY + "/tree/" + MAIN,
+        FakePeers.Scripted.ok("{\"entries\":[]}", Map.of("Git-Commit-Sha", RELEASE_SHA)));
+
     insideAClaim(
         () -> scm.onFrame(frame("SCMRelease", scmReleasePayload(REPOSITORY, MAIN, version))));
+    assertTrue(
+        store.releaseRecorded(REPOSITORY, version),
+        "the release ledger row is what must survive a release handled inside a claim");
+    assertTrue(
+        store.latest(Ecosystem.GITLINK, REPOSITORY).isEmpty(),
+        "and a cut release moves no gitlink latest (qits-1257)");
 
+    insideAClaim(
+        () ->
+            scm.onFrame(
+                frame(
+                    "SCMPublishCommit", scmPublishCommitPayload(REPOSITORY, MAIN, RELEASE_SHA))));
     assertEquals(
         version,
         store.latest(Ecosystem.GITLINK, REPOSITORY).orElseThrow().latest,
-        "the gitlink latest is what must survive a frame handled inside a claim");
-    assertTrue(
-        store.releaseRecorded(REPOSITORY, version),
-        "and so must the release ledger row, which is the second write of the same arm");
+        "the main-head gitlink latest is what must survive a push handled inside a claim");
   }
 
   @Test

@@ -8,6 +8,7 @@ import eu.wohlben.qits.maintenance.githost.GitHostReader;
 import eu.wohlben.qits.maintenance.latest.GitlinkSha;
 import eu.wohlben.qits.maintenance.latest.LatestLookup;
 import eu.wohlben.qits.maintenance.latest.LatestResolver;
+import eu.wohlben.qits.maintenance.latest.MainHeadLatest;
 import eu.wohlben.qits.maintenance.manifest.ManifestScanner;
 import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.PinKind;
@@ -91,6 +92,13 @@ public class ScanService {
 
   /** The ancestry door: is a release's commit on main yet. */
   @Inject GitHostReader gitHost;
+
+  /**
+   * The gitlink latest's one rule (qits-1257): the release a repository's {@code main} head
+   * carries. A scan at main has resolved that head already, so keeping the row true here costs no
+   * read at all.
+   */
+  @Inject MainHeadLatest mainHead;
 
   /**
    * Opens a scan row, queues the work and answers at once.
@@ -267,6 +275,28 @@ public class ScanService {
         now);
     if (atMain && read.headSha() != null && !read.headSha().isBlank()) {
       keepMain(entry, read, gitlinkPins);
+      mainHeadLatest(entry, read.headSha());
+    }
+  }
+
+  /**
+   * <b>The repository's gitlink latest, set to the release its {@code main} head carries</b>
+   * (qits-1257) — from the head this scan just resolved, so it is free. It is the scheduled half of
+   * that rule: the push half in {@code bus/ScmEventListener} writes it minutes after a finalize
+   * merge, and this catches a frame that never arrived and heals a row an older rule wrote, every
+   * night, for every repository the catalog lists. A tag scan never reaches here — a tag is not
+   * {@code main}, which is the whole point.
+   *
+   * <p>Its failure is a WARN and not the repository's: the manifests above were read and written,
+   * and an UNREACHABLE row over a latest that could not be stored would say something untrue.
+   */
+  private void mainHeadLatest(CatalogEntry entry, String headSha) {
+    try {
+      mainHead.record(entry.name(), headSha, Instant.now());
+    } catch (RuntimeException e) {
+      LOG.warnf(
+          "The gitlink latest of %s could not be set from its main head: %s",
+          entry.name(), e.toString());
     }
   }
 

@@ -9,9 +9,8 @@ import eu.wohlben.qits.maintenance.entity.MtRepository;
 import eu.wohlben.qits.maintenance.githost.FileLookup;
 import eu.wohlben.qits.maintenance.githost.GitHostReader;
 import eu.wohlben.qits.maintenance.githost.TreeLookup;
-import eu.wohlben.qits.maintenance.latest.GitlinkSha;
+import eu.wohlben.qits.maintenance.latest.MainHeadLatest;
 import eu.wohlben.qits.maintenance.model.BranchState;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.ScanScope;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import eu.wohlben.qits.maintenance.scan.ScanService;
@@ -32,18 +31,21 @@ import org.jboss.logging.Logger;
  *   <caption>The three events and what each one moves</caption>
  *   <tr><th>event</th><th>publisher</th><th>what it means here</th></tr>
  *   <tr><td>{@code SCMRelease}</td><td>qits-projects</td>
- *       <td>a repository has a new released commit. Two rows follow and one scan, and all three are
- *           read AT THE TAG: {@code mt_latest} gets the version and the sha the tag resolves to, so
- *           every GITLINK pinned at it has somewhere to move; the release LEDGER gets what the tree
- *           at that tag declared, which is how an adoption of somebody else's release is later
- *           proved; and the released repository is rescanned at that same tag, because the release
- *           is what changed its manifests</td></tr>
+ *       <td>a repository has a new released commit. One row follows and one scan, both read AT
+ *           THE TAG: the release LEDGER gets the commit the tag resolves to and what the tree at
+ *           that tag declared, which is how an adoption of somebody else's release is later proved
+ *           and how a {@code main} head is later named; and the released repository is rescanned
+ *           at that same tag, because the release is what changed its manifests. It does NOT move
+ *           the GITLINK latest any more (qits-1257): a cut release is not yet a finalized
+ *           one</td></tr>
  *   <tr><td>{@code SCMDeleteBranch}</td><td>qits-githost</td>
  *       <td>a {@code maintenance/<group>} branch is gone — the branch row becomes NONE, so the next
  *           bump starts fresh from main</td></tr>
  *   <tr><td>{@code SCMPublishCommit}</td><td>qits-githost</td>
- *       <td>a push landed on a repository's OWN main branch, so its manifests are not what this
- *           inventory holds — one repository is queued for a rescan</td></tr>
+ *       <td>a push landed on a repository's OWN main branch — a finalize merge among them — so
+ *           its GITLINK latest becomes the release main's head carries (qits-1257), and its
+ *           manifests are not what this inventory holds — one repository is queued for a
+ *           rescan</td></tr>
  * </table>
  *
  * <h2>{@code SCMRelease} no longer says anything about a maintenance branch</h2>
@@ -158,6 +160,12 @@ public class ScmEventListener implements QitsDurableEventListener {
   /** qits-githost's "this branch moved", one per successfully updated ref of a push. */
   static final String PUSH_SIGNATURE = "SCMPublishCommit";
 
+  /**
+   * The main branch of a repository no scan has read yet — what {@code ManifestScanner.read} reads
+   * for a row that names none, and so the only branch whose push says anything here.
+   */
+  static final String DEFAULT_MAIN = "main";
+
   /** Every branch this service writes is under it, and the group is what follows. */
   static final String BRANCH_PREFIX = "maintenance/";
 
@@ -219,12 +227,11 @@ public class ScmEventListener implements QitsDurableEventListener {
 
   @Inject MaintenanceStore store;
 
-  @Inject eu.wohlben.qits.maintenance.automation.UpstreamReplan upstream;
-
   @Inject ScanService scans;
 
   /**
-   * The git host, for one question only: which commit does a released tag name?
+   * The git host, for two questions only: which commit does a released tag name, and which does
+   * {@code main} name now that it moved?
    *
    * <p>It is the same reader every scan resolves a head with, so a released tag is read exactly the
    * way a branch is — one tree of the root, and the {@code Git-Commit-Sha} the answer carries.
@@ -234,13 +241,20 @@ public class ScmEventListener implements QitsDurableEventListener {
   /**
    * The release ledger: what the tree at this release's tag DECLARED.
    *
-   * <p>The second thing a release writes here, and it is a different fact from the gitlink latest
-   * above. That one says a submodule has somewhere to move; this one says what the released tree
-   * was itself carrying, which is the evidence an adoption of somebody ELSE's release is proved by
-   * — see {@link ReleaseLedger} for why a pin read at a tag is release-grade and a pin read at
-   * {@code main} is not.
+   * <p>The one row a release writes here. It says what the released tree was itself carrying,
+   * which is the evidence an adoption of somebody ELSE's release is proved by — see {@link
+   * ReleaseLedger} for why a pin read at a tag is release-grade and a pin read at {@code main} is
+   * not — and it ties the version to its commit, which is how a {@code main} head is named once the
+   * finalize merge makes the commit main's (qits-1257). It does not say a submodule has somewhere
+   * to move: a cut release may never finalize.
    */
   @Inject ReleaseLedger ledger;
+
+  /**
+   * The gitlink latest's one rule (qits-1257): the release a repository's {@code main} head
+   * carries. A main-branch push is when that head moves.
+   */
+  @Inject MainHeadLatest mainHead;
 
   @Override
   public String consumerId() {
@@ -278,7 +292,7 @@ public class ScmEventListener implements QitsDurableEventListener {
       return;
     }
     onReleasedManifests(frame, release);
-    onGitlinkReleased(frame, release);
+    onReleaseLedger(frame, release);
   }
 
   // --- SCMRelease, the manifest half ------------------------------------------------------------
@@ -294,8 +308,7 @@ public class ScmEventListener implements QitsDurableEventListener {
    * scheduled scan happened to read. The door announces the finalize merge now, and {@link #onPush}
    * rescans main when it lands; this half stays because it is the one that is true at the moment of
    * release — main is merged later, after the deployment for a repository that deploys — and
-   * because the release ledger and the latest rows are tag-grade facts that a read of main cannot
-   * give.
+   * because the release ledger is a tag-grade fact that a read of main cannot give.
    *
    * <p><b>Which was worst for the pins this service moves itself.</b> A bump lands on
    * {@code maintenance/<group>}, is released, and the pin it changed still read the old version here
@@ -315,7 +328,7 @@ public class ScmEventListener implements QitsDurableEventListener {
    * announced, for every archetype, and it is the read {@code adoption/ReleaseLedger} already calls
    * release-grade.
    *
-   * <p><b>Ahead of the gitlink half, and deliberately.</b> Both halves reach the git host, but this
+   * <p><b>Ahead of the ledger half, and deliberately.</b> Both halves reach the git host, but this
    * one is queued work while that one is a call in this frame's own thread: a tag the git host cannot
    * resolve throws there and the frame stays owed, and the scan must already be asked for so a retry
    * does not have to be what finally refreshes the manifests. A redelivery can queue a second scan
@@ -323,15 +336,15 @@ public class ScmEventListener implements QitsDurableEventListener {
    * the same trade {@link #onPush} makes for a merge.
    *
    * <p>A repository this inventory does not hold is skipped for the reason a push to one is: there is
-   * no row to refresh, and the next scheduled scan reads the catalog and creates it. The gitlink half
+   * no row to refresh, and the next scheduled scan reads the catalog and creates it. The ledger half
    * does NOT share that guard — it addresses such a repository by the payload's own project —
-   * because a latest row is keyed by name alone and needs no inventory row to be true.
+   * because a ledger row is keyed by name alone and needs no inventory row to be true.
    */
   private void onReleasedManifests(EventFrame frame, ScmReleasePayload release) {
     String repository = repositoryName(release);
     String version = trimmed(release.version());
     if (repository == null || version == null) {
-      // The gitlink half logs this too, and says the same thing about the same payload.
+      // The ledger half logs this too, and says the same thing about the same payload.
       return;
     }
     if (store.repository(repository).isEmpty()) {
@@ -355,46 +368,44 @@ public class ScmEventListener implements QitsDurableEventListener {
         frame.name(), frame.id(), repository, version, id);
   }
 
-  // --- SCMRelease, the gitlink half -----------------------------------------------------------
+  // --- SCMRelease, the ledger half ------------------------------------------------------------
 
   /**
-   * <b>A repository was released, so every gitlink pointing at it has a newer commit to move to.</b>
+   * <b>A repository was released, so the ledger learns what the released tree declared — and that
+   * is ALL a release says about a gitlink now</b> (qits-1257).
    *
-   * <p>This is the whole of "what is the latest" for {@link Ecosystem#GITLINK}: there is no registry
-   * to poll — a submodule is a git repository and nothing publishes one — so the daily scan neither
-   * fills this row nor clears it, and {@code LatestResolver.resolvable} refuses the ecosystem
-   * outright. It replaces the fifteen per-repository {@code ci-event-upstream-frontend.yml} hop
-   * files, each of which watched exactly one sibling's {@code SCMRelease} and force-pushed a branch
-   * of its own.
+   * <p><b>It used to move the gitlink latest too, and that was the bug.</b> Until qits-1257 this
+   * half wrote {@code mt_latest}'s GITLINK row from the tag — version and the commit it resolves to
+   * — and told both re-plan hooks. But a release request tags its fold at RELEASED, and the tag is
+   * merged into {@code main} only at FINALIZED; between the two a release can still fail. Two did:
+   * {@code qits-edge-service 2026.1014.232301} and {@code qits-workspace-oci 2026.1015.21231} were
+   * cut, their publish FAILED, they never finalized — and qits-qits-rr-137 pinned both and was
+   * rejected. The gitlink latest is now the release a repository's {@code main} head carries,
+   * written by {@link #onPush} when the finalize merge lands and by every scan at main ({@code
+   * latest/MainHeadLatest}). This half no longer writes it, and no longer re-plans anything: a
+   * release that is cut has given no submodule anywhere to move.
    *
-   * <p><b>It records for EVERY release, not only for repositories something pins today.</b> The
-   * gate would be a read of {@code mt_pin}, and it would be wrong in the one direction that costs:
-   * a repository that grows a submodule between two releases would have no latest at all until the
-   * sibling released again, which on a frontend is weeks. A row per released repository is a
-   * hundred rows.
+   * <p><b>The ledger stays, and it is what makes the new rule work.</b> A {@code main} head is a
+   * commit; the ledger row written here, keyed by the same commit, is how the push half later
+   * names its version. It is also the adoption view's evidence — what THIS release declared, a
+   * fact about a version rather than about the newest one — so a late-announced older release
+   * deserves its row exactly as much as this morning's does.
    *
-   * <p><b>Two facts are stored and the second is the load-bearing one.</b> {@code latest} is the
-   * calver version — what the bump step fetches, {@code refs/tags/<version>} — and {@code
-   * source_url} carries the COMMIT that tag resolves to, as {@code sha:<hex>}. Without the sha
-   * there is nothing to compare a gitlink pin against: a pin is a commit and a release is a name,
-   * and the pending rule refuses to guess across that gap.
-   *
-   * <p><b>The tag is resolved rather than correlated with a push.</b> A release IS the tag, and the
-   * {@code SCMRelease} is published the moment qits-githost's tag primitive answers, so the tag is
-   * there when this frame arrives; reading it is one call whose answer is the release's own commit. The alternative — remembering the {@code SCMPublishCommit} that came past a moment
-   * earlier and pairing it up by repository and time — is a correlation over two publishers'
-   * clocks, and it is wrong exactly when two releases of one repository are close together.
+   * <p><b>The tag is resolved rather than correlated with a push.</b> A release IS the tag, and
+   * the {@code SCMRelease} is published the moment qits-githost's tag primitive answers, so the tag
+   * is there when this frame arrives; reading it is one call whose answer is the release's own
+   * commit, handed to the ledger so its own read of the tree costs no second resolution.
    *
    * <p><b>The failure split is the seam's.</b> A git host that cannot be ASKED is retryable, so it
    * is thrown and the frame stays owed; a tag the git host does not HOLD is poison — the same
    * question has the same answer for ever — so it is a WARN and a return.
    */
-  private void onGitlinkReleased(EventFrame frame, ScmReleasePayload release) {
+  private void onReleaseLedger(EventFrame frame, ScmReleasePayload release) {
     String repository = repositoryName(release);
     String version = trimmed(release.version());
     if (repository == null || version == null) {
       LOG.debugf(
-          "%s %s names no (repository, version) to record a gitlink latest under",
+          "%s %s names no (repository, version) to record a release under",
           frame.name(), frame.id());
       return;
     }
@@ -411,47 +422,18 @@ public class ScmEventListener implements QitsDurableEventListener {
     TreeLookup tag = gitHost.head(project, repository, TAG_PREFIX + version);
     if (tag.status() == FileLookup.Status.UNREACHABLE) {
       // Retryable, and thrown on purpose: the claim rolls back and the next sweep offers this
-      // release again, which is the only thing that can recover a latest nothing else ever writes.
+      // release again.
       throw new IllegalStateException(
           "the git host could not resolve " + repository + " " + version + ": " + tag.message());
     }
     if (!tag.found() || tag.headSha() == null || tag.headSha().isBlank()) {
       LOG.warnf(
-          "%s %s released %s %s, which the git host does not hold as a tag; no gitlink latest is"
+          "%s %s released %s %s, which the git host does not hold as a tag; no release is"
               + " recorded",
           frame.name(), frame.id(), repository, version);
       return;
     }
-    boolean moved =
-        store.recordLatestIfNewer(
-            Ecosystem.GITLINK,
-            repository,
-            version,
-            GitlinkSha.of(tag.headSha()),
-            Instant.now());
-    if (moved) {
-      LOG.infof(
-          "%s %s moved the latest gitlink %s to %s (%s)",
-          frame.name(), frame.id(), repository, version, tag.headSha());
-      // A queue submit, never a call: the claim transaction holds no HTTP open (qits-1133).
-      upstream.latestMoved(Ecosystem.GITLINK, repository);
-    } else {
-      LOG.debugf(
-          "%s %s announced %s at %s, which is not newer than the gitlink latest recorded",
-          frame.name(), frame.id(), repository, version);
-    }
-    // AND THE LEDGER, WHETHER OR NOT THE COLUMN MOVED. The two writes answer two questions and only
-    // one of them is forward-only: `mt_latest` is "where can a gitlink pinned here move to", which a
-    // catch-up frame from last week must not rewind, while a ledger row is "what did THIS release
-    // declare" — a fact about a version rather than about the newest one, and a late-announced older
-    // release deserves its row exactly as much as this morning's does. The tag sha is already
-    // resolved above, so the ledger's own read of the tree costs no second resolution.
-    if (ledger.record(project, repository, version, tag.headSha(), Instant.now())) {
-      // The estate's half of the hook (qits-1224), and only once the row it plans from is written:
-      // every open request of a wrapper of this project re-plans its estate pins. A queue submit, as
-      // above.
-      upstream.released(repository);
-    }
+    ledger.record(project, repository, version, tag.headSha(), Instant.now());
   }
 
   /**
@@ -506,9 +488,10 @@ public class ScmEventListener implements QitsDurableEventListener {
   // --- SCMPublishCommit -----------------------------------------------------------------------
 
   /**
-   * A push landed. If it was on the repository's own main branch, its manifests are re-read — and
-   * that includes a release's finalize merge into main, which qits-githost's REST door announces as
-   * an ordinary push since qits-886.
+   * A push landed. If it was on the repository's own main branch, its gitlink latest is set to the
+   * release main's head now carries, and its manifests are re-read — and that includes a release's
+   * finalize merge into main, which qits-githost's REST door announces as an ordinary push since
+   * qits-886.
    */
   private void onPush(EventFrame frame) {
     ScmPublishCommitPayload push = decode(frame, ScmPublishCommitPayload.class);
@@ -525,22 +508,29 @@ public class ScmEventListener implements QitsDurableEventListener {
       return;
     }
     Optional<MtRepository> row = store.repository(repository);
-    if (row.isEmpty()) {
-      // A repository the catalog has, that no scan has read yet — or one this platform does not
-      // track at all. Either way there is no row to refresh and no main branch to compare against;
-      // the next scheduled scan reads the catalog and creates it.
-      LOG.debugf(
-          "%s %s pushed to %s, which this inventory does not hold yet", frame.name(), frame.id(),
-          repository);
-      return;
-    }
-    String mainBranch = trimmed(row.get().mainBranch);
+    // A repository no scan has read has no main branch on record; `main` is what a scan of it would
+    // read too (`ManifestScanner.read`), so its latest is not left waiting for the first scan.
+    String mainBranch = row.isPresent() ? trimmed(row.get().mainBranch) : DEFAULT_MAIN;
     if (mainBranch == null || !mainBranch.equals(branch)) {
       // Every branch on the platform rides this signature, maintenance branches this service pushed
-      // included. Only the branch a scan reads manifests at can invalidate the inventory.
+      // included. Only the branch a scan reads manifests at can invalidate the inventory, and only
+      // main's head is a finalized release.
       LOG.debugf(
           "%s %s pushed %s of %s, which is not its main branch (%s)",
-          frame.name(), frame.id(), branch, repository, row.get().mainBranch);
+          frame.name(), frame.id(), branch, repository, mainBranch);
+      return;
+    }
+    // BEFORE the debounce, and never behind it: a scan already queued would set the same row, but
+    // it runs on the worker whenever it gets there, and a member is meant to be pinnable minutes
+    // after it finalizes (qits-1257).
+    onMainMoved(frame, push, row, repository, mainBranch);
+    if (row.isEmpty()) {
+      // A repository the catalog has, that no scan has read yet — or one this platform does not
+      // track at all. Either way there is no row to refresh; the next scheduled scan reads the
+      // catalog and creates it.
+      LOG.debugf(
+          "%s %s pushed to %s, which this inventory does not hold yet; no scan is queued",
+          frame.name(), frame.id(), repository);
       return;
     }
     if (store.scanPending(repository)) {
@@ -558,6 +548,59 @@ public class ScmEventListener implements QitsDurableEventListener {
     LOG.infof(
         "%s %s pushed %s of %s at %s; queued the scan %s of that repository",
         frame.name(), frame.id(), branch, repository, push.sha(), id);
+  }
+
+  /**
+   * <b>Main moved, so the gitlink latest is whatever release main's head now carries</b>
+   * (qits-1257) — see {@link MainHeadLatest} for the rule and why it replaced "the tag that was just
+   * cut".
+   *
+   * <p><b>The head is READ, not taken off the payload.</b> A frame can be handled late — a
+   * redelivery, a catch-up after an outage — and its {@code sha} is main as it was then. The head
+   * read now is main as it is, so the write may overwrite rather than move forward only: a late
+   * frame cannot rewind anything, it can only find the row already true. It is the same one read
+   * the release half makes of a tag.
+   *
+   * <p>A head that carries no release the ledger knows (a direct push to main, or a release whose
+   * tree the ledger could not read) leaves the row as it was — {@link MainHeadLatest.Outcome#NO_RELEASE}
+   * — and when the row does change, {@link MainHeadLatest#record} tells both re-plan hooks, the
+   * gitlink bump's and the estate's (qits-1224), which is what the release half used to do.
+   *
+   * <p><b>Addressed like the release half</b>: the inventory's project, the payload's for a
+   * repository no scan has reached. The failure split is the seam's: a git host that cannot be
+   * ASKED is thrown and the frame stays owed; a main the git host does not hold is settled.
+   */
+  private void onMainMoved(
+      EventFrame frame,
+      ScmPublishCommitPayload push,
+      Optional<MtRepository> row,
+      String repository,
+      String mainBranch) {
+    String project = row.map(found -> found.project).orElse(trimmed(push.projectId()));
+    if (project == null) {
+      LOG.debugf(
+          "%s %s pushed to %s under no project this service can address",
+          frame.name(), frame.id(), repository);
+      return;
+    }
+    TreeLookup head = gitHost.head(project, repository, mainBranch);
+    if (head.status() == FileLookup.Status.UNREACHABLE) {
+      // Retryable, and thrown on purpose: the claim rolls back and the push is offered again.
+      throw new IllegalStateException(
+          "the git host could not resolve " + mainBranch + " of " + repository + ": "
+              + head.message());
+    }
+    if (!head.found() || head.headSha() == null || head.headSha().isBlank()) {
+      LOG.warnf(
+          "%s %s pushed %s of %s, which the git host does not hold; its gitlink latest is left"
+              + " as it was",
+          frame.name(), frame.id(), mainBranch, repository);
+      return;
+    }
+    MainHeadLatest.Outcome outcome = mainHead.record(repository, head.headSha(), Instant.now());
+    LOG.debugf(
+        "%s %s moved %s of %s to %s: %s", frame.name(), frame.id(), mainBranch, repository,
+        head.headSha(), outcome);
   }
 
   // --- shared ---------------------------------------------------------------------------------

@@ -18,6 +18,7 @@ import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto.AutomationDt
 import eu.wohlben.qits.maintenance.entity.MtBump;
 import eu.wohlben.qits.maintenance.entity.MtRepository;
 import eu.wohlben.qits.maintenance.githost.GitHostReader;
+import eu.wohlben.qits.maintenance.latest.GitlinkSha;
 import eu.wohlben.qits.maintenance.model.BumpStatus;
 import eu.wohlben.qits.maintenance.model.BumpTrigger;
 import eu.wohlben.qits.maintenance.model.GroupSource;
@@ -42,8 +43,9 @@ import org.junit.jupiter.api.Test;
 
 /**
  * <b>The estate-pins kind</b> (qits-999, qits-1258): the gitlink decision qits-projects' {@code
- * EstatePinRefresh} made, ported, reading this service's own facts — the inventory's archetype, the
- * release ledger, the git host — and, since qits-1258, read AT THE FOLD and written as ONE commit on
+ * EstatePinRefresh} made, ported, reading this service's own facts — the inventory's archetype, each
+ * member's GITLINK latest (the release its main head carries, qits-1257), the git host — and, since
+ * qits-1258, read AT THE FOLD and written as ONE commit on
  * the kind's own branch.
  *
  * <p>The decision's cases are still that class's: current pins are FRESH, one stale pin is one
@@ -154,12 +156,20 @@ class EstatePinsAutomationTest {
     store.recordRelease(
         "member-c", MEMBER_C_VERSION, MEMBER_C_RELEASED_SHA,
         Instant.parse("2026-09-11T01:01:01Z"), List.of());
+    // What each member's main head carries (qits-1257) — the row the plan reads. member-b has none.
+    mainHead("member-a", MEMBER_VERSION, MEMBER_RELEASED_SHA);
+    mainHead("member-c", MEMBER_C_VERSION, MEMBER_C_RELEASED_SHA);
     peers.answer(
         PeerTarget.CI,
         CiClient.TRIGGER_PATH,
         FakePeers.Scripted.ok(
             "{\"eventId\":\"e1\",\"runIds\":[\"" + RUN + "\"],\"repositoriesRead\":1,"
                 + "\"repositoriesSkipped\":[]}"));
+  }
+
+  /** A member's GITLINK latest, as {@code latest/MainHeadLatest} writes it from main's head. */
+  private void mainHead(String member, String version, String sha) {
+    store.recordGitlinkLatest(member, version, GitlinkSha.of(sha), Instant.now());
   }
 
   private void repository(String name, String project, String archetype) {
@@ -366,6 +376,50 @@ class EstatePinsAutomationTest {
     // member-b's gitlink is STALE_PIN at the fold and it has no release: nothing to pin it at.
 
     assertEquals(Plan.Kind.FRESH, plan().kind(), "an unreleased member never becomes a change");
+  }
+
+  /**
+   * <b>qits-qits-rr-137 (qits-1257).</b> member-a has a NEWER release in the ledger — cut, RELEASED,
+   * its publish failed, never finalized and so never merged into main — and the estate still pins the
+   * release main's head carries. Until qits-1257 the plan took the newest ledger row and named this
+   * unfinalized one.
+   */
+  @Test
+  void aMemberReleasedButNotFinalizedIsPinnedAtTheReleaseItsMainHeadCarries() {
+    store.recordRelease(
+        "member-a", "2026.1014.232301", "0dd0dd0dd0dd0dd0dd0dd0dd0dd0dd0dd0dd0dd0",
+        Instant.parse("2026-10-14T23:23:01Z"), List.of());
+    currentFold(FOLD);
+
+    assertEquals(
+        Plan.Kind.FRESH, plan().kind(), "a pin at main's release is current, whatever was cut since");
+
+    peers.reset();
+    fold(FOLD, STALE_PIN, MEMBER_C_RELEASED_SHA, true);
+    Plan plan = plan();
+    assertEquals(Plan.Kind.RUN, plan.kind(), plan.reason());
+    assertEquals(
+        List.of(
+            new Change(
+                "gitlink", MEMBER_PATH, "member-a", STALE_PIN, MEMBER_VERSION,
+                "gitlink:" + MEMBER_PATH)),
+        plan.runs().getFirst().changes(),
+        "the previous, finalized release — never the newest ledger row");
+  }
+
+  /**
+   * A member released into the ledger whose main head carries no release this service knows has no
+   * GITLINK latest row, and is not in the estate — exactly as one with no release at all.
+   */
+  @Test
+  void aMemberWithAReleaseButNoMainHeadLatestIsSkipped() {
+    store.recordRelease(
+        "member-b", "2026.1015.21231", "0ee0ee0ee0ee0ee0ee0ee0ee0ee0ee0ee0ee0ee0",
+        Instant.parse("2026-10-15T02:12:31Z"), List.of());
+    currentFold(FOLD);
+
+    assertEquals(
+        Plan.Kind.FRESH, plan().kind(), "member-b's STALE_PIN is no change: nothing finalized");
   }
 
   @Test

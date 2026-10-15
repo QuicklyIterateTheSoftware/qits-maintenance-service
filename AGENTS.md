@@ -144,9 +144,12 @@ then applied by the step, into somebody else's repository. `ManifestScannerTest`
 **A GITLINK PIN HAS NO ORDER AT ALL, and that is the one to get right.** It is a commit sha; nothing
 ranks two of those, and maven's order would happily call one "newer" by reading the leading hex as
 digits. `pending/PendingChanges.gitlink` therefore asks a DIFFERENCE — is the pin the commit the
-newest release was cut from — over `latest/GitlinkSha`, and refuses to answer when either half is
-missing. What *is* ordered is the gitlink's `mt_latest.latest`, a calver release version, which rides
-maven's order so `recordLatestIfNewer` stays forward-only.
+repository's `main` head is — over `latest/GitlinkSha`, and refuses to answer when either half is
+missing. **The gitlink latest is the release `main`'s head carries, never the newest tag cut**
+(qits-1257): a release request tags at RELEASED and merges into `main` only at FINALIZED, and
+qits-qits-rr-137 was rejected for pinning two releases whose publish failed. `latest/MainHeadLatest`
+is the one rule, and it OVERWRITES (`recordGitlinkLatest`) because it reads the current head each
+time — healing a row that named an unfinalized tag is a move backwards in version order.
 
 **Three orders, because three ecosystems disagree.** Maven's is `ComparableVersion` — the class a
 resolver ranks with, so this service and a build agree. npm's is real semver, which ranks
@@ -613,8 +616,8 @@ that no event ever carried.
 
 **No `mt_artifact` row is ever a `gitlink`, and a `daemon` row is an artifact like any other.** A
 gitlink is a submodule rather than a published package and no release announces one as its
-`packageType`; GITLINK reaches `mt_latest` through the OTHER listener, off the same `SCMRelease` a
-branch's state is read from. A `daemon` release writes the artifact row (never `mt_latest`) under
+`packageType`; GITLINK reaches `mt_latest` through the OTHER listener, off the `SCMPublishCommit`
+that moves a repository's `main` (and through every scan at main — see `latest/MainHeadLatest`). A `daemon` release writes the artifact row (never `mt_latest`) under
 the literal word — it is not an `Ecosystem` — PENDING, and its document is fetched and ingested like
 a jar's: **the SBOM route is keyed by the released artifact's TYPE, so `SbomClient` takes the stored
 wire string, not an `Ecosystem`.** That is what qits-703 corrected — the row used to be written
@@ -643,27 +646,38 @@ subscribes and publishes nothing.**
   every release up to the day the trains were removed — it would start deaf, with nothing in any log.
   It is pinned as a literal in `bus/ForeignEventContractTest` beside the two that are live, with the
   assertion that no live listener claims it.
-- **`mt_latest` has two writers now and they are deliberately different methods.**
+- **`mt_latest` has three writers now and they are deliberately different methods.**
   `MaintenanceStore.recordLatest` is the POLL's and replaces the column whatever it says;
-  `recordLatestIfNewer` is the BUS's and only ever moves it forward. A poll asks a registry what the
-  newest version is — a downgrade is a real answer, because a package can be unpublished. An
-  announcement is evidence that THIS version exists and never that a higher one does not, so letting
-  the bus write through `recordLatest` would let a catch-up frame from yesterday rewind a column this
-  morning's scan filled, and every pin of that dependency would read as up to date until the next
-  scan. The guard is `VersionOrder`'s, the same comparison the pending rule makes. A frame that is not
-  newer writes **nothing at all**, `checked_at` included: stamping it would say a lookup happened.
-- **`SCMRelease` does TWO things here, and the first is the gitlink.** Every release records the latest of a
-  GITLINK — the version, and the commit `refs/tags/<version>` resolves to, in `source_url` as
-  `sha:<hex>`. It runs on every release whatever the branch was, and it is idempotent, so the
-  redelivery an unreachable git host causes replays it harmlessly. The failure split is the seam's: a
-  tag the host does not HOLD is poison (WARN, settle), a host that cannot be ASKED is retryable and
-  thrown, because no scan ever refreshes this row.
-- **The SECOND is the release LEDGER, and it runs whether or not the latest column moved.**
-  `adoption/ReleaseLedger` reads the tree at the same tag and records its INTERNAL pins. The two
-  writes answer two questions and only one of them is forward-only: `mt_latest` is "where can a pin
-  move to", which a catch-up frame must not rewind, while a ledger row is "what did THIS release
-  declare" — a fact about a version rather than about the newest one. Same failure split, and the
-  tag sha is handed over already resolved rather than resolved twice. See "The release ledger".
+  `recordLatestIfNewer` is the BUS's (`SoftwareRelease`) and only ever moves it forward. A poll asks
+  a registry what the newest version is — a downgrade is a real answer, because a package can be
+  unpublished. An announcement is evidence that THIS version exists and never that a higher one does
+  not, so letting the bus write through `recordLatest` would let a catch-up frame from yesterday
+  rewind a column this morning's scan filled, and every pin of that dependency would read as up to
+  date until the next scan. The guard is `VersionOrder`'s, the same comparison the pending rule
+  makes. A frame that is not newer writes **nothing at all**, `checked_at` included: stamping it
+  would say a lookup happened. The third, `recordGitlinkLatest`, is GITLINK's alone and OVERWRITES
+  (qits-1257) — see the next bullet.
+- **The GITLINK latest is the release a repository's `main` head carries, and `SCMRelease` no
+  longer writes it (qits-1257).** It used to: every release moved it to the tag just cut. A release
+  request tags at RELEASED and merges into `main` only at FINALIZED, so that rule pinned
+  qits-qits-rr-137 to `qits-edge-service 2026.1014.232301` and `qits-workspace-oci 2026.1015.21231`,
+  cut, publish FAILED, never finalized — and, forward-only, those rows could never heal.
+  `latest/MainHeadLatest` is the one rule now: the head's commit, named by the ledger row whose
+  `sha` it is (never "the newest ledger row"), written over whatever was there. A `SCMPublishCommit`
+  on a repository's main branch reads the head at the git host and writes it **before** the scan
+  debounce, so a member is pinnable minutes after its finalize merge — UNREACHABLE throws, a main the
+  host does not hold settles, and a repository the inventory does not hold yet is addressed by the
+  payload's project on `main`, like the release half. Every scan at main writes it again from the
+  head it already resolved, and a boot task (queued after `ReleaseLedgerBackfill`) does it for every
+  repository, one head read each. A head with no known release leaves the row alone and says so. A
+  row that changed tells `UpstreamReplan.latestMoved` and `.released`.
+- **`SCMRelease` writes the release LEDGER, and nothing else here.** `adoption/ReleaseLedger` reads
+  the tree at `refs/tags/<version>`, resolved at the git host, and records its INTERNAL pins. A
+  ledger row is "what did THIS release declare" — a fact about a version rather than about the
+  newest one — so a late-announced older release gets its row too; its commit is also how a `main`
+  head is later named. The failure split is the seam's: a tag the host does not HOLD is poison
+  (WARN, settle), a host that cannot be ASKED is retryable and thrown. The tag sha is handed over
+  already resolved rather than resolved twice. See "The release ledger".
 - **The maintenance-branch arm of `SCMRelease` is GONE, and `BranchState.RELEASED` is a word nothing
   writes.** It was there because qits-workspaces' door published the event naming the branch it had
   just tagged over, which was the one fact nothing else could tell this service. A release is now a

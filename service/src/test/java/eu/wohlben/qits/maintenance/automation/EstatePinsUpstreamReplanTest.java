@@ -13,6 +13,7 @@ import eu.wohlben.qits.maintenance.bump.ReleaseRequestClient;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto.AutomationDto;
 import eu.wohlben.qits.maintenance.entity.MtBump;
 import eu.wohlben.qits.maintenance.githost.GitHostReader;
+import eu.wohlben.qits.maintenance.latest.GitlinkSha;
 import eu.wohlben.qits.maintenance.model.BumpStatus;
 import eu.wohlben.qits.maintenance.model.BumpTrigger;
 import eu.wohlben.qits.maintenance.model.GroupSource;
@@ -35,7 +36,8 @@ import org.junit.jupiter.api.Test;
 /**
  * <b>A member's release re-plans the estate</b> (qits-1224). A wrapper request folded before a
  * member released has {@code estate-pins} FRESH at that fold, and the per-fold verdict is never
- * planned again by the fold trigger. The release recorded in the ledger is what asks again: through
+ * planned again by the fold trigger. The member's {@code main} head moving to a new release — its
+ * finalize merge, since qits-1257; the cut tag before — is what asks again: through
  * {@link UpstreamReplan#released}, past the stored FRESH, as one commit onto the kind's own branch
  * (qits-1258) — and the re-fold that commit's join causes is planned again and found FRESH, as any
  * estate commit's is. A release of a repository of another project reaches no wrapper of this one.
@@ -112,6 +114,7 @@ class EstatePinsUpstreamReplanTest {
     repository(OUTSIDER, "other", "SERVICE");
     store.recordRelease(
         MEMBER, OLD_VERSION, OLD_SHA, Instant.parse("2026-09-01T00:00:00Z"), List.of());
+    mainHead(OLD_VERSION, OLD_SHA);
     peers.answer(
         PeerTarget.CI,
         CiClient.TRIGGER_PATH,
@@ -133,6 +136,14 @@ class EstatePinsUpstreamReplanTest {
   @AfterEach
   void drain() {
     queue.awaitIdle(Duration.ofSeconds(30));
+  }
+
+  /**
+   * The member's GITLINK latest — what {@code latest/MainHeadLatest} writes once main's head is
+   * that release (qits-1257) — and what the estate plan reads.
+   */
+  private void mainHead(String version, String sha) {
+    store.recordGitlinkLatest(MEMBER, version, GitlinkSha.of(sha), Instant.now());
   }
 
   private void repository(String name, String project, String archetype) {
@@ -205,6 +216,7 @@ class EstatePinsUpstreamReplanTest {
     foldedBeforeTheRelease();
     store.recordRelease(
         MEMBER, NEW_VERSION, NEW_SHA, Instant.parse("2026-10-13T09:00:00Z"), List.of());
+    mainHead(NEW_VERSION, NEW_SHA);
 
     released(MEMBER);
 
@@ -297,6 +309,7 @@ class EstatePinsUpstreamReplanTest {
     memberCut("RELEASED", "RUNNING");
     store.recordRelease(
         MEMBER, NEW_VERSION, NEW_SHA, Instant.parse("2026-10-14T09:24:08Z"), List.of());
+    mainHead(NEW_VERSION, NEW_SHA);
 
     released(MEMBER);
 
@@ -353,6 +366,7 @@ class EstatePinsUpstreamReplanTest {
     foldedBeforeTheRelease();
     store.recordRelease(
         MEMBER, NEW_VERSION, NEW_SHA, Instant.parse("2026-10-13T09:00:00Z"), List.of());
+    mainHead(NEW_VERSION, NEW_SHA);
 
     released(OUTSIDER);
     released(WRAPPER);

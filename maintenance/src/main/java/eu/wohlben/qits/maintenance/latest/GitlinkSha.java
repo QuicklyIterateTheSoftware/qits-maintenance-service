@@ -12,8 +12,9 @@ import java.util.Optional;
  * in the git host, so the sha IS the provenance, and a column added to carry it would be a
  * migration and a second nullable field that only one of four ecosystems ever fills.
  *
- * <p><b>Two readers and one writer, so the spelling lives here.</b> {@code bus/ScmEventListener}
- * writes it; the pending rule and the repository page read it. A second spelling of {@code "sha:"}
+ * <p><b>Several readers and one writer, so the spelling lives here.</b> {@code
+ * latest/MainHeadLatest} writes it (qits-1257: the commit a repository's {@code main} head is, and
+ * the release it carries); the pending rule, the estate pins and the repository page read it. A second spelling of {@code "sha:"}
  * would be the one that failed to match, silently, as "nothing is pending".
  */
 public final class GitlinkSha {

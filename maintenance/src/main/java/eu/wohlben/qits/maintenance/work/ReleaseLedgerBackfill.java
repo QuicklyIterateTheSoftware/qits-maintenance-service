@@ -24,9 +24,11 @@ import org.jboss.logging.Logger;
  * <p><b>The source is {@code mt_latest}'s GITLINK rows, and it is the only source there is.</b>
  * Nothing else on this platform writes down "this repository released this version, at this commit"
  * — a registry knows versions of a PACKAGE and not of a repository, and a frontend publishes no
- * package at all. That listener has been recording a gitlink latest for every release since it
- * landed, version and tag sha together, so the newest release of every repository the bus has
- * announced is sitting there waiting to be re-read at its tag.
+ * package at all. That listener recorded a gitlink latest for every release from the day it landed,
+ * version and tag sha together, so the newest release of every repository the bus had announced was
+ * sitting there waiting to be re-read at its tag. Since qits-1257 the row is the release a
+ * repository's {@code main} head carries rather than the newest tag cut — still a release, version
+ * and commit together, so this reads it unchanged.
  *
  * <p><b>ONE release per repository, and that is the whole of what a backfill can honestly be.</b>
  * {@code mt_latest} keeps the newest, so the history before it is not recoverable from anything
