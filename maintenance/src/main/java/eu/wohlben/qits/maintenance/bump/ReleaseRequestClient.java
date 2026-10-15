@@ -312,15 +312,27 @@ public class ReleaseRequestClient {
   }
 
   /**
-   * One request off a repository's listing, as much of it as the upstream hook reads.
+   * One request off a repository's listing, as much of it as the upstream hook reads — plus the two
+   * fields that answer whether a {@code RELEASED} request is still going out (qits-1251).
    *
    * @param id the request
    * @param state its state word
    * @param mergedSha its current fold, or null
    * @param ciGate the state of its {@code CI} gate at that fold — {@code PENDING}, {@code PASSED},
    *     {@code FAILED}, {@code UNKNOWN} — or null where it lists none
+   * @param publish the state of its newest {@code PUBLISH} phase ({@code pipeline.phases[]}), or
+   *     null where it lists none
+   * @param deploymentGate the state of its {@code DEPLOYMENT} gate at that fold, or null where it
+   *     lists none
    */
-  public record Listed(String id, String state, String mergedSha, String ciGate) {
+  public record Listed(
+      String id, String state, String mergedSha, String ciGate, String publish,
+      String deploymentGate) {
+
+    /** The three-field shape every caller before qits-1251 constructed. */
+    public Listed(String id, String state, String mergedSha, String ciGate) {
+      this(id, state, mergedSha, ciGate, null, null);
+    }
 
     /** Whether the request still takes a branch: open, and not past its release. */
     public boolean open() {
@@ -338,6 +350,26 @@ public class ReleaseRequestClient {
     public boolean verdict() {
       return "PASSED".equals(ciGate) || "FAILED".equals(ciGate)
           || (!"PENDING".equals(state) && !"REJECTED".equals(state));
+    }
+
+    /**
+     * <b>Whether a release still going out holds the dispatcher (qits-1251).</b> {@code RELEASED} is
+     * past every open state — the tag is cut — but a main-only request opened now would OBSOLETE it
+     * and re-release the same tag with nothing new in it, which is a wasted build at best and a
+     * confusing duplicate release at worst. So a {@code RELEASED} request holds exactly as long as
+     * its publish is still working: neither the {@code PUBLISH} phase nor the {@code DEPLOYMENT} gate
+     * has FAILED.
+     *
+     * <p><b>A FAILED publish or deployment does NOT hold.</b> Such a request stays {@code RELEASED}
+     * for good — nothing moves it on from there but a person retrying — so holding on it would starve
+     * every bump of this repository until somebody notices. The main-only request that overtakes it
+     * is the recovery: a fresh build, on top of whatever landed, rather than a repository stuck
+     * waiting on a release that is never coming back on its own.
+     */
+    public boolean inFlight() {
+      return "RELEASED".equals(state)
+          && !"FAILED".equals(publish)
+          && !"FAILED".equals(deploymentGate);
     }
   }
 
@@ -366,8 +398,11 @@ public class ReleaseRequestClient {
   /**
    * A repository's OPEN release requests (qits-1133) — {@code GET …/release-requests}, whose default
    * answer is the open ones plus the last ten released; the released are filtered out here. Read by
-   * the upstream hook, which re-plans the bump of each open one that is not READY, and by the
-   * dispatcher, which opens no main-only request beside one that is open.
+   * the upstream hook, which re-plans the bump of each open one that is not READY. <b>The dispatcher
+   * does NOT read this</b> (qits-1251): it reads {@link #requests} instead and holds on {@link
+   * Listed#open()} or {@link Listed#inFlight()}, because a release in flight — RELEASED, its publish
+   * not yet FAILED — is exactly what this method filters out, and a main-only request opened onto it
+   * would obsolete the release and re-cut its tag with nothing new.
    */
   public Listing openRequests(String repoId) {
     Listing listed = requests(repoId);
@@ -400,7 +435,13 @@ public class ReleaseRequestClient {
       String id = text(request, "id");
       if (id != null) {
         all.add(
-            new Listed(id, text(request, "state"), text(request, "mergedSha"), ciGate(request)));
+            new Listed(
+                id,
+                text(request, "state"),
+                text(request, "mergedSha"),
+                ciGate(request),
+                publish(request),
+                deploymentGate(request)));
       }
     }
     return new Listing(all, null);
@@ -562,6 +603,24 @@ public class ReleaseRequestClient {
       }
       for (JsonNode gate : request.get(field)) {
         if ("CI".equals(text(gate, "kind"))) {
+          return text(gate, "state");
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * The {@code DEPLOYMENT} gate's state off {@code gates}, or off {@code qualityGates} where that is
+   * all — the same read as {@link #ciGate}, for the other kind (qits-1251).
+   */
+  private static String deploymentGate(JsonNode request) {
+    for (String field : List.of("gates", "qualityGates")) {
+      if (request == null || !request.hasNonNull(field) || !request.get(field).isArray()) {
+        continue;
+      }
+      for (JsonNode gate : request.get(field)) {
+        if ("DEPLOYMENT".equals(text(gate, "kind"))) {
           return text(gate, "state");
         }
       }

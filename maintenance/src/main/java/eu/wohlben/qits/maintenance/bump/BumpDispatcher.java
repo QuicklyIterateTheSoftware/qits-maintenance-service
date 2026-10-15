@@ -407,19 +407,30 @@ public class BumpDispatcher {
 
   /**
    * Whether a repository owed a bump is HELD: it has ANY open release request — whose pre-run
-   * carries the bump, and which the upstream hook re-plans — or the main-only request this service
-   * last opened for the same pending set is on its way, shipped, or was withdrawn with no bump
-   * anywhere in its history. A withdrawal that DID write one does not hold (qits-1173): before
-   * qits-1226 a request was withdrawn as "nothing to bump" by the re-fold onto its own bump commit,
-   * and that memo held the repository on the same pending set for good. A person's withdrawal frees
-   * it; an unreadable answer holds.
+   * carries the bump, and which the upstream hook re-plans — or a release of it is still going OUT
+   * (qits-1251: {@code RELEASED}, its publish and deployment not yet FAILED — see {@link
+   * ReleaseRequestClient.Listed#inFlight()}) — or the main-only request this service last opened for
+   * the same pending set is on its way, shipped, or was withdrawn with no bump anywhere in its
+   * history. A withdrawal that DID write one does not hold (qits-1173): before qits-1226 a request
+   * was withdrawn as "nothing to bump" by the re-fold onto its own bump commit, and that memo held
+   * the repository on the same pending set for good. A person's withdrawal frees it; an unreadable
+   * answer holds.
+   *
+   * <p><b>A release in flight holds so a main-only request never overtakes it</b> (qits-1251). A
+   * {@code RELEASED} request is past {@link ReleaseRequestClient.Listed#open()} — the tag is already
+   * cut — so a bare {@code open()} check would read it as free and open a second, main-only request
+   * racing it; that request would obsolete the one in flight and re-release the same tag with nothing
+   * new in it. A publish or deployment that FAILED is the one case excepted: such a request stays
+   * {@code RELEASED} until a person retries it, and holding on it would starve this repository's
+   * bumps for good, so the main-only request that overtakes it is the recovery.
    */
   private boolean held(MtRepository row, List<Change> pending) {
     if (row.catalogId == null || row.catalogId.isBlank()) {
       return false;
     }
-    ReleaseRequestClient.Listing listing = openRequests(row.catalogId);
-    if (!listing.readable() || !listing.requests().isEmpty()) {
+    ReleaseRequestClient.Listing listing = requests(row.catalogId);
+    if (!listing.readable()
+        || listing.requests().stream().anyMatch(request -> request.open() || request.inFlight())) {
       return true;
     }
     Optional<MtReleaseRequest> newest =
@@ -444,13 +455,18 @@ public class BumpDispatcher {
     return !state.withdrawn();
   }
 
-  private ReleaseRequestClient.Listing openRequests(String repoId) {
+  /**
+   * A repository's whole release-request listing, open and {@code RELEASED} alike (qits-1251): the
+   * unfiltered read {@link #held} needs to see a release in flight, cached exactly as every other
+   * read here is, behind {@link MaintenanceConfig#bumpReleaseStateTtl()}.
+   */
+  private ReleaseRequestClient.Listing requests(String repoId) {
     Instant now = Instant.now();
     SeenListing seen = listings.get(repoId);
     if (seen != null && seen.at().plus(config.bumpReleaseStateTtl()).isAfter(now)) {
       return seen.listing();
     }
-    ReleaseRequestClient.Listing listing = releases.openRequests(repoId);
+    ReleaseRequestClient.Listing listing = releases.requests(repoId);
     listings.put(repoId, new SeenListing(listing, now));
     return listing;
   }

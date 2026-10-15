@@ -42,6 +42,8 @@ import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * THE GATE: a main-only release request for every repository owed a bump and without one, as many
@@ -212,6 +214,116 @@ class BumpDispatchTest {
         Fixture.RELEASE_REQUESTS_PATH,
         FakePeers.Scripted.ok(
             "{\"requests\":[{\"id\":\"a-persons\",\"state\":\"PENDING\",\"mergedSha\":null}]}"));
+
+    assertTrue(dispatcher.tick().isEmpty());
+    assertEquals(0, asks(Fixture.CATALOG_ID));
+  }
+
+  /**
+   * One repository's listing, scripted with the given {@code requests} array verbatim, keeping a
+   * fresh ask answerable in case the pick is not held (qits-1251).
+   */
+  private void scriptListing(String catalogId, String repository, String requestsJson) {
+    String id = requestIdOf(repository);
+    peers.answer(
+        PeerTarget.PROJECTS,
+        collection(catalogId),
+        FakePeers.Scripted.ok(
+            "{\"requests\":"
+                + requestsJson
+                + ",\"request\":{\"id\":\""
+                + id
+                + "\",\"state\":\"PENDING\"}}"));
+  }
+
+  /**
+   * <b>Reproduction (qits-1251): a RELEASED request with no pipeline at all holds</b> — the tag is
+   * cut and nothing says the publish has failed, so a main-only request must not overtake it.
+   */
+  @Test
+  void aReleasedRequestWithNoPipelineHoldsItsRepository() {
+    Fixture.scriptCiQueueEmpty(peers);
+    scriptListing(
+        Fixture.CATALOG_ID,
+        Fixture.REPOSITORY,
+        "[{\"id\":\"r-released\",\"state\":\"RELEASED\",\"mergedSha\":null}]");
+
+    assertTrue(dispatcher.tick().isEmpty());
+    assertEquals(0, asks(Fixture.CATALOG_ID));
+  }
+
+  /** A RELEASED request whose PUBLISH phase is still going (PASSED or PENDING) holds. */
+  @ParameterizedTest
+  @ValueSource(strings = {"PASSED", "PENDING"})
+  void aReleasedRequestWithAPublishStillGoingHoldsItsRepository(String publishState) {
+    Fixture.scriptCiQueueEmpty(peers);
+    scriptListing(
+        Fixture.CATALOG_ID,
+        Fixture.REPOSITORY,
+        "[{\"id\":\"r-released\",\"state\":\"RELEASED\",\"pipeline\":{\"phases\":[{\"phase\":"
+            + "\"PUBLISH\",\"state\":\""
+            + publishState
+            + "\"}]}}]");
+
+    assertTrue(dispatcher.tick().isEmpty());
+    assertEquals(0, asks(Fixture.CATALOG_ID));
+  }
+
+  /**
+   * A RELEASED request whose PUBLISH phase FAILED does not hold: nothing will retry it on its own,
+   * so holding would starve the repository of every bump for good. The main-only request this tick
+   * opens is the recovery.
+   */
+  @Test
+  void aReleasedRequestWithAFailedPublishDoesNotHoldItsRepository() {
+    Fixture.scriptCiQueueEmpty(peers);
+    scriptListing(
+        Fixture.CATALOG_ID,
+        Fixture.REPOSITORY,
+        "[{\"id\":\"r-released\",\"state\":\"RELEASED\",\"pipeline\":{\"phases\":[{\"phase\":"
+            + "\"PUBLISH\",\"state\":\"FAILED\"}]}}]");
+
+    assertEquals(1, dispatcher.tick().size());
+    assertEquals(1, asks(Fixture.CATALOG_ID));
+  }
+
+  /** The same, for a FAILED DEPLOYMENT gate rather than a FAILED PUBLISH phase. */
+  @Test
+  void aReleasedRequestWithAFailedDeploymentGateDoesNotHoldItsRepository() {
+    Fixture.scriptCiQueueEmpty(peers);
+    scriptListing(
+        Fixture.CATALOG_ID,
+        Fixture.REPOSITORY,
+        "[{\"id\":\"r-released\",\"state\":\"RELEASED\",\"gates\":[{\"kind\":\"DEPLOYMENT\","
+            + "\"state\":\"FAILED\"}]}]");
+
+    assertEquals(1, dispatcher.tick().size());
+    assertEquals(1, asks(Fixture.CATALOG_ID));
+  }
+
+  /** A listing of only CLOSED requests (OBSOLETE, FINALIZED, WITHDRAWN) holds nothing. */
+  @Test
+  void onlyClosedRequestsDoNotHoldItsRepository() {
+    Fixture.scriptCiQueueEmpty(peers);
+    scriptListing(
+        Fixture.CATALOG_ID,
+        Fixture.REPOSITORY,
+        "[{\"id\":\"r-obsolete\",\"state\":\"OBSOLETE\"},{\"id\":\"r-finalized\",\"state\":"
+            + "\"FINALIZED\"},{\"id\":\"r-withdrawn\",\"state\":\"WITHDRAWN\"}]");
+
+    assertEquals(1, dispatcher.tick().size());
+    assertEquals(1, asks(Fixture.CATALOG_ID));
+  }
+
+  /** Every OPEN state holds its repository, whatever it is. */
+  @ParameterizedTest
+  @ValueSource(strings = {"PENDING", "READY", "REJECTED", "FAILED", "CONFLICTED"})
+  void everyOpenStateHoldsItsRepository(String state) {
+    Fixture.scriptCiQueueEmpty(peers);
+    scriptListing(
+        Fixture.CATALOG_ID,
+        Fixture.REPOSITORY,
+        "[{\"id\":\"r-open\",\"state\":\"" + state + "\"}]");
 
     assertTrue(dispatcher.tick().isEmpty());
     assertEquals(0, asks(Fixture.CATALOG_ID));
