@@ -329,7 +329,7 @@ public class ReleaseRequestClient {
       String id, String state, String mergedSha, String ciGate, String publish,
       String deploymentGate) {
 
-    /** The three-field shape every caller before qits-1251 constructed. */
+    /** The four-field shape every caller before qits-1251 constructed. */
     public Listed(String id, String state, String mergedSha, String ciGate) {
       this(id, state, mergedSha, ciGate, null, null);
     }
