@@ -18,16 +18,16 @@ class PeerTargetTest {
   @Test
   void theNpmMirrorIsDerivedFromTheEnvironment() {
     assertEquals(
-        "http://prod-qits-platform-mirror:8080/npm/npmjs", PeerTarget.NPM_MIRROR.derivedBase("prod"));
+        "http://prod-qits-mirror:8080/npm/npmjs", PeerTarget.NPM_MIRROR.derivedBase("prod"));
   }
 
   @Test
   void noEnvironmentMeansDev() {
     // The same default every `${QITS_ENVIRONMENT:dev}` line in the shipped config expands to.
     assertEquals(
-        "http://dev-qits-platform-mirror:8080/npm/npmjs", PeerTarget.NPM_MIRROR.derivedBase(null));
+        "http://dev-qits-mirror:8080/npm/npmjs", PeerTarget.NPM_MIRROR.derivedBase(null));
     assertEquals(
-        "http://dev-qits-platform-mirror:8080/npm/npmjs", PeerTarget.NPM_MIRROR.derivedBase(" "));
+        "http://dev-qits-mirror:8080/npm/npmjs", PeerTarget.NPM_MIRROR.derivedBase(" "));
   }
 
   @Test

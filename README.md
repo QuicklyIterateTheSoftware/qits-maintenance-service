@@ -22,7 +22,7 @@ The contract — routes, model, config keys, schedules and the bump payload — 
 | the catalog | qits-projects | `GET /projects/api/repositories`; a row with no `name` has no address and is skipped. The row's `id` is kept as `mt_repository.catalog_id` — never an address here, and the only way another context's spelling of a repository is read back as a name. Its nullable `archetype` (SERVICE, DAEMON, LIBRARY, FRONTEND, CLI, IMAGE, PROJECT, SERVICE_TEMPLATE, FORK) is kept beside it as `mt_repository.archetype` (V6) and served on both repository DTOs, so what a repository IS is a column rather than a read per row; the vocabulary is qits-projects' own, so it is stored **verbatim, unvalidated and with no check constraint**, and an unrecognised word costs a repository nothing but a typed reading — the one archetype anything acts on is `PROJECT`, which the downstream closure excludes. **The listing is authoritative in both directions**: what it stops naming goes ABSENT — see below |
 | manifests at `main` | qits-githost | `GET /git/<project>/<repo>/tree/<rev>[/<path>]` and `…/blob/<rev>/<path>` |
 | internal latest | qits-artifacts | maven `maven-metadata.xml`, npm packument, OCI `/<name>/tags/list` |
-| external latest | qits-platform-mirror | `central` maven-metadata, `npmjs` packument |
+| external latest | qits-mirror | `central` maven-metadata, `npmjs` packument |
 | applying a bump | qits-ci | `POST /ci/api/events/trigger`, event `MaintenanceBump` |
 | the bump's outcome | qits-ci + qits-githost | `GET /ci/api/runs/{id}`, then the branch head |
 | how much room CI has | qits-ci | `GET /ci/api/runs/queue` — the dispatch gate: connected, unquarantined runners' slots minus every running and queued run; an unreadable snapshot counts as busy |
@@ -762,7 +762,7 @@ environment without a rebuild.
 | `qits.maintenance.registries.maven-url` | `http://qits-artifacts:8080/artifacts/maven/maven` | internal maven |
 | `qits.maintenance.registries.npm-url` | `http://qits-artifacts:8080/artifacts/npm/npm` | internal npm |
 | `qits.maintenance.registries.oci-url` | `http://qits-artifacts:8080/v2` | internal images |
-| `qits.maintenance.mirror.maven-url` | `http://qits-platform-mirror:8080/artifacts/maven/central` | Maven Central, cached |
+| `qits.maintenance.mirror.maven-url` | `http://qits-mirror:8080/artifacts/maven/central` | Maven Central, cached |
 | `qits.maintenance.call-timeout` | `PT60S` | how long one peer call may take |
 | `qits.maintenance.internal.maven-groups` | `eu.wohlben.qits` | which maven groups this platform publishes |
 | `qits.maintenance.internal.npm-scopes` | `@qits` | which npm scopes it publishes |
@@ -797,7 +797,7 @@ and the prefix names the repository row it serves. Moving a row is then a deploy
 
 **The npmjs cache has no key at all.** `qits.maintenance.mirror.npm-url` is gone (qits-472): its
 address is derived in code (`PeerTarget.NPM_MIRROR`) as
-`http://${QITS_ENVIRONMENT:dev}-qits-platform-mirror:8080/npm/npmjs`, so a deployment still setting
+`http://${QITS_ENVIRONMENT:dev}-qits-mirror:8080/npm/npmjs`, so a deployment still setting
 `QITS_MAINTENANCE_MIRROR_NPM_URL` sets something nothing reads. It stays on the internal alias
 rather than the public edge because the edge wants Basic with a client pair or a `qits_tok_`, and
 every call from here carries the `qits` client's minted bearer instead.
