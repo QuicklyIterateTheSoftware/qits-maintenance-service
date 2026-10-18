@@ -10,6 +10,7 @@ import au.com.dius.pact.core.model.PactSpecVersion;
 import eu.wohlben.qits.maintenance.testing.contracts.GoldenMasters;
 import java.util.List;
 import java.util.stream.Stream;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.TestFactory;
 
@@ -40,6 +41,17 @@ class ProjectsConsumerPactTest {
     assertFalse(ProjectsContract.CASES.isEmpty());
     return ProjectsContract.CASES.stream()
         .map(row -> DynamicTest.dynamicTest(row.description() + " [" + row.state() + "]", () -> run(row)));
+  }
+
+  /** Each row waiting for a qits-projects state, reported as skipped with the state it needs. */
+  @TestFactory
+  Stream<DynamicTest> everyPendingRowWaitsForItsProviderState() {
+    return ProjectsContract.PENDING.stream()
+        .map(
+            row ->
+                DynamicTest.dynamicTest(
+                    row.trigger().value() + ": " + row.operationId() + " [" + row.state() + "]",
+                    () -> Assumptions.abort(row.reason())));
   }
 
   private static void run(ProjectsContract.Case row) {

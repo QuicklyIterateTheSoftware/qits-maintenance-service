@@ -63,6 +63,20 @@
              First carries /work (qits-965/qits-974) at 2026.1007.25926; 2026.1007.35430 only adds
              getWork recordings. -->
         <qits.projects-golden-masters.version>2026.1016.112931</qits.projects-golden-masters.version>
+        <!-- THE OTHER PROVIDERS' GOLDEN MASTERS (ticket qits-1149), test scope, read off the classpath
+             by qits-pact-consumer for this repository's consumer pacts against each of them
+             (maintenance/src/test/.../contracts/*Contract, PeerConsumerPactTest). Each moves like
+             every internal pin: a qits-maintenance bump on its property, gated here. Do not
+             hand-edit one to chase a release. -->
+        <qits.ci-golden-masters.version>2026.1010.174604</qits.ci-golden-masters.version>
+        <qits.deployments-golden-masters.version>2026.1010.145913</qits.deployments-golden-masters.version>
+        <qits.artifacts-golden-masters.version>2026.1018.73956</qits.artifacts-golden-masters.version>
+        <qits.githost-golden-masters.version>2026.1010.133955</qits.githost-golden-masters.version>
+        <qits.idp-golden-masters.version>2026.1012.180836</qits.idp-golden-masters.version>
+        <qits.mirror-golden-masters.version>2026.1010.151000</qits.mirror-golden-masters.version>
+        <!-- The shared JVM consumer helper (qits-integrations-quarkus-javalib): golden-master reader,
+             row builder, pact-file compare. Test scope. -->
+        <qits.pact-consumer.version>2026.1010.141817</qits.pact-consumer.version>
         <!-- THE CONSUMER PACTS this provider verifies (epic qits-546, ticket qits-1149): each
              consumer publishes its pact against qits-maintenance as
              eu.wohlben.qits:<consumer>-pacts-qits-maintenance-service, and
@@ -209,6 +223,48 @@
                 <groupId>${project.groupId}</groupId>
                 <artifactId>qits-projects-golden-masters</artifactId>
                 <version>${qits.projects-golden-masters.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: recordings a test reads, never code. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-ci-golden-masters</artifactId>
+                <version>${qits.ci-golden-masters.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: recordings a test reads, never code. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-deployments-golden-masters</artifactId>
+                <version>${qits.deployments-golden-masters.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: recordings a test reads, never code. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-artifacts-golden-masters</artifactId>
+                <version>${qits.artifacts-golden-masters.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: recordings a test reads, never code. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-githost-golden-masters</artifactId>
+                <version>${qits.githost-golden-masters.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: recordings a test reads, never code. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-idp-golden-masters</artifactId>
+                <version>${qits.idp-golden-masters.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: recordings a test reads, never code. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-mirror-golden-masters</artifactId>
+                <version>${qits.mirror-golden-masters.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-pact-consumer</artifactId>
+                <version>${qits.pact-consumer.version}</version>
             </dependency>
             <dependency>
                 <!-- Test scope at every declaration site: a consumer's pact, verified by

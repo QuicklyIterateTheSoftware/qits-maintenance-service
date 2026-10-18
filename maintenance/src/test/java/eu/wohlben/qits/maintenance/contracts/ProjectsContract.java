@@ -11,6 +11,7 @@ import au.com.dius.pact.core.model.PactSpecVersion;
 import au.com.dius.pact.core.model.V4Pact;
 import com.fasterxml.jackson.databind.JsonNode;
 import eu.wohlben.qits.maintenance.bump.ReleaseRequestClient;
+import eu.wohlben.qits.maintenance.catalog.CatalogReader;
 import eu.wohlben.qits.maintenance.sbomcheck.TicketClient;
 import eu.wohlben.qits.maintenance.testing.contracts.GoldenMasters;
 import eu.wohlben.qits.maintenance.testing.contracts.GoldenMasters.Trigger;
@@ -59,8 +60,8 @@ import java.util.function.Supplier;
  * the object qits-projects answers, only when {@code detail} is null; no recorded state answers a
  * conflict without a {@code detail}, so no row reaches that read.
  *
- * <p>The calls qits-maintenance makes with no golden master to bind yet are in {@link
- * PendingContract}.
+ * <p><b>One call is pending</b> ({@link #PENDING}): the history read of a release whose request
+ * went obsolete mid-publish needs a state qits-projects does not record yet.
  */
 final class ProjectsContract {
 
@@ -70,6 +71,13 @@ final class ProjectsContract {
   static final String A_REPORTED_TICKET = "a reported ticket";
   static final String A_RELEASE_REQUEST_AWAITING_APPROVAL = "a release request awaiting approval";
   static final String A_WITHDRAWN_RELEASE_REQUEST = "a withdrawn release request";
+  static final String A_PROJECT_WITH_3_REPOSITORIES = "a project with 3 repositories";
+  static final String A_REPOSITORY_WITH_A_BRANCH_TO_RELEASE =
+      "a repository with a branch to release";
+  static final String A_RELEASE_REQUEST_OPEN_TO_ANOTHER_BRANCH =
+      "a release request open to another branch";
+  static final String A_REPOSITORY_WITH_A_RELEASE_NOT_MERGED_TO_MAIN =
+      "a repository with a release not merged to main";
 
   static final String CREATE_WORK = "createWork";
   static final String GET_WORK = "getWork";
@@ -78,6 +86,16 @@ final class ProjectsContract {
   static final String GET_RELEASE_REQUEST = "getReleaseRequest";
   static final String LIST_REPOSITORY_RELEASE_REQUESTS = "listRepositoryReleaseRequests";
   static final String WITHDRAW_RELEASE_REQUEST = "withdrawReleaseRequest";
+  static final String LIST_REPOSITORIES = "listRepositories";
+  static final String CREATE_RELEASE_REQUEST = "createReleaseRequest";
+  static final String ADD_RELEASE_REQUEST_SOURCE = "addReleaseRequestSource";
+
+  /** The branches the two release-request states seed: what a bump would have pushed. */
+  private static final String BUMP_BRANCH = "feature/export";
+
+  private static final String JOINED_BRANCH = "fix/rounding";
+
+  private static final String SUMMARY = ReleaseRequestClient.summary("dependencies", 1);
 
   private static final String TITLE = "SBOM missing for left-pad (npm)";
   private static final String IMPETUS =
@@ -125,6 +143,28 @@ final class ProjectsContract {
 
   /** The status alone. */
   static final List<String> STATUS_ONLY = List.of();
+
+  /** {@link CatalogReader#read}: each repository's coordinates and kind. */
+  static final List<String> CATALOG =
+      List.of(
+          "repositories[].id",
+          "repositories[].projectId",
+          "repositories[].name",
+          "repositories[].mainBranch",
+          "repositories[].archetype");
+
+  /** {@link ReleaseRequestClient#requestRelease}: the new request's id and state. */
+  static final List<String> OPENED = List.of("request.id", "request.state");
+
+  /** {@link ReleaseRequestClient#join}: the request's state after the join. */
+  static final List<String> JOINED = List.of("request.state");
+
+  /**
+   * {@link ReleaseRequestClient#history}: each request that cut a version. ({@code
+   * pipeline.phases[]} is read too, and is not bound: no pinned state records a publish run.)
+   */
+  static final List<String> HISTORY =
+      List.of("requests[].id", "requests[].version", "requests[].state");
 
   /** What the consumer does with its clients for one row, asserting what that code path reads. */
   @FunctionalInterface
@@ -225,6 +265,63 @@ final class ProjectsContract {
                 .withdraw(params.get("repositoryId"), params.get("requestId"), WITHDRAW_REASON);
         assertEquals(ReleaseRequestClient.RequestResult.Outcome.REQUESTED, result.outcome());
       };
+
+  /** {@code GET /repositories}: the whole catalog, as a scan reads it. */
+  private static final Call CATALOG_READ =
+      (clients, params) -> {
+        CatalogReader.Result read = clients.catalog().read();
+        assertTrue(read.ok(), read.error());
+        assertFalse(read.entries().isEmpty());
+        read.entries().forEach(entry -> assertFalse(entry.name().isBlank()));
+      };
+
+  /** {@code POST …/release-requests}: a pushed bump branch asks for its release. */
+  private static final Call OPEN_REQUEST =
+      (clients, params) -> {
+        ReleaseRequestClient.RequestResult result =
+            clients.releases().requestRelease(params.get("repositoryId"), BUMP_BRANCH, SUMMARY);
+        JsonNode recorded =
+            GoldenMasters.json(A_REPOSITORY_WITH_A_BRANCH_TO_RELEASE, CREATE_RELEASE_REQUEST)
+                .path("request");
+        assertEquals(ReleaseRequestClient.RequestResult.Outcome.REQUESTED, result.outcome());
+        assertEquals(recorded.path("id").asText(), result.requestId());
+      };
+
+  /** {@code POST …/release-requests/{requestId}/sources}: a bump branch joins an open request. */
+  private static final Call JOIN =
+      (clients, params) -> {
+        ReleaseRequestClient.RequestResult result =
+            clients
+                .releases()
+                .join(
+                    params.get("repositoryId"),
+                    params.get("requestId"),
+                    JOINED_BRANCH,
+                    ReleaseRequestClient.LOWEST);
+        assertEquals(ReleaseRequestClient.RequestResult.Outcome.REQUESTED, result.outcome());
+      };
+
+  /** {@code GET …/release-requests?state=all}: every request that cut a version. */
+  private static final Call HISTORY_READ =
+      (clients, params) -> {
+        ReleaseRequestClient.History history =
+            clients.releases().history(params.get("repositoryId"));
+        assertTrue(history.readable(), history.error());
+        assertFalse(history.cuts().isEmpty());
+      };
+
+  private static final Supplier<DslPart> OPEN_REQUEST_BODY =
+      () ->
+          new PactDslJsonBody()
+              .stringValue("branch", BUMP_BRANCH)
+              .stringType("summary", SUMMARY)
+              .stringValue("priority", ReleaseRequestClient.LOWEST);
+
+  private static final Supplier<DslPart> JOIN_BODY =
+      () ->
+          new PactDslJsonBody()
+              .stringValue("branch", JOINED_BRANCH)
+              .stringValue("priority", ReleaseRequestClient.LOWEST);
 
   private static final Supplier<DslPart> CREATE_WORK_REQUEST =
       () ->
@@ -347,7 +444,60 @@ final class ProjectsContract {
               LIST_REPOSITORY_RELEASE_REQUESTS,
               null,
               OPEN_REQUESTS,
-              OPEN));
+              OPEN),
+          new Case(
+              Trigger.schedule("ScanService.run"),
+              A_PROJECT_WITH_3_REPOSITORIES,
+              LIST_REPOSITORIES,
+              null,
+              CATALOG,
+              CATALOG_READ),
+          new Case(
+              Trigger.schedule("BumpService.sweep"),
+              A_REPOSITORY_WITH_A_BRANCH_TO_RELEASE,
+              CREATE_RELEASE_REQUEST,
+              OPEN_REQUEST_BODY,
+              OPENED,
+              OPEN_REQUEST),
+          new Case(
+              Trigger.schedule("BumpService.sweep"),
+              A_RELEASE_REQUEST_OPEN_TO_ANOTHER_BRANCH,
+              ADD_RELEASE_REQUEST_SOURCE,
+              JOIN_BODY,
+              JOINED,
+              JOIN),
+          new Case(
+              Trigger.schedule("BumpDispatcher.tick"),
+              A_REPOSITORY_WITH_A_RELEASE_NOT_MERGED_TO_MAIN,
+              LIST_REPOSITORY_RELEASE_REQUESTS,
+              null,
+              HISTORY,
+              HISTORY_READ));
+
+  /**
+   * The rows waiting for a qits-projects state, each with the sentence {@code
+   * ProjectsConsumerPactTest} reports it skipped with. They are in no pact file until the state is
+   * recorded; then they move into {@link #CASES}.
+   */
+  record Pending(Trigger trigger, String state, String operationId, List<String> consumes) {
+    String reason() {
+      return "needs provider state '" + state + "' for " + operationId + " in "
+          + GoldenMasters.PROVIDER;
+    }
+  }
+
+  static final List<Pending> PENDING =
+      List.of(
+          new Pending(
+              Trigger.schedule("BumpDispatcher.tick"),
+              "a repository with a tagged release whose request went obsolete mid-publish",
+              LIST_REPOSITORY_RELEASE_REQUESTS,
+              List.of(
+                  "requests[].id",
+                  "requests[].version",
+                  "requests[].state",
+                  "requests[].pipeline.phases[].phase",
+                  "requests[].pipeline.phases[].state")));
 
   private ProjectsContract() {}
 

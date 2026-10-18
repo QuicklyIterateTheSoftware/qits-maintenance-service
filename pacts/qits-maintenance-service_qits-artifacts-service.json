@@ -1,0 +1,457 @@
+{
+  "consumer": {
+    "name": "qits-maintenance-service"
+  },
+  "interactions": [
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-artifacts-service",
+            "operationId": "listDocsVersions"
+          },
+          "qits-trigger": {
+            "app": "qits-maintenance-service",
+            "kind": "schedule",
+            "schedule": "BumpDispatcher.tick"
+          }
+        }
+      },
+      "description": "BumpDispatcher.tick: listDocsVersions",
+      "key": "78cbe9fb",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a repository with no changelog",
+          "params": {
+            "repository": "contract-repository",
+            "version": "2100.1.0"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/artifacts/docs/docs/@changelog/${repository}",
+            "type": "ProviderState"
+          }
+        },
+        "method": "GET",
+        "path": "/artifacts/docs/docs/@changelog/contract-repository"
+      },
+      "response": {
+        "status": 404
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-artifacts-service",
+            "operationId": "listDocsVersions"
+          },
+          "qits-trigger": {
+            "app": "qits-maintenance-service",
+            "kind": "schedule",
+            "schedule": "BumpDispatcher.tick"
+          }
+        }
+      },
+      "description": "BumpDispatcher.tick: listDocsVersions",
+      "key": "5d25879f",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a repository with published changelogs",
+          "params": {
+            "repository": "contract-repository",
+            "version": "2100.1.0"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/artifacts/docs/docs/@changelog/${repository}",
+            "type": "ProviderState"
+          }
+        },
+        "method": "GET",
+        "path": "/artifacts/docs/docs/@changelog/contract-repository"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "versions": [
+              {
+                "version": "2100.1.0"
+              }
+            ]
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.versions": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 0
+                }
+              ]
+            },
+            "$.versions[*].version": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json.*"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-artifacts-service",
+            "operationId": "listDaemonVersions"
+          },
+          "qits-trigger": {
+            "app": "qits-maintenance-service",
+            "kind": "schedule",
+            "schedule": "SbomCheckService.probe"
+          }
+        }
+      },
+      "description": "SbomCheckService.probe: listDaemonVersions",
+      "key": "c1e025a9",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a daemon with two versions",
+          "params": {
+            "daemon": "contract-daemon",
+            "repository": "daemons",
+            "version": "2026.2.0"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/artifacts/api/repositories/${repository}/daemons/${daemon}/versions",
+            "type": "ProviderState"
+          }
+        },
+        "method": "GET",
+        "path": "/artifacts/api/repositories/daemons/daemons/contract-daemon/versions"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "versions": [
+              {
+                "version": "2026.2.0"
+              }
+            ]
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.versions": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 0
+                }
+              ]
+            },
+            "$.versions[*].version": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json.*"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-artifacts-service",
+            "operationId": "getSbom"
+          },
+          "qits-trigger": {
+            "app": "qits-maintenance-service",
+            "event": "SoftwareRelease",
+            "kind": "event"
+          }
+        }
+      },
+      "description": "SoftwareRelease: getSbom",
+      "key": "ab90db57",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "an sbom published for the coordinate",
+          "params": {
+            "coordinate": "maven/eu.wohlben.qits:contract-artifact",
+            "packageName": "eu.wohlben.qits:contract-artifact",
+            "packageType": "maven",
+            "version": "2100.1.0"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/artifacts/sboms/${packageType}/${packageName}/-/${version}",
+            "type": "ProviderState"
+          }
+        },
+        "method": "GET",
+        "path": "/artifacts/sboms/maven/eu.wohlben.qits:contract-artifact/-/2100.1.0"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "components": [
+              {
+                "bom-ref": "pkg:maven/eu.wohlben.qits/contract-library@1.0.0",
+                "name": "contract-library",
+                "purl": "pkg:maven/eu.wohlben.qits/contract-library@1.0.0",
+                "version": "1.0.0"
+              }
+            ],
+            "dependencies": [
+              {
+                "dependsOn": [
+                  "pkg:maven/eu.wohlben.qits/contract-library@1.0.0"
+                ],
+                "ref": "pkg:maven/eu.wohlben.qits/contract-artifact@2100.1.0"
+              }
+            ],
+            "metadata": {
+              "component": {
+                "bom-ref": "pkg:maven/eu.wohlben.qits/contract-artifact@2100.1.0"
+              }
+            }
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.components": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 0
+                }
+              ]
+            },
+            "$.components[*].bom-ref": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.components[*].name": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.components[*].purl": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.components[*].version": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.dependencies": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 0
+                }
+              ]
+            },
+            "$.dependencies[*].dependsOn": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 0
+                }
+              ]
+            },
+            "$.dependencies[*].dependsOn[*]": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.dependencies[*].ref": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.metadata.component.bom-ref": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json.*"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-artifacts-service",
+            "operationId": "getSbom"
+          },
+          "qits-trigger": {
+            "app": "qits-maintenance-service",
+            "event": "SoftwareRelease",
+            "kind": "event"
+          }
+        }
+      },
+      "description": "SoftwareRelease: getSbom",
+      "key": "1f55d143",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "no sbom published for the coordinate",
+          "params": {
+            "coordinate": "maven/eu.wohlben.qits:contract-artifact",
+            "packageName": "eu.wohlben.qits:contract-artifact",
+            "packageType": "maven",
+            "version": "2100.1.0"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/artifacts/sboms/${packageType}/${packageName}/-/${version}",
+            "type": "ProviderState"
+          }
+        },
+        "method": "GET",
+        "path": "/artifacts/sboms/maven/eu.wohlben.qits:contract-artifact/-/2100.1.0"
+      },
+      "response": {
+        "status": 404
+      },
+      "type": "Synchronous/HTTP"
+    }
+  ],
+  "metadata": {
+    "pactSpecification": {
+      "version": "4.0"
+    },
+    "plugins": []
+  },
+  "provider": {
+    "name": "qits-artifacts-service"
+  }
+}

@@ -1,0 +1,119 @@
+{
+  "consumer": {
+    "name": "qits-maintenance-service"
+  },
+  "interactions": [
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-deployments-service",
+            "operationId": "listPins"
+          },
+          "qits-trigger": {
+            "app": "qits-maintenance-service",
+            "kind": "operation",
+            "operationId": "listDependencyPins"
+          }
+        }
+      },
+      "description": "listDependencyPins: listPins",
+      "key": "a381ef73",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "an application serving with a rollback version",
+          "params": {
+            "applicationName": "contract-app-00000001",
+            "environmentId": "00000000-0000-4000-8000-000000000001"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "path": "/deployments/api/pins"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "pins": [
+              {
+                "applicationName": "contract-app-00000001",
+                "shas": [
+                  "2026.102.120000"
+                ]
+              }
+            ]
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.pins": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 0
+                }
+              ]
+            },
+            "$.pins[*].applicationName": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.pins[*].shas": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 0
+                }
+              ]
+            },
+            "$.pins[*].shas[*]": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json.*"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    }
+  ],
+  "metadata": {
+    "pactSpecification": {
+      "version": "4.0"
+    },
+    "plugins": []
+  },
+  "provider": {
+    "name": "qits-deployments-service"
+  }
+}

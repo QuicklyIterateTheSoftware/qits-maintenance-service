@@ -110,6 +110,7 @@ public final class GoldenMasters {
       String operationId,
       String method,
       String path,
+      Map<String, String> query,
       int status,
       String file,
       Set<String> ids,
@@ -120,6 +121,21 @@ public final class GoldenMasters {
     /** The path with every {@code {param}} replaced by the state's frozen example. */
     public String examplePath() {
       return substitute(path, name -> params.get(name));
+    }
+
+    /** {@code template} with every {@code {param}} replaced by the state's frozen example. */
+    public String example(String template) {
+      return substitute(template, name -> params.get(name));
+    }
+
+    /** {@code template} as a provider-state expression: {@code {param}} becomes {@code ${param}}. */
+    public String expression(String template) {
+      return substitute(template, name -> "${" + name + "}");
+    }
+
+    /** Whether {@code template} names a state param. */
+    public boolean hasParam(String template) {
+      return PARAM.matcher(template).find();
     }
 
     /** The path as a provider-state expression: {@code {param}} becomes {@code ${param}}. */
@@ -176,6 +192,7 @@ public final class GoldenMasters {
             operationId,
             op.path("method").asText(),
             op.path("path").asText(),
+            query(op.path("query")),
             op.path("status").asInt(),
             op.path("file").asText(),
             strings(frozen.path("ids")),
@@ -191,7 +208,14 @@ public final class GoldenMasters {
 
   /** The recorded JSON for one (state, operation), byte for byte as the jar carries it. */
   public static String body(String state, String operationId) {
-    return resource(ROOT + operation(state, operationId).file());
+    return read(base() + operation(state, operationId).file());
+  }
+
+  /** The recorded query of one operation, each name with its one value; empty for none. */
+  private static Map<String, String> query(JsonNode query) {
+    Map<String, String> out = new java.util.TreeMap<>();
+    query.fields().forEachRemaining(e -> out.put(e.getKey(), e.getValue().asText()));
+    return java.util.Collections.unmodifiableMap(out);
   }
 
   /** {@link #body}, parsed — a fresh tree each call, so a caller may edit it. */
@@ -323,6 +347,20 @@ public final class GoldenMasters {
                   // A constant path: no generator, see Operation#hasPathParams.
                   request.path(op.examplePath());
                 }
+                // The recorded query (qits-1149): a value that is a {param} is a provider-state
+                // expression, as the path is; a literal is sent as recorded.
+                op.query()
+                    .forEach(
+                        (name, value) -> {
+                          if (op.hasParam(value)) {
+                            request.queryParameter(
+                                name,
+                                Matchers.fromProviderState(
+                                    op.expression(value), op.example(value)));
+                          } else {
+                            request.queryParameter(name, value);
+                          }
+                        });
                 return requestBody == null ? request : request.body(requestBody);
               });
           http.willRespondWith(
@@ -762,30 +800,56 @@ public final class GoldenMasters {
 
   // --- reading the jar --------------------------------------------------------------------------
 
+  /**
+   * qits-projects' index, picked out of every {@code golden-masters/index.json} on the test
+   * classpath by its {@code provider} field (qits-1149): this module pins several providers' golden
+   * masters, every jar puts its tree at the same root, and the first one the class loader happens to
+   * list need not be qits-projects'. Each recording is then read beside the index it came with.
+   */
   private static JsonNode index() {
     JsonNode loaded = index;
     if (loaded == null) {
+      List<String> seen = new ArrayList<>();
       try {
-        loaded = MAPPER.readTree(resource(ROOT + "index.json"));
+        java.util.Enumeration<java.net.URL> found = loader().getResources(ROOT + "index.json");
+        while (found.hasMoreElements() && loaded == null) {
+          java.net.URL url = found.nextElement();
+          JsonNode candidate = MAPPER.readTree(read(url.toString()));
+          seen.add(candidate.path("provider").asText());
+          if (INDEX_PROVIDER.equals(candidate.path("provider").asText())) {
+            loaded = candidate;
+            String text = url.toString();
+            indexBase = text.substring(0, text.length() - "index.json".length());
+          }
+        }
       } catch (IOException e) {
         throw new UncheckedIOException(e);
+      }
+      if (loaded == null) {
+        throw new IllegalStateException(
+            "no golden-masters/index.json on the test classpath is "
+                + INDEX_PROVIDER
+                + "'s (found "
+                + seen
+                + ") — is eu.wohlben.qits:qits-projects-golden-masters a test dependency of this"
+                + " module?");
       }
       if (loaded.path("formatVersion").asInt() != 1) {
         throw new IllegalStateException(
             "golden-masters/index.json is formatVersion " + loaded.path("formatVersion")
                 + "; GoldenMasters reads formatVersion 1");
       }
-      if (!INDEX_PROVIDER.equals(loaded.path("provider").asText())) {
-        throw new IllegalStateException(
-            "golden-masters/index.json is "
-                + loaded.path("provider")
-                + "'s, not "
-                + INDEX_PROVIDER
-                + "'s");
-      }
       index = loaded;
     }
     return loaded;
+  }
+
+  /** Where qits-projects' index was found: its recordings sit beside it. */
+  private static volatile String indexBase;
+
+  private static String base() {
+    index();
+    return indexBase;
   }
 
   private static JsonNode stateNode(String state) {
@@ -805,23 +869,18 @@ public final class GoldenMasters {
     return Set.copyOf(out);
   }
 
-  private static String resource(String name) {
-    // This class's own loader first: a stub answering on its own threads may carry a different
-    // context loader, and the jar is on this class's test classpath regardless.
-    ClassLoader loader = GoldenMasters.class.getClassLoader();
-    InputStream found = loader == null ? null : loader.getResourceAsStream(name);
-    if (found == null && Thread.currentThread().getContextClassLoader() != null) {
-      found = Thread.currentThread().getContextClassLoader().getResourceAsStream(name);
-    }
-    try (InputStream in = found) {
-      if (in == null) {
-        throw new IllegalStateException(
-            name + " is not on the test classpath — is eu.wohlben.qits:qits-projects-golden-masters"
-                + " a test dependency of this module?");
-      }
+  /** This class's own loader first: a stub answering on its own threads may carry a different
+   * context loader, and the jar is on this class's test classpath regardless. */
+  private static ClassLoader loader() {
+    ClassLoader own = GoldenMasters.class.getClassLoader();
+    return own != null ? own : Thread.currentThread().getContextClassLoader();
+  }
+
+  private static String read(String url) {
+    try (InputStream in = java.net.URI.create(url).toURL().openStream()) {
       return new String(in.readAllBytes(), StandardCharsets.UTF_8);
     } catch (IOException e) {
-      throw new UncheckedIOException(e);
+      throw new UncheckedIOException(url + " cannot be read", e);
     }
   }
 }

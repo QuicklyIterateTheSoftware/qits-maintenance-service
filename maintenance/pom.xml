@@ -133,6 +133,45 @@
             <scope>test</scope>
         </dependency>
         <dependency>
+            <!-- The other providers' recorded answers (ticket qits-1149): every peer this service
+                 calls besides qits-projects, read by qits-pact-consumer for the contracts/*Contract
+                 tables and PeerConsumerPactTest. Pinned in the root pom. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-ci-golden-masters</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-deployments-golden-masters</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-artifacts-golden-masters</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-githost-golden-masters</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-idp-golden-masters</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-mirror-golden-masters</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The shared consumer helper: GoldenMasters, GoldenInteraction, ConsumerPact. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-pact-consumer</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <!-- The store every @QuarkusTest in this module boots against. Zonky spawns real
                  postgres binaries as a child process — a maven dependency rather than a container —
                  which is what keeps the clone-alone, docker-free rule true.
