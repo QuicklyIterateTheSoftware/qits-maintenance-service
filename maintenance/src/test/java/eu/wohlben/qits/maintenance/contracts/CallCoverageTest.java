@@ -11,6 +11,9 @@ import eu.wohlben.qits.maintenance.peer.PeerTarget;
 import eu.wohlben.qits.maintenance.peer.PeerTokens;
 import eu.wohlben.qits.maintenance.peer.RecordingPeerClient;
 import eu.wohlben.qits.maintenance.testing.contracts.GoldenMasters;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import eu.wohlben.qits.pact.consumer.ConsumerPact;
 import io.quarkus.oidc.client.OidcClient;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -45,7 +48,9 @@ import org.junit.jupiter.api.Test;
  *   <li>every {@link PeerTarget} is reached by some row;
  *   <li>a row reaches only targets of its own provider ({@link #provider}, an exhaustive switch, so
  *       a new target does not compile until it is given one);
- *   <li>every class that holds an {@link OidcClient} mints through a row of {@link IdpContract}.
+ *   <li>every class that holds an {@link OidcClient} mints through the {@code issueToken} row of
+ *       the committed qits-idp pact ({@code service/…/contracts/IdpContract}, run against the
+ *       application by {@code IdpTokenMintPactTest}).
  * </ul>
  *
  * <p>A new client method, a new client class or a new target added without a row goes red here.
@@ -66,8 +71,10 @@ class CallCoverageTest {
           ReleaseRequestClient.class.getSimpleName() + "#requestMainOnly",
           "requestRelease with the repository's main branch: the same createReleaseRequest call");
 
-  /** The classes whose token mint {@link IdpContract} rows: the one {@code qits} oidc client. */
+  /** The classes whose token mint the qits-idp pact rows: the one {@code qits} oidc client. */
   static final Set<Class<?>> MINTED_BY_IDP_CONTRACT = Set.of(PeerTokens.class);
+
+  static final String IDP_PACT = GoldenMasters.CONSUMER + "_qits-idp-service.json";
 
   /** The provider repository a target belongs to. */
   static String provider(PeerTarget target) {
@@ -137,8 +144,26 @@ class CallCoverageTest {
   @Test
   void everyTokenMintHasAPactRow() {
     assertEquals(MINTED_BY_IDP_CONTRACT, classesHolding(OidcClient.class));
-    assertEquals("issueToken", IdpContract.MINT.operationId());
-    assertEquals(IdpContract.IDP, IdpContract.PACT.masters());
+    JsonNode pact;
+    try {
+      pact =
+          new ObjectMapper()
+              .readTree(ConsumerPact.pactsDirectory().resolve(IDP_PACT).toFile());
+    } catch (IOException e) {
+      throw new UncheckedIOException(IDP_PACT + " is not committed", e);
+    }
+    List<String> mints = new ArrayList<>();
+    pact.path("interactions")
+        .forEach(
+            i -> {
+              JsonNode call = i.path("comments").path("references").path("qits-call");
+              if ("issueToken".equals(call.path("operationId").asText())
+                  && "POST".equals(i.path("request").path("method").asText())
+                  && "/idp/token".equals(i.path("request").path("path").asText())) {
+                mints.add(i.path("description").asText());
+              }
+            });
+    assertFalse(mints.isEmpty(), IDP_PACT + " holds no issueToken row for the token mint");
   }
 
   /** Every contract row, as a call against {@code peers}. */

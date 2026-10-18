@@ -31,6 +31,9 @@ import org.junit.jupiter.api.TestFactory;
  * <p><b>A row whose provider state is not recorded is skipped</b>, naming the state, the operation
  * and the provider ({@code needs provider state '…' for … in …}), and is in no pact file. The day
  * the provider records it, the pact-file test goes red until the file is rewritten.
+ *
+ * <p>The qits-idp token mint is not here: quarkus-oidc-client makes it, so its row runs in the
+ * service module's {@code IdpTokenMintPactTest}, against the application.
  */
 class PeerConsumerPactTest {
 
@@ -85,16 +88,6 @@ class PeerConsumerPactTest {
                         pact.assertEveryInteractionCarriesBothReferences();
                       }));
             });
-    nodes.add(DynamicTest.dynamicTest(IdpContract.PACT.file(), IdpContract.PACT::compareOrWritePactFile));
-    nodes.add(
-        DynamicTest.dynamicTest(
-            IdpContract.PACT.file() + ": " + IdpContract.MINT.description(),
-            () -> {
-              // Run through the real oidc client by IdpTokenMintPactTest once recorded.
-              if (!IdpContract.PACT.recorded().contains(IdpContract.MINT)) {
-                Assumptions.abort(IdpContract.PACT.needs(IdpContract.MINT));
-              }
-            }));
     return nodes.stream();
   }
 

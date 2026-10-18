@@ -12,29 +12,27 @@ import eu.wohlben.qits.pact.consumer.Trigger;
  * {@code audience=qits-platform} ({@code grant-options.client.audience}).
  *
  * <p>The mint is caused by whichever peer call needs a bearer first, so its trigger is that call:
- * {@code PeerClient.send}. {@code IdpTokenMintPactTest} runs it through the real oidc client.
+ * {@code PeerClient.send}. {@code IdpTokenMintPactTest} runs it through the real oidc client, in
+ * this module because the mint needs the application; the committed pact file is checked there too.
  *
- * <p><b>Pending.</b> qits-idp records {@code issueToken} for a bare {@code
- * grant_type=client_credentials}; the platform-audience ask needs a state of its own, and the row
- * waits for it.
+ * <p>qits-idp records it as {@code issueToken} in {@value #A_SERVICE_CLIENT_CALLING_ITS_PEERS}
+ * (golden masters 2026.1018.142635): the Basic credential and the audience are the state's params.
  */
 final class IdpContract {
 
   static final GoldenMasters IDP = GoldenMasters.of("qits-idp-service", "qits-idp");
 
-  static final String A_SERVICE_CLIENT_ASKING_FOR_THE_PLATFORM_AUDIENCE =
-      "a service client asking for the platform audience";
+  static final String A_SERVICE_CLIENT_CALLING_ITS_PEERS = "a service client calling its peers";
 
   static final GoldenInteraction MINT =
       GoldenInteraction.of(
               Trigger.of("call", "call", "PeerClient.send"),
-              A_SERVICE_CLIENT_ASKING_FOR_THE_PLATFORM_AUDIENCE,
+              A_SERVICE_CLIENT_CALLING_ITS_PEERS,
               "issueToken")
           .header("Authorization", "{authorization}")
           .consumes("access_token", "expires_in");
 
-  static final ConsumerPact PACT =
-      ConsumerPact.of(eu.wohlben.qits.maintenance.testing.contracts.GoldenMasters.CONSUMER, IDP, MINT);
+  static final ConsumerPact PACT = ConsumerPact.of("qits-maintenance-service", IDP, MINT);
 
   private IdpContract() {}
 }
