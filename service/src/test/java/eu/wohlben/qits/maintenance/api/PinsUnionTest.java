@@ -7,7 +7,9 @@ import static org.hamcrest.Matchers.not;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import eu.wohlben.qits.maintenance.adoption.ReleaseLedgerHeal;
 import eu.wohlben.qits.maintenance.latest.GitlinkSha;
 import eu.wohlben.qits.maintenance.manifest.ParsedPin;
 import eu.wohlben.qits.maintenance.model.Ecosystem;
@@ -66,10 +68,13 @@ class PinsUnionTest {
 
   @Inject ScanService scans;
 
+  @Inject ReleaseLedgerHeal heal;
+
   @BeforeEach
   void reset() {
     queue.awaitIdle(Duration.ofSeconds(30));
     inventory.clear();
+    heal.forget();
     peers.reset();
     Fixture.scriptScan(peers);
     Fixture.scriptBranchAbsent(peers);
@@ -238,6 +243,67 @@ class PinsUnionTest {
   }
 
   /**
+   * <b>THE REFUSAL HEALS ITSELF.</b> The ledger is younger than the deployer's rollback set and has
+   * no write door, so a 503 that only refused would stop the GC until the application redeployed.
+   * The first read refuses and queues the record; the worker reads the tag exactly as an {@code
+   * SCMRelease} would have; the next read is answered with that release's pins.
+   */
+  @Test
+  void aRefusalRecordsTheReleaseFromItsTagAndTheNextReadIsAnswered() {
+    scanMain();
+    imageReleasedBy(Fixture.REPOSITORY);
+    deployed(APPLICATION, RELEASE);
+    tagHeld(RELEASE);
+
+    given()
+        .when()
+        .get(BASE + "/pins")
+        .then()
+        .statusCode(503)
+        .body("message", containsString("being recorded from its tag"));
+
+    queue.awaitIdle(Duration.ofSeconds(30));
+    assertTrue(store.releaseRecorded(Fixture.REPOSITORY, RELEASE), "the worker recorded it");
+
+    given()
+        .when()
+        .get(BASE + "/pins")
+        .then()
+        .statusCode(200)
+        .body(eventstreamVersions(), hasItem(TAG_PIN_VERSION))
+        .body(
+            "pins.find { it.version == '" + TAG_PIN_VERSION + "' && it.via != null }.via",
+            org.hamcrest.Matchers.startsWith("release " + RELEASE));
+  }
+
+  /**
+   * A tag the git host does not hold is a genuine inconsistency: it stays a 503 that says so, and a
+   * GC polling every fifteen minutes does not read the git host about it on every poll.
+   */
+  @Test
+  void aTagTheGitHostDoesNotHoldStaysARefusalAndIsNotAskedAboutOnEveryRead() {
+    scanMain();
+    imageReleasedBy(Fixture.REPOSITORY);
+    deployed(APPLICATION, RELEASE);
+
+    given().when().get(BASE + "/pins").then().statusCode(503);
+    queue.awaitIdle(Duration.ofSeconds(30));
+    assertEquals(1, tagReads(RELEASE), "the first refusal asked once");
+
+    for (int poll = 0; poll < 3; poll++) {
+      given()
+          .when()
+          .get(BASE + "/pins")
+          .then()
+          .statusCode(503)
+          .body("message", containsString("holds no tag refs/tags/" + RELEASE));
+      queue.awaitIdle(Duration.ofSeconds(30));
+    }
+    assertEquals(1, tagReads(RELEASE), "and nothing after it asked again");
+    assertFalse(store.releaseRecorded(Fixture.REPOSITORY, RELEASE));
+  }
+
+  /**
    * An application no repository of this inventory released an image for — something this service
    * keeps no ledger of — is skipped rather than refused, or the GC would never run again.
    */
@@ -321,6 +387,45 @@ class PinsUnionTest {
         RELEASE,
         repository,
         Instant.parse("2026-10-10T19:27:00Z"));
+  }
+
+  /** The git host holds {@code refs/tags/<version>} at {@link Fixture#TAG_SHA}, with a pom. */
+  private void tagHeld(String version) {
+    String root = "{\"entries\":[{\"name\":\"pom.xml\",\"type\":\"blob\"}]}";
+    java.util.Map<String, String> sha = java.util.Map.of("Git-Commit-Sha", Fixture.TAG_SHA);
+    String repository = "/git/" + Fixture.PROJECT + "/" + Fixture.REPOSITORY;
+    peers.answer(PeerTarget.GITHOST, tagTree(version), FakePeers.Scripted.ok(root, sha));
+    peers.answer(
+        PeerTarget.GITHOST, repository + "/tree/" + Fixture.TAG_SHA, FakePeers.Scripted.ok(root, sha));
+    peers.answer(
+        PeerTarget.GITHOST,
+        repository + "/blob/" + Fixture.TAG_SHA + "/pom.xml",
+        FakePeers.Scripted.ok(
+            """
+            <project>
+              <groupId>eu.wohlben.qits</groupId>
+              <artifactId>qits-ci</artifactId>
+              <version>%s</version>
+              <dependencies>
+                <dependency>
+                  <groupId>eu.wohlben.qits</groupId>
+                  <artifactId>qits-eventstream</artifactId>
+                  <version>%s</version>
+                </dependency>
+              </dependencies>
+            </project>
+            """
+                .formatted(version, TAG_PIN_VERSION),
+            sha));
+  }
+
+  private static String tagTree(String version) {
+    return "/git/" + Fixture.PROJECT + "/" + Fixture.REPOSITORY + "/tree/refs%2Ftags%2F" + version;
+  }
+
+  /** How many times the git host was asked for that tag's tree. */
+  private long tagReads(String version) {
+    return peers.urls().stream().filter(url -> url.endsWith(tagTree(version))).count();
   }
 
   /** qits-deployments serves exactly this. */

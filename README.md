@@ -645,6 +645,10 @@ POST /sbom-check/runs                             → 202 the report above, once
   provided `mt_main_pin` was read at that very commit. An application that maps to no repository of
   this inventory is skipped with a WARN, not refused: this service keeps no ledger for it, and
   refusing would stop the GC for as long as it is deployed.
+  **The refusal heals itself**: `adoption/ReleaseLedgerHeal` reads each missing pair's
+  `refs/tags/<version>` on the work queue and records it through `ReleaseLedger.record`, so a later
+  GC run is answered. One attempt per pair per window (in flight: none; tag not held: 6 h; git host
+  unreachable: 15 min); a tag the git host does not hold stays a 503 that says it needs a person.
 - **The docker rows include the images a pom pins WITHOUT SPELLING THEM OUT, and `via` is how you
   tell.** Container image versions are maven pins now — qits-workspaces pins
   `qits-workspace-daemon-protocol` and `qits-workspace-editor-image`, qits-projects pins

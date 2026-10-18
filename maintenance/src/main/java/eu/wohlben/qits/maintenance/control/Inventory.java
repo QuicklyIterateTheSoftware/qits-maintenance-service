@@ -1,5 +1,7 @@
 package eu.wohlben.qits.maintenance.control;
 
+import eu.wohlben.qits.maintenance.adoption.ReleaseLedger;
+import eu.wohlben.qits.maintenance.adoption.ReleaseLedgerHeal;
 import eu.wohlben.qits.maintenance.bump.BumpService;
 import eu.wohlben.qits.maintenance.dto.BumpDto;
 import eu.wohlben.qits.maintenance.dto.DependencyDto;
@@ -76,6 +78,9 @@ public class Inventory {
 
   /** What serves and what a rollback restores — releases whose pins the GC keeps (qits-1172). */
   @Inject DeployedVersions deployed;
+
+  /** Records, in the background, the deployed releases the ledger lacks — see requireRecorded. */
+  @Inject ReleaseLedgerHeal heal;
 
   /** Every repository, with its groups and what each has pending. */
   public List<RepositoryDto> repositories() {
@@ -413,6 +418,15 @@ public class Inventory {
    * moving the latest and the scan that follows it, main's pins are still the previous head's; the
    * answer is a 503 for those minutes rather than a keep-set that is wrong for them.
    *
+   * <h2>And it heals itself</h2>
+   *
+   * <p>The ledger is younger than the deployer's rollback set, and nothing can write a ledger row by
+   * hand, so a refusal that only refused would stop the GC until the application redeployed. Each
+   * missing pair is therefore handed to {@link ReleaseLedgerHeal}, which reads its tag on the work
+   * queue — never on this request — and records it as an {@code SCMRelease} would have been. The
+   * sentence says which state each pair is in; a tag the git host does not hold stays a 503 and says
+   * that it needs a person, and it is not asked about again on every poll.
+   *
    * <p>A commit-sha entry (a deployment older than the deployer's V7) names no release by version,
    * so it is not a ledger question and is passed over, as {@code keptReleases} always has.
    */
@@ -472,15 +486,33 @@ public class Inventory {
           }
         }
         if (!covered) {
-          unrecorded.add(
-              application + " " + version + " (repository " + String.join(" or ", repositories)
-                  + ")");
+          // The refusal heals itself: every candidate's tag is read and recorded in the background,
+          // once per window, and the GC run after that is answered. See ReleaseLedgerHeal.
+          List<String> why = new ArrayList<>();
+          for (String repository : repositories) {
+            ReleaseLedgerHeal.State state =
+                heal.request(inventory.get(repository).project, repository, version);
+            why.add("repository " + repository + ": " + sentence(state, version));
+          }
+          unrecorded.add(application + " " + version + " (" + String.join("; ", why) + ")");
         }
       }
     }
     if (!unrecorded.isEmpty()) {
       throw new UnrecordedDeploymentException(unrecorded);
     }
+  }
+
+  /** What the refusal says about one pair, by what became of its record. */
+  private static String sentence(ReleaseLedgerHeal.State state, String version) {
+    return switch (state) {
+      case IN_FLIGHT -> "being recorded from its tag now; the next read answers once it is";
+      case NOT_HELD ->
+          "the git host holds no tag " + ReleaseLedger.TAG_PREFIX + version
+              + " — a deployment of a release that does not exist there, which needs a person";
+      case FAILED -> "its tag could not be read; it is asked again shortly";
+      case UNADDRESSABLE -> "its inventory row names no project, so its tag cannot be read yet";
+    };
   }
 
   /**

@@ -13,8 +13,10 @@ import java.util.List;
  * record a release whose tag the git host did not hold when the frame arrived, and nothing else
  * ever writes that row. The keep-set used to match deployed versions by version alone, so such a
  * release simply matched nothing and the answer was a 200 — the one answer the consumer believes.
- * The sentence names each application, version and repository, which is what a person needs to
- * fill the row (a redelivered {@code SCMRelease}, or the ledger backfill) and unblock the GC.
+ * The sentence names each application, version and repository, and what is being done about it:
+ * {@code adoption/ReleaseLedgerHeal} records the missing row from its tag in the background, so
+ * the refusal clears itself on a later read — except for a tag the git host does not hold, which is
+ * a genuine inconsistency and says so.
  *
  * <p>503 rather than 500: nothing here is broken, the answer is merely not complete yet, and a
  * consumer that retries after the row is filled gets it.
@@ -23,7 +25,7 @@ public class UnrecordedDeploymentException extends MaintenanceException {
 
   /**
    * @param unrecorded one entry per missing release, already spelled for a person — {@code
-   *     <application> <version> (repository <name>)}
+   *     <application> <version> (repository <name>: <what is being done about it>)}
    */
   public UnrecordedDeploymentException(List<String> unrecorded) {
     super(
