@@ -63,6 +63,12 @@ import org.jboss.logging.Logger;
  *       half-readable declared the other half all the same.
  * </ul>
  *
+ * <p><b>Not parsing is not the same as not being served.</b> A manifest the tree lists and the git
+ * host would not serve comes back from {@code pinsAt} as UNREACHABLE (qits-1172, {@code
+ * ManifestScanner.UnservedManifest}), so it lands in the first bullet and is retried: recording
+ * the rest would be a ledger row that says, permanently, that the release declared less than it
+ * did — and {@code GET /pins} keeps a deployed release by exactly that row.
+ *
  * <p><b>The write is idempotent and that is not incidental</b>: a durable redelivery and a backfill
  * re-run both land on {@code (repository, version)}, and {@link MaintenanceStore#recordRelease}
  * rewrites the row and its pins rather than adding to them.

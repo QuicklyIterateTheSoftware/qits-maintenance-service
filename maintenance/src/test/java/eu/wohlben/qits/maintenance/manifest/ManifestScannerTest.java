@@ -49,6 +49,8 @@ class ManifestScannerTest {
 
     final Map<String, TreeLookup> trees = new LinkedHashMap<>();
     final Map<String, String> blobs = new LinkedHashMap<>();
+    /** A blob read answered with something other than its content, whatever the tree says. */
+    final Map<String, FileLookup> unserved = new LinkedHashMap<>();
     final List<String> read = new ArrayList<>();
 
     Host() {
@@ -62,6 +64,11 @@ class ManifestScannerTest {
 
     Host blob(String path, String content) {
       blobs.put(path, content);
+      return this;
+    }
+
+    Host unserved(String path, FileLookup answer) {
+      unserved.put(path, answer);
       return this;
     }
 
@@ -80,6 +87,9 @@ class ManifestScannerTest {
     @Override
     public FileLookup blob(String project, String repository, String revision, String path) {
       read.add("blob " + path);
+      if (unserved.containsKey(path)) {
+        return unserved.get(path);
+      }
       String content = blobs.get(path);
       return content == null ? FileLookup.absent() : FileLookup.found(content);
     }
@@ -350,5 +360,113 @@ class ManifestScannerTest {
 
     assertEquals(RepositoryStatus.OK, read.status());
     assertTrue(read.pins().isEmpty());
+  }
+
+  // --- a manifest the tree lists and the host does not serve (qits-1172) ---------------------
+
+  private static final String ROOT_POM =
+      """
+      <project>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-artifacts</artifactId>
+        <version>2026.821.1</version>
+        <modules>
+          <module>service</module>
+        </modules>
+        <dependencies>
+          <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-eventstream</artifactId>
+            <version>2026.811.1</version>
+          </dependency>
+        </dependencies>
+      </project>
+      """;
+
+  /**
+   * THE HOLE: the root lists {@code pom.xml}, the blob read fails, and the scan used to answer OK
+   * with the maven half simply missing — a reduced set the scan then wrote over the good one, and
+   * the GC read as "unreferenced". It is UNREACHABLE now, which is the path that keeps the pins.
+   */
+  @Test
+  void aListedPomTheHostFailsToServeMakesTheScanUnreachable() {
+    Host host =
+        new Host()
+            .tree("", new TreeLookup.TreeEntry("pom.xml", "blob"), new TreeLookup.TreeEntry("Dockerfile", "blob"))
+            .unserved("pom.xml", FileLookup.unreachable("connection reset"))
+            .blob("Dockerfile", "FROM qits/build-images/maven-base:2026.813.1\n");
+
+    ManifestScanner.Read read = read(host);
+
+    assertEquals(RepositoryStatus.UNREACHABLE, read.status());
+    assertTrue(read.pins().isEmpty(), "no partial set: the Dockerfile's pin is not a scan result");
+    assertTrue(read.message().contains("pom.xml"), read.message());
+  }
+
+  /** A 404 on a blob the listing at the same sha names is a contradiction, not an absence. */
+  @Test
+  void aListedManifestAnsweredAbsentIsUnservedToo() {
+    // The lock is unscripted: an ABSENT, at a sha whose root lists it. Without the lock a manifest
+    // pins no version at all, so it is as much a manifest as package.json is.
+    Host host =
+        new Host()
+            .tree(
+                "",
+                new TreeLookup.TreeEntry("package.json", "blob"),
+                new TreeLookup.TreeEntry(ManifestScanner.PACKAGE_LOCK, "blob"))
+            .blob("package.json", "{\"dependencies\":{\"@qits/ui-components\":\"2026.8.1\"}}");
+
+    assertEquals(RepositoryStatus.UNREACHABLE, read(host).status());
+  }
+
+  /** The same for a Dockerfile, and for the one directory the root names. */
+  @Test
+  void anUnservedDockerfileOrDockerDirectoryIsUnreachable() {
+    Host file =
+        new Host()
+            .tree("", new TreeLookup.TreeEntry("Dockerfile", "blob"))
+            .unserved("Dockerfile", FileLookup.invalid("Dockerfile is larger than the git host serves"));
+    assertEquals(RepositoryStatus.UNREACHABLE, read(file).status());
+
+    // The root lists docker/ and the listing of it is unscripted — ABSENT, against the root's word.
+    Host directory = new Host().tree("", new TreeLookup.TreeEntry("docker", "tree"));
+    assertEquals(RepositoryStatus.UNREACHABLE, read(directory).status());
+  }
+
+  /**
+   * A module the pom NAMES and the commit does not carry is genuinely absent: no listing said it was
+   * there, so ABSENT is the git host's answer about the path and the root's pins stand. A module pom
+   * the host fails to serve is a failure to ask, and is UNREACHABLE.
+   */
+  @Test
+  void anAbsentModulePomIsAbsentWhileAnUnservedOneIsUnreachable() {
+    Host absent =
+        new Host().tree("", new TreeLookup.TreeEntry("pom.xml", "blob")).blob("pom.xml", ROOT_POM);
+    ManifestScanner.Read read = read(absent);
+    assertEquals(RepositoryStatus.OK, read.status());
+    assertEquals(
+        List.of("eu.wohlben.qits:qits-eventstream"),
+        read.pins().stream().map(ParsedPin::name).toList());
+
+    Host unserved =
+        new Host()
+            .tree("", new TreeLookup.TreeEntry("pom.xml", "blob"))
+            .blob("pom.xml", ROOT_POM)
+            .unserved("service/pom.xml", FileLookup.unreachable("502"));
+    assertEquals(RepositoryStatus.UNREACHABLE, read(unserved).status());
+  }
+
+  /** The ledger's and the gitlink read's seam says the same, as a retryable status. */
+  @Test
+  void pinsAtAnUnservedManifestIsUnreachableNotAnEmptyRelease() {
+    Host host =
+        new Host()
+            .tree("", new TreeLookup.TreeEntry("pom.xml", "blob"))
+            .unserved("pom.xml", FileLookup.unreachable("connection reset"));
+
+    ManifestScanner.Pins pins = scanner(host).pinsAt(PROJECT, REPOSITORY, "refs/tags/2026.1010.1");
+
+    assertEquals(FileLookup.Status.UNREACHABLE, pins.status());
+    assertTrue(pins.pins().isEmpty());
   }
 }

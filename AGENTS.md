@@ -72,6 +72,14 @@ inventory alone — a peer that could not be asked is not evidence that a reposi
 anything, and wiping on every hiccup would make "pending" flicker to zero whenever the git host
 restarted.
 
+**A manifest the tree lists and the git host will not serve is that same UNREACHABLE** (qits-1172).
+`root.hasBlob("pom.xml")` followed by a failed blob read used to parse as "no pom", and the scan
+wrote the reduced set over `mt_pin` and `mt_main_pin` — which `GET /pins` hands the GC as complete.
+`ManifestScanner.UnservedManifest` turns any non-FOUND read of a LISTED file (root pom, package.json
+and its lock, a Dockerfile, `.gitmodules`, the `docker/` listing) into an UNREACHABLE `Read` or
+`Pins`. A `<module>` pom the commit does not carry, or a `.gitmodules` path the tree lacks, is still
+genuinely absent: no listing named it.
+
 **A repository the CATALOG dropped does not, and that is the opposite case rather than the same
 one.** `ScanService.reconcile` marks every unlisted row ABSENT with `dropped from the catalog` and
 deletes its `mt_pin` and `mt_group` rows; the row itself, its `catalog_id` and the three log tables

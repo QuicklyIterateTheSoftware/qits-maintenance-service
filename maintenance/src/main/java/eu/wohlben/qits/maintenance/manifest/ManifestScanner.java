@@ -165,7 +165,16 @@ public class ManifestScanner {
     // config still reports whatever the manifests hold, exactly as it did before `ignore` existed.
     GroupConfig.Parsed config = groups(project, name, headSha);
 
-    List<ParsedPin> pins = pins(project, name, headSha, root, config);
+    List<ParsedPin> pins;
+    try {
+      pins = pins(project, name, headSha, root, config);
+    } catch (UnservedManifest unserved) {
+      // A file the tree LISTS that the git host would not serve. The pins it holds are unknown, not
+      // absent, so the row is UNREACHABLE and the scan keeps what it had — see UnservedManifest.
+      LOG.warnf("At %s: %s", headSha, unserved.getMessage());
+      return new Read(
+          RepositoryStatus.UNREACHABLE, null, List.of(), List.of(), null, unserved.getMessage());
+    }
 
     if (!config.ok()) {
       return new Read(
@@ -220,7 +229,13 @@ public class ManifestScanner {
     }
     String sha = root.headSha();
     GroupConfig.Parsed config = groups(project, name, sha);
-    return new Pins(FileLookup.Status.FOUND, sha, pins(project, name, sha, root, config), null);
+    try {
+      return new Pins(FileLookup.Status.FOUND, sha, pins(project, name, sha, root, config), null);
+    } catch (UnservedManifest unserved) {
+      // Retryable for every caller: the ledger throws so its frame is offered again, the gitlink
+      // read keeps the rows it reached last time, and the bump automation plans nothing.
+      return new Pins(FileLookup.Status.UNREACHABLE, null, List.of(), unserved.getMessage());
+    }
   }
 
   /**
@@ -278,10 +293,7 @@ public class ManifestScanner {
     if (!root.hasBlob("pom.xml")) {
       return List.of();
     }
-    FileLookup rootPom = gitHost.blob(project, name, sha, "pom.xml");
-    if (!rootPom.found()) {
-      return List.of();
-    }
+    FileLookup rootPom = listed(project, name, sha, "pom.xml");
 
     // --- pass one: read the reactor ------------------------------------------------------------
     Map<String, String> poms = new LinkedHashMap<>();
@@ -300,8 +312,15 @@ public class ManifestScanner {
         continue;
       }
       FileLookup pom = gitHost.blob(project, name, sha, path);
-      if (!pom.found()) {
+      if (pom.status() == FileLookup.Status.ABSENT) {
+        // A module the pom NAMES and the commit does not carry. No listing said it was there —
+        // the reactor walk asks by path, it does not list — so this is the git host's answer about
+        // a path rather than a contradiction of one, and there is nothing at it to pin. Maven
+        // would refuse to build such a reactor; that is the repository's to fix, not a scan fault.
         continue;
+      }
+      if (!pom.found()) {
+        throw new UnservedManifest(name, path, pom.status(), pom.message());
       }
       poms.put(path, pom.content());
       String directory = path.substring(0, path.length() - "pom.xml".length());
@@ -355,16 +374,12 @@ public class ManifestScanner {
     if (!root.hasBlob("package.json")) {
       return List.of();
     }
-    FileLookup manifest = gitHost.blob(project, name, sha, "package.json");
-    if (!manifest.found()) {
-      return List.of();
-    }
+    FileLookup manifest = listed(project, name, sha, "package.json");
     String lock = null;
     if (root.hasBlob(PACKAGE_LOCK)) {
-      FileLookup lockFile = gitHost.blob(project, name, sha, PACKAGE_LOCK);
-      if (lockFile.found()) {
-        lock = lockFile.content();
-      }
+      // The lock is where every npm VERSION comes from: a manifest read without it pins nothing at
+      // all, so an unserved lock is as unreadable as an unserved manifest.
+      lock = listed(project, name, sha, PACKAGE_LOCK).content();
     }
     return NpmParser.parse("package.json", manifest.content(), lock);
   }
@@ -385,9 +400,12 @@ public class ManifestScanner {
     pins.addAll(dockerPins(project, name, sha, root, ""));
     if (root.entry(DOCKER_DIRECTORY).filter(TreeLookup.TreeEntry::isTree).isPresent()) {
       TreeLookup listing = gitHost.tree(project, name, sha, DOCKER_DIRECTORY);
-      if (listing.found()) {
-        pins.addAll(dockerPins(project, name, sha, listing, DOCKER_DIRECTORY + "/"));
+      if (!listing.found()) {
+        // The root listed the directory, so any answer but its listing is the host's failure.
+        throw new UnservedManifest(
+            name, DOCKER_DIRECTORY + "/", listing.status(), listing.message());
       }
+      pins.addAll(dockerPins(project, name, sha, listing, DOCKER_DIRECTORY + "/"));
     }
     return pins;
   }
@@ -401,10 +419,7 @@ public class ManifestScanner {
         continue;
       }
       String path = directory + entry.name();
-      FileLookup file = gitHost.blob(project, name, sha, path);
-      if (file.found()) {
-        pins.addAll(DockerParser.parse(path, file.content()));
-      }
+      pins.addAll(DockerParser.parse(path, listed(project, name, sha, path).content()));
     }
     return pins;
   }
@@ -435,10 +450,7 @@ public class ManifestScanner {
     if (!root.hasBlob(GitmodulesParser.PATH)) {
       return List.of();
     }
-    FileLookup file = gitHost.blob(project, name, sha, GitmodulesParser.PATH);
-    if (!file.found()) {
-      return List.of();
-    }
+    FileLookup file = listed(project, name, sha, GitmodulesParser.PATH);
     List<GitmodulesParser.Submodule> modules = GitmodulesParser.parse(file.content());
     if (modules.isEmpty()) {
       return List.of();
@@ -462,11 +474,16 @@ public class ManifestScanner {
           directory.isEmpty()
               ? root
               : listings.computeIfAbsent(directory, path -> gitHost.tree(project, name, sha, path));
-      if (!listing.found()) {
+      if (listing.status() == FileLookup.Status.ABSENT) {
+        // The directory comes from .gitmodules, not from a listing, so a path this commit does not
+        // hold is an answer — the same stale-section case as the missing entry below.
         LOG.debugf(
             "%s declares the submodule %s at %s, which this revision does not list",
             name, module.name(), module.path());
         continue;
+      }
+      if (!listing.found()) {
+        throw new UnservedManifest(name, directory + "/", listing.status(), listing.message());
       }
       Optional<TreeLookup.TreeEntry> entry = listing.entry(entryName);
       if (entry.isEmpty()) {
@@ -523,6 +540,63 @@ public class ManifestScanner {
     return "Dockerfile".equals(name)
         || name.endsWith(".Dockerfile")
         || name.startsWith("Dockerfile.");
+  }
+
+  /**
+   * A manifest a LISTING named, read — and anything but its content is {@link UnservedManifest}.
+   *
+   * <p>Every caller has already seen the file in the tree at this very sha, so ABSENT here is not
+   * an answer about the file but a contradiction between two answers of the git host's, and GONE
+   * is the commit vanishing between them. Neither says the file is not there; both say this read
+   * could not be made. See {@link UnservedManifest} for why that has to stop the scan.
+   */
+  private FileLookup listed(String project, String name, String sha, String path) {
+    FileLookup file = gitHost.blob(project, name, sha, path);
+    if (!file.found()) {
+      throw new UnservedManifest(name, path, file.status(), file.message());
+    }
+    return file;
+  }
+
+  /**
+   * <b>A manifest the tree lists and the git host would not serve (qits-1172).</b>
+   *
+   * <p>It used to read as absent: {@code root.hasBlob("pom.xml")} said the file was there, the
+   * blob read came back not-found or failed, and the parser returned no pins — so the scan wrote a
+   * repository with its maven half missing, {@code mt_main_pin} with it, and {@code GET /pins} told
+   * the artifact GC those versions were unreferenced. A peer's hiccup became a deletion.
+   *
+   * <p><b>So it is the scan's UNREACHABLE, the one path that already keeps the pins.</b> {@link
+   * #read} turns it into an UNREACHABLE {@link Read}, which {@code ScanService} answers with {@code
+   * markRepository} and nothing else — {@code mt_pin}, {@code mt_main_pin} and the gitlink rows
+   * stay what the last good scan read. {@link #pinsAt} turns it into an UNREACHABLE {@link Pins},
+   * which every caller already treats as "ask again". It is an exception rather than a status
+   * threaded through the parsers because it is all-or-nothing by design: one unserved file makes
+   * the whole revision's reading untrustworthy, since a partial set is exactly the reduced set this
+   * exists to keep out of the store.
+   *
+   * <p><b>Every status that is not FOUND counts, INVALID included.</b> A file too large to read is
+   * permanent, so its repository stays UNREACHABLE with the sentence on its row until somebody
+   * looks; that is loud and keeps more, where the old reading was silent and deleted. The cases that
+   * are NOT this — a {@code <module>} whose pom the commit does not carry, a {@code .gitmodules}
+   * path the tree does not hold — are paths no listing ever named, so ABSENT there is the honest
+   * answer it always was, and only a failure to ask counts.
+   *
+   * <p>{@code .config/qits/maintenance.yml} is deliberately not routed through here: it is this
+   * service's configuration rather than a manifest, an unreadable copy falls back to the default
+   * grouping (see {@link #groups}), and the default ignores nothing — so it can only ever ADD pins.
+   */
+  static final class UnservedManifest extends RuntimeException {
+
+    UnservedManifest(String repository, String path, FileLookup.Status status, String message) {
+      super(
+          repository + " has " + path + " and the git host did not serve it ("
+              + status + (message == null ? "" : ": " + message)
+              + "); the pins it holds are unknown, so none are written",
+          null,
+          false,
+          false);
+    }
   }
 
   /**

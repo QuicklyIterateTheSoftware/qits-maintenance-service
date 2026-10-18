@@ -178,6 +178,57 @@ class ScanReconciliationTest {
     assertEquals(1, store.pins(GHOST).size());
   }
 
+  // --- a manifest the tree lists and the git host does not serve (qits-1172) --------------------
+
+  /**
+   * <b>AN UNSERVED MANIFEST IS UNREACHABLE, NOT ABSENT.</b> The root lists {@code pom.xml}, the
+   * blob read fails, and the scan used to write the repository's pins without the maven half —
+   * {@code mt_pin} and {@code mt_main_pin} both — which {@code GET /pins} then served to the GC as
+   * the whole truth. The same rule as an unreachable repository now: the row says why, and the pins
+   * the last good scan read stay.
+   */
+  @Test
+  void aListedPomTheGitHostFailsToServeKeepsThePinsAndMarksTheRowUnreachable() {
+    catalogListing(Fixture.REPOSITORY);
+    fullScan(ScanStatus.SUCCEEDED);
+    java.util.List<String> pins = pinLines();
+    java.util.List<String> mainPins = mainPinLines();
+    assertTrue(
+        pins.stream().anyMatch(line -> line.contains("qits-eventstream")),
+        "the control: the good scan read the pom");
+    assertTrue(mainPins.stream().anyMatch(line -> line.contains("qits-eventstream")));
+
+    peers.answer(
+        PeerTarget.GITHOST,
+        "/git/" + Fixture.PROJECT + "/" + Fixture.REPOSITORY + "/blob/" + Fixture.HEAD_SHA
+            + "/pom.xml",
+        FakePeers.Scripted.status(502, "bad gateway"));
+    UUID id = scans.request(ScanScope.ALL, Fixture.REPOSITORY, ScanTrigger.EVENT);
+    queue.awaitIdle(Duration.ofSeconds(60));
+    assertEquals(ScanStatus.SUCCEEDED.name(), store.scan(id).orElseThrow().status);
+
+    MtRepository row = row(Fixture.REPOSITORY);
+    assertEquals(RepositoryStatus.UNREACHABLE.name(), row.status);
+    assertTrue(row.message.contains("pom.xml"), row.message);
+    assertEquals(pins, pinLines(), "the last good scan's pins, every one of them");
+    assertEquals(mainPins, mainPinLines(), "and main's, which GET /pins serves");
+  }
+
+  private java.util.List<String> pinLines() {
+    return store.pins(Fixture.REPOSITORY).stream()
+        .map(pin -> pin.ecosystem + " " + pin.name + " " + pin.version + " " + pin.manifestPath)
+        .sorted()
+        .toList();
+  }
+
+  private java.util.List<String> mainPinLines() {
+    return store.allMainPins().stream()
+        .filter(pin -> pin.repository.equals(Fixture.REPOSITORY))
+        .map(pin -> pin.sha + " " + pin.ecosystem + " " + pin.name + " " + pin.version)
+        .sorted()
+        .toList();
+  }
+
   // --- the fixture -----------------------------------------------------------------------------
 
   /** Scans the ghost in as a repository the catalog holds, so a later scan can drop it. */
