@@ -511,7 +511,10 @@ GET  /pins                                        → {generatedAt,
                                                                     headSha}],
                                                      pins:[{ecosystem, name, version, repository,
                                                             manifestPath, via}]}
-                                                                503 the inventory holds no row at all
+                                                                503 the inventory holds no row at all,
+                                                                    the deployer did not answer, or a
+                                                                    deployed release of ours has no
+                                                                    ledger row
 GET  /artifacts                                   → [{ecosystem, name, repository, latest, version,
                                                       occurredAt, sbomStatus, dependentCount,
                                                       behindCount}]
@@ -634,6 +637,14 @@ POST /sbom-check/runs                             → 202 the report above, once
   manifest), so two reads over an unchanged store answer the same bytes. `gitlink` is excluded: it
   is INTERNAL by construction and its version is a commit sha, which is not an artifact anything
   could collect. `repositories` carries the freshness the consumer judges the answer by.
+- **A deployed or rollback version of a repository we hold must have a ledger row, or `/pins` is a
+  503** (qits-1172). The deployer names an application (`qits-ci`), the ledger a repository
+  (`qits-ci-service`); they are joined by `ArtifactGraph.applicationProducers` — the repository
+  whose released docker package's last path segment is that application name, the deployer's own
+  derivation. The one exemption is the release `main`'s head carries (the GITLINK `mt_latest` row),
+  provided `mt_main_pin` was read at that very commit. An application that maps to no repository of
+  this inventory is skipped with a WARN, not refused: this service keeps no ledger for it, and
+  refusing would stop the GC for as long as it is deployed.
 - **The docker rows include the images a pom pins WITHOUT SPELLING THEM OUT, and `via` is how you
   tell.** Container image versions are maven pins now — qits-workspaces pins
   `qits-workspace-daemon-protocol` and `qits-workspace-editor-image`, qits-projects pins

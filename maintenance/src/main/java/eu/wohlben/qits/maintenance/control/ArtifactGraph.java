@@ -357,6 +357,60 @@ public class ArtifactGraph {
     return Map.copyOf(byCoordinate);
   }
 
+  /**
+   * <b>WHICH REPOSITORY A DEPLOYED APPLICATION IS BUILT FROM</b> — application name to the catalog
+   * names of the repositories whose newest image of that name this platform released (qits-1172).
+   *
+   * <p>qits-deployments keys its pins by application name, and the ledger by repository: the
+   * {@code qits-ci} application is built from {@code qits-ci-service}. No table maps one onto the
+   * other, and none should — the mapping is the RELEASE's own assertion, read the way the deployer
+   * reads it. qits-deployments derives the application from the docker package a {@code
+   * SoftwareRelease} names, taking its LAST path segment ({@code qits/qits-ci} deploys as {@code
+   * qits-ci}; its {@code PackageNames.applicationOf}), and the same frame filled the docker rows of
+   * {@code mt_artifact} here with that package name and the repository that released it. So this is
+   * {@link #producers} over the docker rows, keyed by that last segment.
+   *
+   * <p><b>A set, not a single name</b>, because the last segment is not unique by construction:
+   * {@code qits/build-images/ci-base} and a {@code qits/ci-base} would both answer {@code ci-base}.
+   * A caller asking "is this release recorded" accepts any of them.
+   *
+   * <p><b>What it cannot see, and why that is safe for its one caller.</b> A repository whose
+   * deployment spec overrides {@code application:} deploys under a name no package carries, and a
+   * repository that has never had an image release announced has no row at all. Both come back
+   * unmapped, and {@code Inventory.pins} skips an unmapped application with a WARN rather than
+   * refusing — see there.
+   */
+  public Map<String, Set<String>> applicationProducers() {
+    RepositoryNames names = names();
+    Map<String, Set<String>> byApplication = new java.util.TreeMap<>();
+    for (MtArtifact artifact : store.newestArtifactPerName()) {
+      if (Ecosystem.of(artifact.ecosystem).orElse(null) != Ecosystem.DOCKER) {
+        continue;
+      }
+      String application = applicationOf(artifact.name);
+      String repository = names.of(artifact.repository);
+      if (application == null || repository == null || repository.isBlank()) {
+        continue;
+      }
+      byApplication.computeIfAbsent(application, key -> new java.util.TreeSet<>()).add(repository);
+    }
+    return byApplication;
+  }
+
+  /**
+   * The application a docker package deploys as: its last path segment, or null for none. The
+   * deployer's rule verbatim (qits-deployments' {@code PackageNames.applicationOf}); a second rule
+   * here would be the one that disagreed.
+   */
+  public static String applicationOf(String packageName) {
+    if (packageName == null) {
+      return null;
+    }
+    String trimmed = packageName.strip();
+    String segment = trimmed.substring(trimmed.lastIndexOf('/') + 1);
+    return segment.isEmpty() ? null : segment;
+  }
+
   /** The {@code (ecosystem, name)} spelling {@link #producers} is keyed by. */
   public static String producerKey(String ecosystem, String name) {
     return ecosystem + " " + name;

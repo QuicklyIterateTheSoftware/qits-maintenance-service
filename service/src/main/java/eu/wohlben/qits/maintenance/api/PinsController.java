@@ -29,6 +29,13 @@ import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
  * a read route. See {@code error/EmptyInventoryException}: the consumer treats an unanswered source
  * as fail-closed and a successful answer as authoritative, so a store with no rows must refuse
  * instead of saying that nothing on the platform is referenced.
+ *
+ * <p><b>And for the same reason whenever the answer would be INCOMPLETE</b> (qits-1172): when
+ * qits-deployments cannot say what serves ({@code error/DeploymentsUnansweredException}), and when
+ * a release that serves or would be rolled back to belongs to a repository this inventory holds and
+ * the release ledger has no row saying what it declared ({@code
+ * error/UnrecordedDeploymentException}). A 200 is read as the whole keep-set; a gap in it is a
+ * deletion.
  */
 @Path("/pins")
 @Produces(MediaType.APPLICATION_JSON)
@@ -41,7 +48,12 @@ public class PinsController {
       operationId = "listDependencyPins",
       summary = "Every internal artifact version the platform's manifests still pin")
   @APIResponse(responseCode = "200", description = "The pins, with the inventory's freshness")
-  @APIResponse(responseCode = "503", description = "The inventory holds no repository at all")
+  @APIResponse(
+      responseCode = "503",
+      description =
+          "The answer would not be complete: the inventory holds no repository at all, the"
+              + " deployed versions could not be read, or a deployed or rollback release of a"
+              + " repository this inventory holds is not in the release ledger")
   @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
   public PinSourceDto pins() {
     return inventory.pins();

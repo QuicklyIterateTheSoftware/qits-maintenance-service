@@ -7,7 +7,10 @@ import eu.wohlben.qits.maintenance.peer.PeerClient;
 import eu.wohlben.qits.maintenance.peer.PeerTarget;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import java.util.Collection;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
 
 /**
@@ -19,6 +22,11 @@ import java.util.TreeSet;
  * deployer's V7. {@code GET /pins} keeps what the ledger says those releases declared: the deployed
  * qits-ci downloads the CLI version its own release pins, whatever main pins today (qits-1172).
  *
+ * <p><b>Read per APPLICATION</b>, because a version alone says nothing about whose release it is:
+ * {@code Inventory.pins} has to ask whether the ledger holds THAT repository's row at that version,
+ * and the application name is the half of the answer that leads to a repository (see {@code
+ * ArtifactGraph.applicationProducers}).
+ *
  * <p>Fail-closed: anything but a readable 200 throws, and {@code GET /pins} answers 503.
  */
 @ApplicationScoped
@@ -29,8 +37,11 @@ public class DeployedVersions {
 
   @Inject PeerClient peers;
 
-  /** Every version that serves or would be rolled back to, across every application. */
-  public Set<String> versions() {
+  /**
+   * Every version that serves or would be rolled back to, by the application it is deployed as. An
+   * entry with no application name is kept under {@code ""}, so its versions are still kept.
+   */
+  public Map<String, Set<String>> byApplication() {
     PeerAnswer answer = peers.get(PeerTarget.DEPLOYMENTS, PATH).answer();
     if (!answer.ok()) {
       throw new DeploymentsUnansweredException(
@@ -39,18 +50,27 @@ public class DeployedVersions {
     return parse(answer.json());
   }
 
+  /** The versions of every application, as one set. */
+  public static Set<String> union(Collection<Set<String>> versions) {
+    Set<String> all = new TreeSet<>();
+    versions.forEach(all::addAll);
+    return all;
+  }
+
   /** The parsing half, with no transport in it. */
-  static Set<String> parse(JsonNode body) {
+  static Map<String, Set<String>> parse(JsonNode body) {
     JsonNode pins = body == null ? null : body.get("pins");
     if (pins == null || !pins.isArray()) {
       throw new DeploymentsUnansweredException("the answer carries no 'pins' array");
     }
-    Set<String> versions = new TreeSet<>();
+    Map<String, Set<String>> byApplication = new TreeMap<>();
     for (JsonNode pin : pins) {
       JsonNode shas = pin.get("shas");
       if (shas == null || !shas.isArray()) {
         throw new DeploymentsUnansweredException("a pin carries no 'shas' array");
       }
+      String application = pin.path("applicationName").asText("").trim();
+      Set<String> versions = byApplication.computeIfAbsent(application, key -> new TreeSet<>());
       for (JsonNode sha : shas) {
         String version = sha.asText("").trim();
         if (!version.isEmpty()) {
@@ -58,6 +78,6 @@ public class DeployedVersions {
         }
       }
     }
-    return versions;
+    return byApplication;
   }
 }

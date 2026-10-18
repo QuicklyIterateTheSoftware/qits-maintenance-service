@@ -1,12 +1,14 @@
 package eu.wohlben.qits.maintenance.api;
 
 import static io.restassured.RestAssured.given;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.not;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
+import eu.wohlben.qits.maintenance.latest.GitlinkSha;
 import eu.wohlben.qits.maintenance.manifest.ParsedPin;
 import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.GroupSource;
@@ -36,7 +38,8 @@ import org.junit.jupiter.api.Test;
  * main and of the deployment, and the GC deleted the versions main and the deployed qits-ci still
  * used. Each case below is one rule of the fix: main's pins survive a tag scan; a release not on
  * main is kept; a release on main is dropped unless it serves or is a rollback target; the
- * deployer's silence is a 503; and a tag the git host does not hold wipes nothing.
+ * deployer's silence is a 503, and so is a deployed release of ours the ledger never recorded; and
+ * a tag the git host does not hold wipes nothing.
  */
 @QuarkusTest
 class PinsUnionTest {
@@ -156,6 +159,102 @@ class PinsUnionTest {
     given().when().get(BASE + "/pins").then().statusCode(503);
   }
 
+  // --- rule 3b: a deployed release the ledger never recorded is a refusal ------------------------
+
+  /** The deployed application, as qits-deployments names it: the last segment of its image. */
+  private static final String APPLICATION = "qits-ci-app";
+
+  /**
+   * <b>THE HOLE.</b> The deployer serves {@link #RELEASE} of an application the fixture repository
+   * released the image of, the ledger has no row for that release — {@code ReleaseLedger} declined
+   * it — and main is not at it. The ledger union used to match that version against nothing and
+   * answer 200 without its pins; the GC believed it.
+   */
+  @Test
+  void aDeployedVersionTheLedgerNeverRecordedIsARefusal() {
+    scanMain();
+    imageReleasedBy(Fixture.REPOSITORY);
+    deployed(APPLICATION, RELEASE);
+
+    given()
+        .when()
+        .get(BASE + "/pins")
+        .then()
+        .statusCode(503)
+        .body("message", containsString(APPLICATION + " " + RELEASE))
+        .body("message", containsString("repository " + Fixture.REPOSITORY));
+  }
+
+  /** The control: the same deployment with its ledger row is answered, and its pins are kept. */
+  @Test
+  void aDeployedVersionTheLedgerRecordedIsAnswered() {
+    releasedAheadOfMain();
+    Fixture.scriptContains(peers, Fixture.TAG_SHA, Fixture.HEAD_SHA, true);
+    scanMain();
+    imageReleasedBy(Fixture.REPOSITORY);
+    deployed(APPLICATION, RELEASE);
+
+    given()
+        .when()
+        .get(BASE + "/pins")
+        .then()
+        .statusCode(200)
+        .body(eventstreamVersions(), hasItem(TAG_PIN_VERSION));
+  }
+
+  /**
+   * The release {@code main}'s head carries needs no ledger row: main's pins, read at that very
+   * commit, are what it declared, and {@code mt_main_pin} serves them.
+   */
+  @Test
+  void aDeployedVersionThatIsMainsReleaseIsAnsweredWithoutALedgerRow() {
+    scanMain();
+    imageReleasedBy(Fixture.REPOSITORY);
+    store.recordGitlinkLatest(
+        Fixture.REPOSITORY, RELEASE, GitlinkSha.of(Fixture.HEAD_SHA), Instant.now());
+    deployed(APPLICATION, RELEASE);
+
+    given()
+        .when()
+        .get(BASE + "/pins")
+        .then()
+        .statusCode(200)
+        .body(eventstreamVersions(), hasItem(MAIN_VERSION));
+  }
+
+  /**
+   * …but only when main's pins were read AT that head. A latest that moved on a push frame ahead of
+   * the scan names the release while {@code mt_main_pin} still holds the previous head's pins.
+   */
+  @Test
+  void mainsReleaseWhoseHeadMainsPinsWereNotReadAtIsStillARefusal() {
+    scanMain();
+    imageReleasedBy(Fixture.REPOSITORY);
+    store.recordGitlinkLatest(
+        Fixture.REPOSITORY, RELEASE, GitlinkSha.of(Fixture.TAG_SHA), Instant.now());
+    deployed(APPLICATION, RELEASE);
+
+    given().when().get(BASE + "/pins").then().statusCode(503);
+  }
+
+  /**
+   * An application no repository of this inventory released an image for — something this service
+   * keeps no ledger of — is skipped rather than refused, or the GC would never run again.
+   */
+  @Test
+  void aDeployedApplicationThatMapsToNoRepositoryIsSkipped() {
+    scanMain();
+    imageReleasedBy(Fixture.REPOSITORY);
+    deployed("postgres-exporter", RELEASE);
+
+    given()
+        .when()
+        .get(BASE + "/pins")
+        .then()
+        .statusCode(200)
+        .body(eventstreamVersions(), hasItem(MAIN_VERSION));
+  }
+
   // --- rule 4: a tag the git host does not hold wipes nothing ------------------------------------
 
   @Test
@@ -212,6 +311,27 @@ class PinsUnionTest {
         GroupSource.DEFAULT,
         pin -> PinKind.INTERNAL,
         Instant.now());
+  }
+
+  /** The image release that ties {@link #APPLICATION} to a repository, as the frame recorded it. */
+  private void imageReleasedBy(String repository) {
+    store.upsertArtifact(
+        Ecosystem.DOCKER,
+        "qits/" + APPLICATION,
+        RELEASE,
+        repository,
+        Instant.parse("2026-10-10T19:27:00Z"));
+  }
+
+  /** qits-deployments serves exactly this. */
+  private void deployed(String application, String version) {
+    peers.answer(
+        PeerTarget.DEPLOYMENTS,
+        "/deployments/api/pins",
+        FakePeers.Scripted.ok(
+            "{\"pins\":[{\"applicationName\":\"" + application + "\",\"shas\":[\""
+                + version
+                + "\"]}]}"));
   }
 
   private static String eventstreamVersions() {

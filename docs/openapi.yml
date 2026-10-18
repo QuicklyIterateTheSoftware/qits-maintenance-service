@@ -870,7 +870,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/PinSourceDto"
         "503":
-          description: The inventory holds no repository at all
+          description: "The answer would not be complete: the inventory holds no repository\
+            \ at all, the deployed versions could not be read, or a deployed or rollback\
+            \ release of a repository this inventory holds is not in the release ledger"
         "401":
           description: Not Authorized
         "403":
@@ -1218,4 +1220,4 @@ paths:
         - qits:agent
 info:
   title: qits-platform-maintenance API
-  version: 2026.1010.154002
+  version: 2026.1016.121007

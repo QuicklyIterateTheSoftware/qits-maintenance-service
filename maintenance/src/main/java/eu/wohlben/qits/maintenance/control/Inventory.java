@@ -25,6 +25,8 @@ import eu.wohlben.qits.maintenance.error.EmptyInventoryException;
 import eu.wohlben.qits.maintenance.error.NoSuchBumpException;
 import eu.wohlben.qits.maintenance.error.NoSuchRepositoryException;
 import eu.wohlben.qits.maintenance.error.NoSuchScanException;
+import eu.wohlben.qits.maintenance.error.UnrecordedDeploymentException;
+import eu.wohlben.qits.maintenance.latest.GitlinkSha;
 import eu.wohlben.qits.maintenance.manifest.Globs;
 import eu.wohlben.qits.maintenance.model.BranchState;
 import eu.wohlben.qits.maintenance.model.Ecosystem;
@@ -41,6 +43,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import org.jboss.logging.Logger;
 
 /**
  * The read side: the inventory and the bump log, in the shapes the API serves.
@@ -54,6 +57,8 @@ import java.util.UUID;
  */
 @ApplicationScoped
 public class Inventory {
+
+  private static final Logger LOG = Logger.getLogger(Inventory.class);
 
   @Inject MaintenanceStore store;
 
@@ -282,12 +287,20 @@ public class Inventory {
     // holds what main declared at its last main scan, what every release not yet on main declared,
     // and what every release that serves or would be rolled back to declared. Read before the
     // dedupe, so a version three of these name is one row per provenance and never lost.
-    for (MtMainPin pin : store.allMainPins()) {
+    List<MtMainPin> mainPins = store.allMainPins();
+    for (MtMainPin pin : mainPins) {
       pins.add(
           new PinSourceDto.ArtifactPinDto(
               pin.ecosystem, pin.name, pin.version, pin.repository, pin.manifestPath, pin.via));
     }
-    pins.addAll(releasePins(deployed.versions()));
+    Map<String, java.util.Set<String>> deployedByApplication = deployed.byApplication();
+    java.util.Set<String> deployedVersions =
+        DeployedVersions.union(deployedByApplication.values());
+    List<MtRelease> kept = store.keptReleases(deployedVersions);
+    // Before a single ledger pin is served: a deployed release the ledger never recorded is a
+    // refusal, never a 200 that quietly lacks it.
+    requireRecorded(deployedByApplication, kept, rows, mainPins);
+    pins.addAll(releasePins(kept, deployedVersions));
     pins = new ArrayList<>(new java.util.LinkedHashSet<>(pins));
     // …and the images and daemon binaries those maven and npm pins name without spelling out.
     // Derived from the STORED rows — snapshotted here, so the second derivation cannot read the
@@ -311,8 +324,8 @@ public class Inventory {
    * release at a version qits-deployments serves or would roll back to. A GITLINK pin is served as
    * the npm pins the submodule's tree holds at that commit, when a scan has read that tree.
    */
-  private List<PinSourceDto.ArtifactPinDto> releasePins(java.util.Set<String> deployedVersions) {
-    List<MtRelease> releases = store.keptReleases(deployedVersions);
+  private List<PinSourceDto.ArtifactPinDto> releasePins(
+      List<MtRelease> releases, java.util.Set<String> deployedVersions) {
     Map<java.util.UUID, MtRelease> byId = new LinkedHashMap<>();
     for (MtRelease release : releases) {
       byId.put(release.id, release);
@@ -353,6 +366,148 @@ public class Inventory {
     }
     return rows;
   }
+
+  /**
+   * <b>EVERY DEPLOYED OR ROLLBACK VERSION OF A REPOSITORY WE HOLD HAS A LEDGER ROW, OR THE ANSWER IS
+   * A 503</b> (qits-1172).
+   *
+   * <p>{@link MaintenanceStore#keptReleases} matches {@code version in (…)} and nothing else, so a
+   * deployed version whose release {@code adoption/ReleaseLedger} declined to record — its tag not
+   * held when the frame arrived, say — matched no row, contributed no pins, and the answer was a
+   * 200 without them: the one answer the GC believes completely. This asks the question per
+   * repository instead, and refuses when it has no answer.
+   *
+   * <h2>Application to repository</h2>
+   *
+   * <p>The deployer names an APPLICATION ({@code qits-ci}); the ledger names a REPOSITORY ({@code
+   * qits-ci-service}). They are joined through the release's own assertion, {@link
+   * ArtifactGraph#applicationProducers} — the repository that released the docker package whose
+   * last path segment is the application name, which is exactly how qits-deployments derived that
+   * name from the same {@code SoftwareRelease}. Candidates are kept only when the inventory holds
+   * a row of that name, since only those have a ledger this service writes.
+   *
+   * <h2>An application that maps to nothing is SKIPPED, with a WARN</h2>
+   *
+   * <p>qits-deployments also runs what no repository of ours releases through the scanner — a
+   * deployable whose image row predates the release listener, one whose spec overrides {@code
+   * application:}, anything this service never scans. Refusing for those would refuse every GC run
+   * for as long as they are deployed, which is for ever, and the keep-set would gain nothing: this
+   * service holds no ledger for them to have a row in. Their versions still reach {@link
+   * MaintenanceStore#keptReleases} by version, exactly as before. The refusal is reserved for the
+   * case this service can be wrong about — a repository it scans, at a version it should have
+   * recorded.
+   *
+   * <h2>Unless it is the repository's main release</h2>
+   *
+   * <p>A deployed version equal to the release {@code main}'s head carries declared what {@code
+   * mt_main_pin} already serves, ledger row or not. "The main release" is the GITLINK {@code
+   * mt_latest} row of the repository, which {@code latest/MainHeadLatest} OVERWRITES from the
+   * current {@code main} head on every push, every main scan and every boot — the one place the
+   * store says which release main is AT. The alternatives are not that fact: {@code on_main} is set
+   * for every ancestor release and never unset, so "newest on_main release" is a ledger lookup that
+   * by definition has no row to find here, and a newest-version rule is the one qits-1257 retired.
+   *
+   * <p><b>And main's pins must have been read at THAT commit</b>: the row's sha has to be the sha
+   * the repository's {@code mt_main_pin} rows carry — or, for a repository whose main declares no
+   * internal pin at all, the commit its last scan read. Between a finalize merge's push frame
+   * moving the latest and the scan that follows it, main's pins are still the previous head's; the
+   * answer is a 503 for those minutes rather than a keep-set that is wrong for them.
+   *
+   * <p>A commit-sha entry (a deployment older than the deployer's V7) names no release by version,
+   * so it is not a ledger question and is passed over, as {@code keptReleases} always has.
+   */
+  private void requireRecorded(
+      Map<String, java.util.Set<String>> deployedByApplication,
+      List<MtRelease> kept,
+      List<MtRepository> rows,
+      List<MtMainPin> mainPins) {
+    if (deployedByApplication.isEmpty()) {
+      return;
+    }
+    Map<String, MtRepository> inventory = new LinkedHashMap<>();
+    for (MtRepository row : rows) {
+      inventory.put(row.name, row);
+    }
+    java.util.Set<String> recorded = new java.util.HashSet<>();
+    for (MtRelease release : kept) {
+      recorded.add(release.repository + " " + release.version);
+    }
+    Map<String, java.util.Set<String>> mainShas = new LinkedHashMap<>();
+    for (MtMainPin pin : mainPins) {
+      mainShas.computeIfAbsent(pin.repository, key -> new java.util.HashSet<>()).add(pin.sha);
+    }
+    Map<String, java.util.Set<String>> producers = graph.applicationProducers();
+    // One read per candidate repository, however many versions it is asked about.
+    Map<String, Optional<MtLatest>> mainRelease = new java.util.HashMap<>();
+    List<String> unrecorded = new ArrayList<>();
+    for (Map.Entry<String, java.util.Set<String>> deployment : deployedByApplication.entrySet()) {
+      String application = deployment.getKey();
+      List<String> repositories =
+          producers.getOrDefault(application, java.util.Set.of()).stream()
+              .filter(inventory::containsKey)
+              .toList();
+      if (repositories.isEmpty()) {
+        LOG.warnf(
+            "qits-deployments serves %s at %s, which maps to no repository this inventory holds;"
+                + " its versions are kept by version alone",
+            application.isEmpty() ? "an unnamed application" : application,
+            deployment.getValue());
+        continue;
+      }
+      for (String version : deployment.getValue()) {
+        if (COMMIT.matcher(version).matches()) {
+          continue;
+        }
+        boolean covered = false;
+        for (String repository : repositories) {
+          if (recorded.contains(repository + " " + version)
+              || isMainRelease(
+                  mainRelease.computeIfAbsent(
+                      repository, name -> store.latest(Ecosystem.GITLINK, name)),
+                  version,
+                  inventory.get(repository),
+                  mainShas.getOrDefault(repository, java.util.Set.of()))) {
+            covered = true;
+            break;
+          }
+        }
+        if (!covered) {
+          unrecorded.add(
+              application + " " + version + " (repository " + String.join(" or ", repositories)
+                  + ")");
+        }
+      }
+    }
+    if (!unrecorded.isEmpty()) {
+      throw new UnrecordedDeploymentException(unrecorded);
+    }
+  }
+
+  /**
+   * Whether {@code version} is the release {@code main}'s head carries AND main's pins were read
+   * at that head. See {@link #requireRecorded} for why each half is there.
+   */
+  private static boolean isMainRelease(
+      Optional<MtLatest> latest,
+      String version,
+      MtRepository repository,
+      java.util.Set<String> mainShas) {
+    if (latest.isEmpty() || latest.get().error != null || !version.equals(latest.get().latest)) {
+      return false;
+    }
+    Optional<String> head = GitlinkSha.read(latest.get().sourceUrl);
+    if (head.isEmpty()) {
+      return false;
+    }
+    if (mainShas.isEmpty()) {
+      return repository != null && GitlinkSha.same(repository.headSha, head.get());
+    }
+    return mainShas.stream().allMatch(sha -> GitlinkSha.same(sha, head.get()));
+  }
+
+  /** A deployment's tag that is a commit rather than a release — rows older than the deployer's V7. */
+  private static final java.util.regex.Pattern COMMIT =
+      java.util.regex.Pattern.compile("[0-9a-f]{7,40}");
 
   /** The {@code via} of an npm row reached through a gitlink: the path, and the commit read. */
   public static String gitlinkVia(String gitlinkPath, String sha) {
