@@ -61,6 +61,11 @@ class GroupRetirementTest {
 
   private static final String EXTERNAL = "maintenance/external";
 
+  /** A request kept open because it carries a released tag (qits-1166). */
+  private static final String TAGGED = "4f5e6d7c-8b9a-4c3d-9e8f-7a6b5c4d3e2f";
+
+  private static final String WITH_TAG = "maintenance/withtag";
+
   private static final String AUTOMATION_BRANCH =
       "maintenance/automations/dependency-bump/" + BUMP_ONLY;
 
@@ -264,6 +269,41 @@ class GroupRetirementTest {
     assertTrue(result.waiting().stream().anyMatch(line -> line.contains(DEPENDENCIES)), result.toString());
   }
 
+  /**
+   * <b>A request carrying a released tag is kept open, and its branch still goes</b> (qits-1166):
+   * qits-projects reports the tag as an implicit {@code RELEASED_TAG} source, which withdrawing
+   * would strand off main. The sweep never asks to withdraw it, but the group branch — no longer a
+   * reason to keep it folded — is deleted exactly as a person's would be.
+   */
+  @Test
+  void theSweepKeepsARequestCarryingAReleasedTagOpenAndStillDeletesItsBranch() {
+    listBranches("\"main\",\"" + WITH_TAG + "\"");
+    peers.answer(
+        PeerTarget.PROJECTS,
+        Fixture.RELEASE_REQUESTS_PATH,
+        FakePeers.Scripted.ok("{\"requests\":[" + listed(TAGGED, "PENDING") + "]}"));
+    peers.answer(
+        PeerTarget.PROJECTS,
+        Fixture.RELEASE_REQUESTS_PATH + "/" + TAGGED,
+        FakePeers.Scripted.ok(
+            "{\"request\":{\"id\":\"" + TAGGED + "\",\"repoId\":\"" + Fixture.CATALOG_ID
+                + "\",\"state\":\"PENDING\",\"mergedSha\":null,\"sources\":["
+                + "{\"kind\":\"BRANCH\",\"name\":\"main\"},"
+                + "{\"kind\":\"BRANCH\",\"name\":\"" + WITH_TAG + "\"},"
+                + "{\"kind\":\"RELEASED_TAG\",\"name\":\"" + Fixture.TAG_VERSION
+                + "\",\"implicit\":true}]}}"));
+    peers.answerDelete(PeerTarget.GITHOST, deletePath(WITH_TAG), FakePeers.Scripted.status(204, ""));
+
+    LegacyGroupBranchSweep.Result result = sweep.sweep();
+
+    assertTrue(result.withdrawn().isEmpty(), result.toString());
+    assertEquals(List.of(Fixture.REPOSITORY + " " + TAGGED), result.keptOpen());
+    assertFalse(
+        peers.called(PeerTarget.PROJECTS, withdrawPath(TAGGED)), "never asked to withdraw");
+    assertTrue(peers.deleted(PeerTarget.GITHOST, deletePath(WITH_TAG)));
+    assertEquals(List.of(Fixture.REPOSITORY + " " + WITH_TAG), result.deleted());
+  }
+
   /** A withdrawal qits-projects did not take keeps the branch: deleting first would re-fold it. */
   @Test
   void aWithdrawalThatWasNotTakenKeepsTheBranchForTheNextPass() {
@@ -292,6 +332,9 @@ class GroupRetirementTest {
     assertEquals(null, LegacyGroupBranchSweep.groupOf("main"));
     assertTrue(LegacyGroupBranchSweep.bumpOnly(List.of("main", DEPENDENCIES, EXTERNAL), "main"));
     assertFalse(LegacyGroupBranchSweep.bumpOnly(List.of("main", "ticket/foo", DEPENDENCIES), "main"));
+    // qits-1166: a released tag among the sources is not bump-only, and neither is an empty list.
+    assertFalse(LegacyGroupBranchSweep.bumpOnly(List.of("main", Fixture.TAG_VERSION), "main"));
+    assertFalse(LegacyGroupBranchSweep.bumpOnly(List.of(), "main"));
   }
 
   // --- fixtures -----------------------------------------------------------------------------------
@@ -312,7 +355,7 @@ class GroupRetirementTest {
             "{\"requests\":["
                 + listed(BUMP_ONLY, "PENDING") + "," + listed(PERSONS, "READY") + ","
                 + listed(FINALIZED, "FINALIZED") + "]}"));
-    scriptRequest(BUMP_ONLY, "PENDING", "main", DEPENDENCIES);
+    scriptRequest(BUMP_ONLY, "PENDING", false, "main", DEPENDENCIES);
     scriptRequest(PERSONS, "READY", "main", "ticket/foo", EXTERNAL);
     peers.answer(PeerTarget.PROJECTS, withdrawPath(BUMP_ONLY), FakePeers.Scripted.ok("{}"));
     peers.answer(PeerTarget.PROJECTS, withdrawPath(PERSONS), FakePeers.Scripted.ok("{}"));
@@ -336,11 +379,24 @@ class GroupRetirementTest {
 
   /** One request's answer: its BRANCH sources, and a released tag beside them. */
   private void scriptRequest(String id, String state, String... branches) {
+    scriptRequest(id, state, true, branches);
+  }
+
+  /**
+   * One request's answer: its BRANCH sources, and — when {@code withTag} — a released tag beside
+   * them (qits-1166). A plain bump-only request carries no tag; a request kept open because of one
+   * passes {@code withTag} true.
+   */
+  private void scriptRequest(String id, String state, boolean withTag, String... branches) {
     StringBuilder sources = new StringBuilder();
     for (String branch : branches) {
       sources.append("{\"kind\":\"BRANCH\",\"name\":\"").append(branch).append("\"},");
     }
-    sources.append("{\"kind\":\"TAG\",\"name\":\"").append(Fixture.TAG_VERSION).append("\"}");
+    if (withTag) {
+      sources.append("{\"kind\":\"TAG\",\"name\":\"").append(Fixture.TAG_VERSION).append("\"}");
+    } else if (sources.length() > 0) {
+      sources.setLength(sources.length() - 1);
+    }
     peers.answer(
         PeerTarget.PROJECTS,
         Fixture.RELEASE_REQUESTS_PATH + "/" + id,

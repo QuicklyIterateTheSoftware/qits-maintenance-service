@@ -30,10 +30,12 @@ import org.jboss.logging.Logger;
  *
  * <ol>
  *   <li><b>A bump-only request standing on it is WITHDRAWN</b>, with a reason naming qits-1133. A
- *       request is bump-only when every BRANCH source it names is the repository's main branch or a
- *       {@code maintenance/} branch (its tags are released versions, which are not sources anybody
- *       wrote). Its pins are re-planned by the new path: the dispatcher opens a main-only {@code
- *       LOWEST} request whose pre-run writes them.
+ *       request is bump-only when EVERY source it carries — a branch and a tag alike — is the
+ *       repository's main branch or a {@code maintenance/} branch. A request naming anything else is
+ *       kept open instead: most commonly a released tag qits-projects folded in on its way back to
+ *       main, which reaches main only through this request and would be stranded off it by a
+ *       withdrawal (qits-1166). Its pins are re-planned by the new path: the dispatcher opens a
+ *       main-only {@code LOWEST} request whose pre-run writes them.
  *   <li><b>A PERSON'S request is left open</b> — only the branch goes. qits-projects re-folds the
  *       request without it on the deletion, and that request's own {@code dependency-bump} pre-run
  *       re-plans the pins the branch carried.
@@ -211,12 +213,12 @@ public class LegacyGroupBranchSweep {
       if (!OPEN.contains(request.state())) {
         continue;
       }
-      if (!bumpOnly(request.branches(), main)) {
+      if (!bumpOnly(request.sources(), main)) {
         LOG.infof(
-            "Left release request %s of %s open: it is a person's (sources %s); deleting %s"
-                + " re-folds it without the branch, and its dependency-bump pre-run re-plans the"
-                + " pins",
-            id, repository.name, request.branches(), branch);
+            "Left release request %s of %s open: it carries more than %s and maintenance branches"
+                + " (sources %s); deleting %s re-folds it without the branch, and its"
+                + " dependency-bump pre-run re-plans the pins",
+            id, repository.name, main, request.sources(), branch);
         result.keptOpen().add(repository.name + " " + id);
         continue;
       }
@@ -225,7 +227,7 @@ public class LegacyGroupBranchSweep {
       switch (withdrawal.outcome()) {
         case REQUESTED, CONVERGED -> {
           store.requestWithdrawn(id, WITHDRAW_REASON, Instant.now());
-          requests.byId().put(id, new Request("WITHDRAWN", request.branches()));
+          requests.byId().put(id, new Request("WITHDRAWN", request.branches(), request.sources()));
           LOG.infof("Withdrew the bump-only release request %s of %s (on %s): %s", id,
               repository.name, branch, withdrawal.message());
           result.withdrawn().add(repository.name + " " + id);
@@ -239,9 +241,18 @@ public class LegacyGroupBranchSweep {
     return null;
   }
 
-  /** Every BRANCH source is the main branch or a maintenance branch. */
-  static boolean bumpOnly(List<String> branches, String main) {
-    for (String source : branches) {
+  /**
+   * Whether every source the request carries — a branch and a tag alike — is the main branch or a
+   * {@code maintenance/} branch (qits-1166). Judged over ALL sources, not just the BRANCH ones: a
+   * released tag qits-projects folded in reaches main only through this request, so it must hold
+   * the request open exactly as a person's branch does. An empty list is false — nothing stands on
+   * it, so there is nothing to call bump-only.
+   */
+  static boolean bumpOnly(List<String> sources, String main) {
+    if (sources.isEmpty()) {
+      return false;
+    }
+    for (String source : sources) {
       if (!source.equals(main) && !source.startsWith(BumpService.BRANCH_PREFIX)) {
         return false;
       }
@@ -268,8 +279,14 @@ public class LegacyGroupBranchSweep {
     return "group bumps are retired (qits-1133); " + branch + " was swept, not released";
   }
 
-  /** A request as far as the sweep reads it. */
-  private record Request(String state, List<String> branches) {}
+  /**
+   * A request as far as the sweep reads it.
+   *
+   * @param branches its BRANCH sources only — what decides whether it stands on the swept branch
+   * @param sources every source it carries, of any kind — branches and tags alike — what {@link
+   *     #bumpOnly} is judged over (qits-1166)
+   */
+  private record Request(String state, List<String> branches, List<String> sources) {}
 
   /** A repository's requests that can still carry a branch, with their sources; or why not. */
   private record Requests(Map<String, Request> byId, String error) {}
@@ -294,7 +311,7 @@ public class LegacyGroupBranchSweep {
         return new Requests(Map.of(), Optional.ofNullable(state.error())
             .orElse("release request " + listed.id() + " could not be read"));
       }
-      byId.put(listed.id(), new Request(state.state(), state.branches()));
+      byId.put(listed.id(), new Request(state.state(), state.branches(), state.sources()));
     }
     return new Requests(byId, null);
   }
