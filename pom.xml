@@ -68,7 +68,7 @@
              (maintenance/src/test/.../contracts/*Contract, PeerConsumerPactTest). Each moves like
              every internal pin: a qits-maintenance bump on its property, gated here. Do not
              hand-edit one to chase a release. -->
-        <qits.ci-golden-masters.version>2026.1018.160604</qits.ci-golden-masters.version>
+        <qits.ci-golden-masters.version>2026.1018.180637</qits.ci-golden-masters.version>
         <qits.deployments-golden-masters.version>2026.1010.145913</qits.deployments-golden-masters.version>
         <qits.artifacts-golden-masters.version>2026.1018.153037</qits.artifacts-golden-masters.version>
         <qits.githost-golden-masters.version>2026.1018.174636</qits.githost-golden-masters.version>
