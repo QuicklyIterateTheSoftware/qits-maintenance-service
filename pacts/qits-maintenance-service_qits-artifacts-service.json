@@ -150,6 +150,69 @@
         }
       },
       "description": "SbomCheckService.probe: getMavenMetadata",
+      "key": "4f6aa458",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a maven artifact published at a version",
+          "params": {
+            "artifact": "contract-maven",
+            "groupPath": "eu/wohlben/qits",
+            "name": "eu.wohlben.qits:contract-maven",
+            "type": "maven",
+            "version": "2100.1.0"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/artifacts/maven/maven/${groupPath}/${artifact}/maven-metadata.xml",
+            "type": "ProviderState"
+          }
+        },
+        "method": "GET",
+        "path": "/artifacts/maven/maven/eu/wohlben/qits/contract-maven/maven-metadata.xml"
+      },
+      "response": {
+        "headers": {
+          "Content-Type": [
+            "application/xml; charset=utf-8"
+          ]
+        },
+        "matchingRules": {
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": ".+"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-artifacts-service",
+            "operationId": "getMavenMetadata"
+          },
+          "qits-trigger": {
+            "app": "qits-maintenance-service",
+            "kind": "schedule",
+            "schedule": "SbomCheckService.probe"
+          }
+        }
+      },
+      "description": "SbomCheckService.probe: getMavenMetadata",
       "key": "74ce52d4",
       "pending": false,
       "providerStates": [
@@ -619,6 +682,69 @@
                 {
                   "match": "regex",
                   "regex": "application/json.*"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-artifacts-service",
+            "operationId": "getMavenMetadata"
+          },
+          "qits-trigger": {
+            "app": "qits-maintenance-service",
+            "kind": "schedule",
+            "schedule": "ScanService.run"
+          }
+        }
+      },
+      "description": "ScanService.run: getMavenMetadata",
+      "key": "70070ccb",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a maven artifact published at a version",
+          "params": {
+            "artifact": "contract-maven",
+            "groupPath": "eu/wohlben/qits",
+            "name": "eu.wohlben.qits:contract-maven",
+            "type": "maven",
+            "version": "2100.1.0"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/artifacts/maven/maven/${groupPath}/${artifact}/maven-metadata.xml",
+            "type": "ProviderState"
+          }
+        },
+        "method": "GET",
+        "path": "/artifacts/maven/maven/eu/wohlben/qits/contract-maven/maven-metadata.xml"
+      },
+      "response": {
+        "headers": {
+          "Content-Type": [
+            "application/xml; charset=utf-8"
+          ]
+        },
+        "matchingRules": {
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": ".+"
                 }
               ]
             }

@@ -18,6 +18,67 @@
         }
       },
       "description": "ScanService.run: getMavenMetadata",
+      "key": "7f06b236",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a cached maven artifact with published versions",
+          "params": {
+            "artifact": "contract-library",
+            "groupPath": "org/example",
+            "name": "org.example:contract-library"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/artifacts/maven/central/${groupPath}/${artifact}/maven-metadata.xml",
+            "type": "ProviderState"
+          }
+        },
+        "method": "GET",
+        "path": "/artifacts/maven/central/org/example/contract-library/maven-metadata.xml"
+      },
+      "response": {
+        "headers": {
+          "Content-Type": [
+            "application/xml; charset=utf-8"
+          ]
+        },
+        "matchingRules": {
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": ".+"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-mirror-service",
+            "operationId": "getMavenMetadata"
+          },
+          "qits-trigger": {
+            "app": "qits-maintenance-service",
+            "kind": "schedule",
+            "schedule": "ScanService.run"
+          }
+        }
+      },
+      "description": "ScanService.run: getMavenMetadata",
       "key": "b48bee11",
       "pending": false,
       "providerStates": [

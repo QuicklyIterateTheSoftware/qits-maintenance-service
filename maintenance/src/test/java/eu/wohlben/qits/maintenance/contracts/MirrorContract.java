@@ -1,5 +1,6 @@
 package eu.wohlben.qits.maintenance.contracts;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -18,9 +19,9 @@ import java.util.List;
  * serves came from upstream.
  *
  * <p>Each cache is read in a state that holds the name and one where upstream has none (404). The
- * metadata is XML, which the consumer helper binds no paths of, so its 200 row binds the status
- * alone — and waits ({@link PeerRow#readingBody}) while qits-mirror records that 200 without the
- * document, since the {@code <versions>} the client reads is all the answer is for.
+ * metadata is XML: its 200 row binds the status and the recorded {@code Content-Type} only, since
+ * the recorder and the consumer helper carry JSON bodies alone — binding the {@code <versions>}
+ * waits on XML support.
  */
 final class MirrorContract {
 
@@ -38,13 +39,18 @@ final class MirrorContract {
 
   static final List<PeerRow> ROWS =
       List.of(
-          PeerRow.readingBody(
-              GoldenInteraction.of(SCAN, A_CACHED_MAVEN_ARTIFACT, ArtifactsContract.GET_MAVEN_METADATA),
-              (peers, p) -> {
-                LatestLookup latest =
-                    peers.latest().resolve(Ecosystem.MAVEN, PinKind.EXTERNAL, p.get("name", MAVEN_NAME));
-                assertTrue(latest.ok(), latest.error());
-              }),
+          // Status and Content-Type only: the XML document is not bound (see ArtifactsContract), so
+          // the client takes the 200 and finds no document to read versions from.
+          new PeerRow(
+              GoldenInteraction.of(SCAN, A_CACHED_MAVEN_ARTIFACT, ArtifactsContract.GET_MAVEN_METADATA)
+                  .readsHeader("Content-Type"),
+              (peers, p) ->
+                  assertEquals(
+                      ArtifactsContract.METADATA_WITHOUT_A_DOCUMENT,
+                      peers
+                          .latest()
+                          .resolve(Ecosystem.MAVEN, PinKind.EXTERNAL, p.get("name", MAVEN_NAME))
+                          .error())),
           new PeerRow(
               GoldenInteraction.of(SCAN, NO_MAVEN_ARTIFACT_UPSTREAM, ArtifactsContract.GET_MAVEN_METADATA),
               (peers, p) ->

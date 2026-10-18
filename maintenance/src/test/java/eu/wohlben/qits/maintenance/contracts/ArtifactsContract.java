@@ -2,9 +2,11 @@ package eu.wohlben.qits.maintenance.contracts;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.maintenance.bump.changelog.ChangelogClient;
+import eu.wohlben.qits.maintenance.error.SbomCheckFailedException;
 import eu.wohlben.qits.maintenance.latest.LatestLookup;
 import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.PinKind;
@@ -23,9 +25,9 @@ import java.util.List;
  * <p><b>The registry reads</b> bind qits-artifacts' recordings of its maven, npm and OCI mounts,
  * each read in a state that holds the name and one that does not: a 404 (or, for OCI, an empty
  * {@code tags}) is what {@code ArtifactPresence} counts as collected. {@code maven-metadata.xml} is
- * XML, which the consumer helper binds no paths of, so its 200 rows bind the status alone — and
- * wait ({@link PeerRow#readingBody}) while qits-artifacts records that 200 without the document,
- * since the {@code <versions>} the client reads is all the answer is for.
+ * XML: its 200 rows bind the status and the recorded {@code Content-Type} only, since the recorder
+ * and the consumer helper carry JSON bodies alone — binding the {@code <versions>} the client reads
+ * waits on XML support.
  */
 final class ArtifactsContract {
 
@@ -52,6 +54,9 @@ final class ArtifactsContract {
 
   static final String GET_NPM_PACKUMENT = "getNpmPackument";
   static final String LIST_IMAGE_TAGS = "listImageTags";
+
+  /** What the maven reader makes of a 200 that carries no document (the body is not bound). */
+  static final String METADATA_WITHOUT_A_DOCUMENT = "the metadata document did not parse";
 
   /** A maven name the clients will address: a groupId:artifactId. */
   static final String MAVEN_NAME = "eu.wohlben.qits:contract-artifact";
@@ -119,17 +124,31 @@ final class ArtifactsContract {
                   assertFalse(
                       peers.presence().versions(Ecosystem.DAEMON_WIRE_NAME, p.get("daemon")).isEmpty())),
           // --- the hosted registries ------------------------------------------------------
-          PeerRow.readingBody(
-              GoldenInteraction.of(
-                  SCAN, A_MAVEN_ARTIFACT_PUBLISHED, GET_MAVEN_METADATA),
+          // maven-metadata.xml: the status and the recorded Content-Type are bound; the
+          // <versions> the client reads are not, since the recorder and qits-pact-consumer carry
+          // JSON bodies only. So the mock answers the 200 without the document, and the row
+          // asserts the client took the 200 and found no document — never a failed request. When
+          // XML bodies are supported these rows bind the versions and assert the lookup instead.
+          new PeerRow(
+              GoldenInteraction.of(SCAN, A_MAVEN_ARTIFACT_PUBLISHED, GET_MAVEN_METADATA)
+                  .readsHeader("Content-Type"),
+              (peers, p) ->
+                  assertEquals(
+                      METADATA_WITHOUT_A_DOCUMENT,
+                      peers
+                          .latest()
+                          .resolve(Ecosystem.MAVEN, PinKind.INTERNAL, p.get("name", MAVEN_NAME))
+                          .error())),
+          new PeerRow(
+              GoldenInteraction.of(PROBE, A_MAVEN_ARTIFACT_PUBLISHED, GET_MAVEN_METADATA)
+                  .readsHeader("Content-Type"),
               (peers, p) -> {
-                LatestLookup latest =
-                    peers.latest().resolve(Ecosystem.MAVEN, PinKind.INTERNAL, p.get("name", MAVEN_NAME));
-                assertTrue(latest.ok(), latest.error());
+                SbomCheckFailedException e =
+                    assertThrows(
+                        SbomCheckFailedException.class,
+                        () -> peers.presence().versions("maven", p.get("name", MAVEN_NAME)));
+                assertTrue(e.getMessage().contains("did not parse"), e.getMessage());
               }),
-          PeerRow.readingBody(
-              GoldenInteraction.of(PROBE, A_MAVEN_ARTIFACT_PUBLISHED, GET_MAVEN_METADATA),
-              (peers, p) -> assertFalse(peers.presence().versions("maven", p.get("name", MAVEN_NAME)).isEmpty())),
           new PeerRow(
               GoldenInteraction.of(SCAN, NO_MAVEN_ARTIFACT_PUBLISHED, GET_MAVEN_METADATA),
               (peers, p) ->
