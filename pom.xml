@@ -71,12 +71,12 @@
         <qits.ci-golden-masters.version>2026.1010.174604</qits.ci-golden-masters.version>
         <qits.deployments-golden-masters.version>2026.1010.145913</qits.deployments-golden-masters.version>
         <qits.artifacts-golden-masters.version>2026.1018.73956</qits.artifacts-golden-masters.version>
-        <qits.githost-golden-masters.version>2026.1010.133955</qits.githost-golden-masters.version>
-        <qits.idp-golden-masters.version>2026.1012.180836</qits.idp-golden-masters.version>
+        <qits.githost-golden-masters.version>2026.1018.135253</qits.githost-golden-masters.version>
+        <qits.idp-golden-masters.version>2026.1018.142635</qits.idp-golden-masters.version>
         <qits.mirror-golden-masters.version>2026.1010.151000</qits.mirror-golden-masters.version>
         <!-- The shared JVM consumer helper (qits-integrations-quarkus-javalib): golden-master reader,
              row builder, pact-file compare. Test scope. -->
-        <qits.pact-consumer.version>2026.1010.141817</qits.pact-consumer.version>
+        <qits.pact-consumer.version>2026.1018.142240</qits.pact-consumer.version>
         <!-- THE CONSUMER PACTS this provider verifies (epic qits-546, ticket qits-1149): each
              consumer publishes its pact against qits-maintenance as
              eu.wohlben.qits:<consumer>-pacts-qits-maintenance-service, and
