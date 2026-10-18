@@ -8,7 +8,6 @@ import au.com.dius.pact.core.model.ProviderState;
 import au.com.dius.pact.provider.junit5.HttpTestTarget;
 import au.com.dius.pact.provider.junit5.PactVerificationContext;
 import au.com.dius.pact.provider.junit5.PactVerificationInvocationContextProvider;
-import au.com.dius.pact.provider.junitsupport.IgnoreNoPactsToVerify;
 import au.com.dius.pact.provider.junitsupport.Provider;
 import au.com.dius.pact.provider.junitsupport.State;
 import au.com.dius.pact.provider.junitsupport.loader.PactSource;
@@ -19,6 +18,7 @@ import java.net.URL;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.TestTemplate;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -32,19 +32,24 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * pins that jar as a test dependency, and qits-maintenance bumps the pin when the consumer releases
  * a changed pact. {@link ClasspathPactLoader} finds them all.
  *
- * <p><b>No consumer pins a pact yet</b>, so {@code @IgnoreNoPactsToVerify} lets an empty classpath
- * pass and the loader logs that nothing was verified. When the first consumer's pact jar is pinned,
- * drop the annotation and set {@link ClasspathPactLoader#REQUIRED} to true.
+ * <p><b>Pinned today: qits-projects-service</b> ({@code
+ * qits-projects-service-pacts-qits-maintenance-service}, ticket qits-1149). {@link
+ * ClasspathPactLoader#REQUIRED} is true, so a classpath that lost its pinned pacts fails rather than
+ * verifying nothing.
  *
  * <p>Each interaction runs against this {@code @QuarkusTest} application over real HTTP, as the
  * {@code %test} synthetic user — exactly as {@link GoldenMasterRecordingTest}'s calls run. Every
  * {@code @State} method delegates to {@link ProviderStates}; {@link #target} fails an unknown state,
  * and an interaction without {@code comments.references.qits-call} or {@code qits-trigger}.
+ *
+ * <p><b>A pinned pact that is wrong is named in {@link #KNOWN_WRONG}, by its jar's version</b>, and
+ * its interaction is reported as skipped with the reason — never answered by bending the provider
+ * to it. The entry is for that version alone: the bump that carries the consumer's fix verifies the
+ * interaction for real, and a bump that does not fix it goes red here, which is the point.
  */
 @QuarkusTest
 @Provider(ConsumerPactVerificationTest.PROVIDER)
 @PactSource(ClasspathPactLoader.class)
-@IgnoreNoPactsToVerify
 class ConsumerPactVerificationTest {
 
   /** The provider's name in a pact: the repository name, not the application name. */
@@ -55,6 +60,35 @@ class ConsumerPactVerificationTest {
     System.setProperty("pact_do_not_track", "true");
   }
 
+  /** A pinned pact interaction this provider cannot honour, and why: the consumer must fix it. */
+  record KnownWrong(String consumer, String version, String description, String reason) {
+
+    boolean names(Pact pact, Interaction interaction) {
+      return consumer.equals(pact.getConsumer().getName())
+          && description.equals(interaction.getDescription())
+          && String.valueOf(pact.getSource()).contains("/" + version + "/");
+    }
+  }
+
+  private static final String FAILURE_NOT_NULLABLE =
+      "the pact binds $.automations[*].failure as an object in every element, but the golden master"
+          + " it was built from (state 'a release request with automations') answers null for every"
+          + " automation that did not fail — qits-projects-service's row builder drops the null"
+          + " alternative when it merges the elements (ticket qits-1149)";
+
+  static final List<KnownWrong> KNOWN_WRONG =
+      List.of(
+          new KnownWrong(
+              "qits-projects-service",
+              "2026.1011.161452",
+              "AutomationRefresh.attempt: listReleaseRequestAutomations",
+              FAILURE_NOT_NULLABLE),
+          new KnownWrong(
+              "qits-projects-service",
+              "2026.1011.161452",
+              "AutomationRefresh.attempt: triggerReleaseRequestAutomations",
+              FAILURE_NOT_NULLABLE));
+
   @Inject ProviderStates states;
 
   @TestHTTPResource("/")
@@ -62,9 +96,6 @@ class ConsumerPactVerificationTest {
 
   @BeforeEach
   void target(PactVerificationContext context, Pact pact, Interaction interaction) {
-    if (context == null) {
-      return; // no pact to verify: @IgnoreNoPactsToVerify's single empty run
-    }
     String consumer = pact.getConsumer().getName();
     for (ProviderState state : interaction.getProviderStates()) {
       if (!states.names().contains(state.getName())) {
@@ -91,15 +122,20 @@ class ConsumerPactVerificationTest {
                 + key);
       }
     }
+    for (KnownWrong wrong : KNOWN_WRONG) {
+      if (wrong.names(pact, interaction)) {
+        Assumptions.abort(
+            consumer + " " + wrong.version() + " '" + interaction.getDescription() + "': "
+                + wrong.reason());
+      }
+    }
     context.setTarget(new HttpTestTarget(base.getHost(), base.getPort()));
   }
 
   @TestTemplate
   @ExtendWith(PactVerificationInvocationContextProvider.class)
   void consumerPactHolds(PactVerificationContext context) {
-    if (context != null) {
-      context.verifyInteraction();
-    }
+    context.verifyInteraction();
   }
 
   // --- the states: each one line into the registry -------------------------------------------
@@ -142,5 +178,16 @@ class ConsumerPactVerificationTest {
   @State(ProviderStates.A_RELEASE_REQUEST_WITH_AN_AUTOMATION_TO_RERUN)
   Map<String, String> aReleaseRequestWithAnAutomationToRerun() {
     return states.params(ProviderStates.A_RELEASE_REQUEST_WITH_AN_AUTOMATION_TO_RERUN);
+  }
+
+  @State(ProviderStates.A_RELEASE_REQUEST_WITH_AUTOMATIONS_AT_ITS_NEWEST_FOLD)
+  Map<String, String> aReleaseRequestWithAutomationsAtItsNewestFold() {
+    return states.params(ProviderStates.A_RELEASE_REQUEST_WITH_AUTOMATIONS_AT_ITS_NEWEST_FOLD);
+  }
+
+  @State(ProviderStates.A_RELEASE_REQUEST_WITH_AN_AUTOMATION_TO_RERUN_FOR_A_WORK_ITEM)
+  Map<String, String> aReleaseRequestWithAnAutomationToRerunForAWorkItem() {
+    return states.params(
+        ProviderStates.A_RELEASE_REQUEST_WITH_AN_AUTOMATION_TO_RERUN_FOR_A_WORK_ITEM);
   }
 }

@@ -72,6 +72,42 @@
       ]
     },
     {
+      "name": "a release request with an automation to re-run for a work item",
+      "slug": "a-release-request-with-an-automation-to-re-run-for-a-work-item",
+      "params": {
+        "backingBranch": "release/contract-service-rr-1",
+        "branch": "feature/export",
+        "foldSha": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "kind": "screenshot-baselines",
+        "qualifiedId": "contract-service-rr-1",
+        "repoName": "contract-service",
+        "repositoryId": "00000000-0000-4000-8000-000000000001",
+        "requestId": "00000000-0000-4000-8000-000000000002",
+        "workItem": "qits-112"
+      },
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "runReleaseRequestAutomation",
+          "method": "POST",
+          "path": "/maintenance/api/release-requests/{requestId}/automations/{kind}/runs",
+          "body": {
+            "workItem": "{workItem}"
+          },
+          "status": 202,
+          "file": "a-release-request-with-an-automation-to-re-run-for-a-work-item/runReleaseRequestAutomation.json",
+          "frozen": {
+            "ids": [
+              "$.id"
+            ],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
       "name": "a release request with automations",
       "slug": "a-release-request-with-automations",
       "params": {
@@ -127,6 +163,43 @@
           },
           "status": 200,
           "file": "a-release-request-with-automations/triggerReleaseRequestAutomations.json",
+          "frozen": {
+            "ids": [
+              "$.requestId",
+              "$.automations[*].bumpId"
+            ],
+            "instants": [
+              "$.automations[*].updatedAt"
+            ],
+            "strings": [
+              "$.automations[*].branch"
+            ],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "a release request with automations at its newest fold",
+      "slug": "a-release-request-with-automations-at-its-newest-fold",
+      "params": {
+        "backingBranch": "release/contract-service-rr-1",
+        "branch": "feature/export",
+        "foldSha": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "kind": "screenshot-baselines",
+        "qualifiedId": "contract-service-rr-1",
+        "repoName": "contract-service",
+        "repositoryId": "00000000-0000-4000-8000-000000000001",
+        "requestId": "00000000-0000-4000-8000-000000000002"
+      },
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "listReleaseRequestAutomations",
+          "method": "GET",
+          "path": "/maintenance/api/release-requests/{requestId}/automations",
+          "status": 200,
+          "file": "a-release-request-with-automations-at-its-newest-fold/listReleaseRequestAutomations.json",
           "frozen": {
             "ids": [
               "$.requestId",

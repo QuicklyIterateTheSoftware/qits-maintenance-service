@@ -179,13 +179,27 @@ class GoldenMasterRecordingTest {
               AUTOMATIONS + "/{kind}/runs",
               202,
               "{\"workItem\":null,\"repository\":\"{repoName}\"}"),
-          // …the CLI's names nothing: the repository is the one the request's rows name.
+          // …the CLI's names nothing: the repository is the one the request's rows name…
           Interaction.write(
               ProviderStates.A_RELEASE_REQUEST_WITH_AN_AUTOMATION_TO_RERUN,
               "runReleaseRequestAutomation",
               AUTOMATIONS + "/{kind}/runs",
               202,
-              "{}"));
+              "{}"),
+          // …or only the work item, under --work-item (MaintenanceApi.runAutomation).
+          Interaction.write(
+              ProviderStates.A_RELEASE_REQUEST_WITH_AN_AUTOMATION_TO_RERUN_FOR_A_WORK_ITEM,
+              "runReleaseRequestAutomation",
+              AUTOMATIONS + "/{kind}/runs",
+              202,
+              "{\"workItem\":\"{workItem}\"}"),
+          // The CLI's `qits maintenance automations` without --fold: the newest fold, no query.
+          Interaction.read(
+              ProviderStates.A_RELEASE_REQUEST_WITH_AUTOMATIONS_AT_ITS_NEWEST_FOLD,
+              "listReleaseRequestAutomations",
+              AUTOMATIONS,
+              Map.of(),
+              null));
 
   private static final ObjectMapper JSON = new ObjectMapper();
   private static final Pattern TEMPLATE_PARAM = Pattern.compile("\\{([^}]+)}");

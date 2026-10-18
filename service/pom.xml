@@ -149,6 +149,15 @@
             <scope>test</scope>
         </dependency>
         <dependency>
+            <!-- The consumer pacts ConsumerPactVerificationTest verifies: each jar carries one
+                 pacts/<consumer>_qits-maintenance-service.json, found by ClasspathPactLoader on the
+                 test classpath. The pinned jar IS the source of the pact; nothing is copied into
+                 this tree. Pinned in the root pom. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-projects-service-pacts-qits-maintenance-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <groupId>io.rest-assured</groupId>
             <artifactId>rest-assured</artifactId>
             <scope>test</scope>

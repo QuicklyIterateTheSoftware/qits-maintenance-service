@@ -67,6 +67,13 @@ public class ProviderStates {
       "a release request with a failed automation";
   public static final String A_RELEASE_REQUEST_WITH_AN_AUTOMATION_TO_RERUN =
       "a release request with an automation to re-run";
+  public static final String A_RELEASE_REQUEST_WITH_AUTOMATIONS_AT_ITS_NEWEST_FOLD =
+      "a release request with automations at its newest fold";
+  public static final String A_RELEASE_REQUEST_WITH_AN_AUTOMATION_TO_RERUN_FOR_A_WORK_ITEM =
+      "a release request with an automation to re-run for a work item";
+
+  /** The work item the CLI's {@code qits maintenance automation run --work-item} names. */
+  static final String WORK_ITEM = "qits-112";
 
   /** The repository the estate states seed, and its catalog id (qits-projects' row id). */
   static final String REPOSITORY = "contract-service";
@@ -113,6 +120,11 @@ public class ProviderStates {
     states.put(A_RELEASE_REQUEST_WITH_AUTOMATIONS, this::releaseRequestWithAutomations);
     states.put(A_RELEASE_REQUEST_WITH_A_FAILED_AUTOMATION, this::releaseRequestToRerun);
     states.put(A_RELEASE_REQUEST_WITH_AN_AUTOMATION_TO_RERUN, this::releaseRequestToRerun);
+    states.put(
+        A_RELEASE_REQUEST_WITH_AUTOMATIONS_AT_ITS_NEWEST_FOLD, this::releaseRequestWithAutomations);
+    states.put(
+        A_RELEASE_REQUEST_WITH_AN_AUTOMATION_TO_RERUN_FOR_A_WORK_ITEM,
+        this::releaseRequestToRerunForAWorkItem);
   }
 
   /** Every state name this provider answers for. */
@@ -431,6 +443,17 @@ public class ProviderStates {
                 + "\"sources\":[{\"kind\":\"BRANCH\",\"name\":\"main\"},"
                 + "{\"kind\":\"BRANCH\",\"name\":\"" + BRANCH + "\"}]}}"));
     return setup;
+  }
+
+  /**
+   * {@link #releaseRequestToRerun}, with the work item the re-run's commit names as a param — the
+   * CLI's {@code --work-item}, sent as the body's only key.
+   */
+  private Setup releaseRequestToRerunForAWorkItem() {
+    Setup setup = releaseRequestToRerun();
+    Map<String, String> params = new TreeMap<>(setup.params());
+    params.put("workItem", WORK_ITEM);
+    return new Setup(params, setup.uniqueTokens());
   }
 
   private static Map<String, String> automationParams() {
