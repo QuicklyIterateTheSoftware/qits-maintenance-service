@@ -165,6 +165,13 @@
             <scope>test</scope>
         </dependency>
         <dependency>
+            <!-- qits-artifacts' consumer pact against this service (its scheduled maintenance reads),
+                 verified by the same ConsumerPactVerificationTest. Pinned in the root pom. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-artifacts-service-pacts-qits-maintenance-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <!-- contracts/IdpTokenMintPactTest (ticket qits-1149): the client-credentials mint
                  PeerTokens makes through quarkus-oidc-client, run against this application with
                  the qits client pointed at a pact mock answering qits-idp's golden master. Both

@@ -33,7 +33,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * a changed pact. {@link ClasspathPactLoader} finds them all.
  *
  * <p><b>Pinned today: qits-projects-service</b> ({@code
- * qits-projects-service-pacts-qits-maintenance-service}, ticket qits-1149). {@link
+ * qits-projects-service-pacts-qits-maintenance-service}) <b>and qits-artifacts-service</b> ({@code
+ * qits-artifacts-service-pacts-qits-maintenance-service}, the pins it reads), ticket qits-1149. {@link
  * ClasspathPactLoader#REQUIRED} is true, so a classpath that lost its pinned pacts fails rather than
  * verifying nothing.
  *
