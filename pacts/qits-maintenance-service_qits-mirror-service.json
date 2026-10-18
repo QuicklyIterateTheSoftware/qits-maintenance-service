@@ -1,0 +1,334 @@
+{
+  "consumer": {
+    "name": "qits-maintenance-service"
+  },
+  "interactions": [
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-mirror-service",
+            "operationId": "getMavenMetadata"
+          },
+          "qits-trigger": {
+            "app": "qits-maintenance-service",
+            "kind": "schedule",
+            "schedule": "ScanService.run"
+          }
+        }
+      },
+      "description": "ScanService.run: getMavenMetadata",
+      "key": "b48bee11",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "no maven artifact of that name upstream",
+          "params": {
+            "artifact": "contract-absent",
+            "groupPath": "org/example",
+            "name": "org.example:contract-absent"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/artifacts/maven/central/${groupPath}/${artifact}/maven-metadata.xml",
+            "type": "ProviderState"
+          }
+        },
+        "method": "GET",
+        "path": "/artifacts/maven/central/org/example/contract-absent/maven-metadata.xml"
+      },
+      "response": {
+        "status": 404
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-mirror-service",
+            "operationId": "getNpmPackument"
+          },
+          "qits-trigger": {
+            "app": "qits-maintenance-service",
+            "kind": "schedule",
+            "schedule": "ScanService.run"
+          }
+        }
+      },
+      "description": "ScanService.run: getNpmPackument",
+      "key": "351aad52",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a cached npm package with published versions",
+          "params": {
+            "name": "contract-package",
+            "package": "contract-package"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/npm/npmjs/${package}",
+            "type": "ProviderState"
+          }
+        },
+        "method": "GET",
+        "path": "/npm/npmjs/contract-package"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "dist-tags": {
+              "latest": "1.1.0"
+            },
+            "versions": {
+              "1.0.0": {
+                "description": "a synthetic package for contract-package",
+                "dist": {
+                  "integrity": "sha512-BAVU7ugFkQMv0Fyqmm3KYabx175+CeM8DVOhxi9PEG1wAgLVEmqhKogYfU9v7XnzHEWsp7O8xqQdz5LzewsjHQ==",
+                  "shasum": "eea7afb0e52f0a777189b5b57d594ea7e1be3259",
+                  "tarball": ""
+                },
+                "license": "MIT",
+                "main": "index.js",
+                "name": "contract-package",
+                "version": "1.0.0"
+              },
+              "1.1.0": {
+                "description": "a synthetic package for contract-package",
+                "dist": {
+                  "integrity": "sha512-d5Di94QUbKNryqtiLVSOUl2Hh7PFDajyKGkDqiOJ9r2MADuxNqDXcfhDpfc380WMxqsR44FyCHKrzM7I19UZIQ==",
+                  "shasum": "a1cf29c74cdd31b20a1a667000e81a859192feb9",
+                  "tarball": ""
+                },
+                "license": "MIT",
+                "main": "index.js",
+                "name": "contract-package",
+                "version": "1.1.0"
+              }
+            }
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.dist-tags.latest": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.versions['1.0.0'].description": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.versions['1.0.0'].dist.integrity": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.versions['1.0.0'].dist.shasum": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.versions['1.0.0'].dist.tarball": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.versions['1.0.0'].license": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.versions['1.0.0'].main": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.versions['1.0.0'].name": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.versions['1.0.0'].version": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.versions['1.1.0'].description": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.versions['1.1.0'].dist.integrity": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.versions['1.1.0'].dist.shasum": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.versions['1.1.0'].dist.tarball": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.versions['1.1.0'].license": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.versions['1.1.0'].main": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.versions['1.1.0'].name": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.versions['1.1.0'].version": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json.*"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-mirror-service",
+            "operationId": "getNpmPackument"
+          },
+          "qits-trigger": {
+            "app": "qits-maintenance-service",
+            "kind": "schedule",
+            "schedule": "ScanService.run"
+          }
+        }
+      },
+      "description": "ScanService.run: getNpmPackument",
+      "key": "5899c21d",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "no npm package of that name upstream",
+          "params": {
+            "name": "contract-absent-package",
+            "package": "contract-absent-package"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/npm/npmjs/${package}",
+            "type": "ProviderState"
+          }
+        },
+        "method": "GET",
+        "path": "/npm/npmjs/contract-absent-package"
+      },
+      "response": {
+        "status": 404
+      },
+      "type": "Synchronous/HTTP"
+    }
+  ],
+  "metadata": {
+    "pactSpecification": {
+      "version": "4.0"
+    },
+    "plugins": []
+  },
+  "provider": {
+    "name": "qits-mirror-service"
+  }
+}

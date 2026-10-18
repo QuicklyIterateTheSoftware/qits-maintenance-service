@@ -4,8 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.maintenance.bump.CiClient;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
-import eu.wohlben.qits.maintenance.pending.Change;
 import eu.wohlben.qits.pact.consumer.GoldenInteraction;
 import eu.wohlben.qits.pact.consumer.GoldenMasters;
 import eu.wohlben.qits.pact.consumer.Trigger;
@@ -18,9 +16,9 @@ import java.util.Map;
  * bump or an automation, the run it names, the automatic retry of a run, and the queue the
  * dispatcher paces itself by — every call {@link CiClient} makes.
  *
- * <p><b>The two triggers are pending.</b> qits-ci records {@code triggerEvent} for an {@code
- * SCMRelease} only, and the request is the recording's: a {@code MaintenanceBump} or {@code
- * ReleaseRequestAutomation} body needs a state of its own that answers that body with runs.
+ * <p><b>Each trigger is its own state</b>, since the request is the recording's: qits-ci answers a
+ * {@code MaintenanceBump} body with a run in {@code a repository a maintenance bump targets}. The
+ * {@code ReleaseRequestAutomation} row waits on its state until qits-ci publishes it.
  */
 final class CiContract {
 
@@ -28,8 +26,7 @@ final class CiContract {
 
   static final String A_FAILED_RUN_THAT_RETRIES_ANOTHER = "a failed run that retries another";
   static final String RUNNERS_WITH_FREE_SLOTS = "runners with free slots";
-  static final String A_MAINTENANCE_BUMP_PIPELINE =
-      "a repository with a MaintenanceBump platform pipeline";
+  static final String A_REPOSITORY_A_BUMP_TARGETS = "a repository a maintenance bump targets";
   static final String A_RELEASE_REQUEST_AUTOMATION_PIPELINE =
       "a repository with a ReleaseRequestAutomation platform pipeline";
 
@@ -53,29 +50,27 @@ final class CiContract {
   /** {@link CiClient#trigger}: the event and the runs it started. */
   static final List<String> TRIGGERED = List.of("eventId", "runIds[]");
 
-  private static final Change CHANGE =
-      Change.of(
-          Ecosystem.MAVEN, "pom.xml", "eu.wohlben.qits:qits-db-core", "2026.1.1", "2026.2.1", null);
-
   static final List<PeerRow> ROWS =
       List.of(
           new PeerRow(
               GoldenInteraction.of(
                       Trigger.schedule("BumpDispatcher.tick"),
-                      A_MAINTENANCE_BUMP_PIPELINE,
+                      A_REPOSITORY_A_BUMP_TARGETS,
                       "triggerEvent")
                   .consumes(TRIGGERED),
+              // The recording's body: a bump of group `targeted` with no changes. The request is
+              // matched exactly, so the row sends what qits-ci recorded rather than a fuller plan.
               (peers, p) -> {
                 CiClient.TriggerResult result =
                     peers
                         .ci()
                         .trigger(
-                            p.get("bumpId"),
+                            p.get("eventId"),
                             p.get("repositoryName"),
-                            "dependencies",
-                            "maintenance/dependencies",
+                            "targeted",
+                            p.get("branch"),
                             "main",
-                            List.of(CHANGE));
+                            List.of());
                 assertEquals(CiClient.TriggerResult.Outcome.ACCEPTED, result.outcome());
               }),
           new PeerRow(

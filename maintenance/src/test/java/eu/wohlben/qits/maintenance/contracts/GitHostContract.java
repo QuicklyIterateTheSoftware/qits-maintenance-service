@@ -32,7 +32,6 @@ final class GitHostContract {
   static final GoldenMasters GITHOST = GoldenMasters.of("qits-githost-service", "qits-githost");
 
   static final String FILES_ON_MAIN = "a repository with files on main";
-  static final String FILES_ON_MAIN_RECURSIVELY = "a repository with files on main, listed recursively";
   static final String A_WRAPPER_WITH_A_SUBMODULE = "a wrapper repository with a submodule";
   static final String MISSING_THE_COMMIT = "a repository missing the requested commit";
   static final String MISSING_THE_PATH = "a repository missing the requested path";
@@ -125,7 +124,7 @@ final class GitHostContract {
                   assertTrue(
                       peers.git().head(p.get("projectId"), p.get("repoName"), p.get("rev")).found())),
           new PeerRow(
-              GoldenInteraction.of(FOLD, FILES_ON_MAIN_RECURSIVELY, "getRootTree")
+              GoldenInteraction.of(FOLD, A_WRAPPER_WITH_A_SUBMODULE, "getRootTree")
                   .consumes("recursive", "entries[].name", "entries[].type", "entries[].path")
                   .anyLength("entries")
                   .readsHeader("Git-Commit-Sha"),

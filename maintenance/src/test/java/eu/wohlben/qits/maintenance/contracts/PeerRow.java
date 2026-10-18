@@ -29,11 +29,24 @@ import java.util.Map;
  *     must serve too: the git host reader asks the root tree after a 404 on a path, to tell a
  *     missing path from a missing commit. The row is in the pact file only once every companion is
  *     recorded, since until then its call cannot be run
+ * @param readsBody whether the client reads a body the helper cannot bind ({@code
+ *     maven-metadata.xml}): the row then waits, like an unrecorded state, until the provider's
+ *     recording carries that body, since an answer without it is one the client cannot read
  */
-record PeerRow(GoldenInteraction interaction, Call call, List<GoldenInteraction> companions) {
+record PeerRow(
+    GoldenInteraction interaction, Call call, List<GoldenInteraction> companions, boolean readsBody) {
 
   PeerRow(GoldenInteraction interaction, Call call) {
-    this(interaction, call, List.of());
+    this(interaction, call, List.of(), false);
+  }
+
+  PeerRow(GoldenInteraction interaction, Call call, List<GoldenInteraction> companions) {
+    this(interaction, call, companions, false);
+  }
+
+  /** A row whose client reads the answer's body, which the provider must have recorded. */
+  static PeerRow readingBody(GoldenInteraction interaction, Call call) {
+    return new PeerRow(interaction, call, List.of(), true);
   }
 
   /** The real client call, asserting what the client made of the answer. */
@@ -90,9 +103,39 @@ record PeerRow(GoldenInteraction interaction, Call call, List<GoldenInteraction>
           rows.stream().filter(this::runnable).map(PeerRow::interaction).toList());
     }
 
-    /** Whether every companion of {@code row} is recorded, so its call can run. */
+    /**
+     * Whether every companion of {@code row} is recorded, and the body it reads if it reads one, so
+     * its call can run.
+     */
     boolean runnable(PeerRow row) {
-      return row.companions().stream().allMatch(c -> masters.recorded(c.state(), c.operationId()));
+      return row.companions().stream().allMatch(c -> masters.recorded(c.state(), c.operationId()))
+          && missingBody(row) == null;
+    }
+
+    /**
+     * Why {@code row} waits on its provider's recording although the state is recorded: the
+     * client reads the body and the recording carries none. {@code null} when nothing is missing.
+     */
+    String missingBody(PeerRow row) {
+      GoldenInteraction interaction = row.interaction();
+      if (!row.readsBody() || !masters.recorded(interaction.state(), interaction.operationId())) {
+        return null;
+      }
+      GoldenMasters.Operation operation =
+          masters.operation(interaction.state(), interaction.operationId());
+      boolean json = operation.body() != null && !operation.body().isMissingNode() && !operation.body().isNull();
+      boolean binary = operation.binaryBody() != null && operation.binaryBody().length > 0;
+      boolean file = operation.file() != null && !operation.file().isEmpty();
+      if (file || json || binary) {
+        return null;
+      }
+      return "needs the body of "
+          + interaction.operationId()
+          + " recorded in provider state '"
+          + interaction.state()
+          + "' of "
+          + masters.repository()
+          + " (recorded with a status and no body)";
     }
   }
 }

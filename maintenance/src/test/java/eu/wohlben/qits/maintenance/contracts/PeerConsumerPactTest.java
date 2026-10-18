@@ -30,7 +30,8 @@ import org.junit.jupiter.api.TestFactory;
  *
  * <p><b>A row whose provider state is not recorded is skipped</b>, naming the state, the operation
  * and the provider ({@code needs provider state '…' for … in …}), and is in no pact file. The day
- * the provider records it, the pact-file test goes red until the file is rewritten.
+ * the provider records it, the pact-file test goes red until the file is rewritten. So is a row
+ * whose client reads a body the provider recorded the state without ({@link PeerRow#readsBody}).
  *
  * <p>The qits-idp token mint is not here: quarkus-oidc-client makes it, so its row runs in the
  * service module's {@code IdpTokenMintPactTest}, against the application.
@@ -96,6 +97,10 @@ class PeerConsumerPactTest {
     GoldenInteraction interaction = row.interaction();
     if (!contract.masters().recorded(interaction.state(), interaction.operationId())) {
       Assumptions.abort(pact.needs(interaction));
+    }
+    String missingBody = contract.missingBody(row);
+    if (missingBody != null) {
+      Assumptions.abort(missingBody);
     }
     for (GoldenInteraction companion : row.companions()) {
       if (!contract.masters().recorded(companion.state(), companion.operationId())) {

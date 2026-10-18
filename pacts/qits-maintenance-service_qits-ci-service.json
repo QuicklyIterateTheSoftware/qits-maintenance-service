@@ -135,6 +135,169 @@
         "references": {
           "qits-call": {
             "app": "qits-ci-service",
+            "operationId": "triggerEvent"
+          },
+          "qits-trigger": {
+            "app": "qits-maintenance-service",
+            "kind": "schedule",
+            "schedule": "BumpDispatcher.tick"
+          }
+        }
+      },
+      "description": "BumpDispatcher.tick: triggerEvent",
+      "key": "f1c19831",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a repository a maintenance bump targets",
+          "params": {
+            "branch": "maintenance/contract-bump",
+            "eventId": "00000000-0000-4000-8000-000000000001",
+            "projectId": "00000000-0000-4000-8000-000000000002",
+            "repositoryId": "00000000-0000-4000-8000-000000000003",
+            "repositoryName": "contract-service"
+          }
+        }
+      ],
+      "request": {
+        "body": {
+          "content": {
+            "eventId": "00000000-0000-4000-8000-000000000001",
+            "name": "MaintenanceBump",
+            "payload": {
+              "baseRef": "main",
+              "branch": "maintenance/contract-bump",
+              "changes": [],
+              "group": "targeted",
+              "repository": "contract-service"
+            }
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "generators": {
+          "body": {
+            "$.eventId": {
+              "dataType": "STRING",
+              "expression": "${eventId}",
+              "type": "ProviderState"
+            },
+            "$.payload.branch": {
+              "dataType": "STRING",
+              "expression": "${branch}",
+              "type": "ProviderState"
+            },
+            "$.payload.repository": {
+              "dataType": "STRING",
+              "expression": "${repositoryName}",
+              "type": "ProviderState"
+            }
+          }
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.eventId": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.payload.branch": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.payload.repository": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          }
+        },
+        "method": "POST",
+        "path": "/ci/api/events/trigger"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "eventId": "00000000-0000-4000-8000-000000000001",
+            "runIds": [
+              "00000000-0000-4000-8000-000000000004"
+            ]
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.eventId": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+                }
+              ]
+            },
+            "$.runIds": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "max": 1,
+                  "min": 1
+                }
+              ]
+            },
+            "$.runIds[*]": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json.*"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-ci-service",
             "operationId": "getRun"
           },
           "qits-trigger": {

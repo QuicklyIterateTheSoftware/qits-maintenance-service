@@ -361,6 +361,52 @@
         }
       },
       "description": "ScanService.run: getBlob",
+      "key": "3a5719c4",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a repository missing the requested path",
+          "params": {
+            "directory": ".config/absent",
+            "path": ".config/qits/absent.yml",
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "repoName": "contract-service",
+            "repositoryId": "00000000-0000-4000-8000-000000000002",
+            "rev": "main"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/git/${projectId}/${repoName}/blob/${rev}/${path}",
+            "type": "ProviderState"
+          }
+        },
+        "method": "GET",
+        "path": "/git/00000000-0000-4000-8000-000000000001/contract-service/blob/main/.config/qits/absent.yml"
+      },
+      "response": {
+        "status": 404
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-githost-service",
+            "operationId": "getBlob"
+          },
+          "qits-trigger": {
+            "app": "qits-maintenance-service",
+            "kind": "schedule",
+            "schedule": "ScanService.run"
+          }
+        }
+      },
+      "description": "ScanService.run: getBlob",
       "key": "4ca1bcc4",
       "pending": false,
       "providerStates": [
@@ -434,6 +480,70 @@
       },
       "response": {
         "status": 404
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-githost-service",
+            "operationId": "getRootTree"
+          },
+          "qits-trigger": {
+            "app": "qits-maintenance-service",
+            "kind": "schedule",
+            "schedule": "ScanService.run"
+          }
+        }
+      },
+      "description": "ScanService.run: getRootTree",
+      "key": "d3b0d565",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a repository missing the requested path",
+          "params": {
+            "directory": ".config/absent",
+            "path": ".config/qits/absent.yml",
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "repoName": "contract-service",
+            "repositoryId": "00000000-0000-4000-8000-000000000002",
+            "rev": "main"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/git/${projectId}/${repoName}/tree/${rev}",
+            "type": "ProviderState"
+          }
+        },
+        "method": "GET",
+        "path": "/git/00000000-0000-4000-8000-000000000001/contract-service/tree/main"
+      },
+      "response": {
+        "headers": {
+          "Git-Commit-Sha": [
+            "0000000000000000000000000000000000000001"
+          ]
+        },
+        "matchingRules": {
+          "header": {
+            "Git-Commit-Sha": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": ".+"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
       },
       "type": "Synchronous/HTTP"
     },
@@ -550,6 +660,52 @@
           }
         },
         "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-githost-service",
+            "operationId": "getTree"
+          },
+          "qits-trigger": {
+            "app": "qits-maintenance-service",
+            "kind": "schedule",
+            "schedule": "ScanService.run"
+          }
+        }
+      },
+      "description": "ScanService.run: getTree",
+      "key": "3ab205cf",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a repository missing the requested path",
+          "params": {
+            "directory": ".config/absent",
+            "path": ".config/qits/absent.yml",
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "repoName": "contract-service",
+            "repositoryId": "00000000-0000-4000-8000-000000000002",
+            "rev": "main"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/git/${projectId}/${repoName}/tree/${rev}/${directory}",
+            "type": "ProviderState"
+          }
+        },
+        "method": "GET",
+        "path": "/git/00000000-0000-4000-8000-000000000001/contract-service/tree/main/.config/absent"
+      },
+      "response": {
+        "status": 404
       },
       "type": "Synchronous/HTTP"
     },
@@ -769,6 +925,144 @@
               ]
             },
             "$.entries[*].type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json.*"
+                }
+              ]
+            },
+            "Git-Commit-Sha": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": ".+"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-githost-service",
+            "operationId": "getRootTree"
+          },
+          "qits-trigger": {
+            "app": "qits-maintenance-service",
+            "kind": "operation",
+            "operationId": "triggerReleaseRequestAutomations"
+          }
+        }
+      },
+      "description": "triggerReleaseRequestAutomations: getRootTree",
+      "key": "974829a",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a wrapper repository with a submodule",
+          "params": {
+            "directory": "components/qits-ci",
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "repoName": "contract-service",
+            "repositoryId": "00000000-0000-4000-8000-000000000002",
+            "rev": "main",
+            "submodule": "qits-ci-service"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/git/${projectId}/${repoName}/tree/${rev}",
+            "type": "ProviderState"
+          }
+        },
+        "method": "GET",
+        "path": "/git/00000000-0000-4000-8000-000000000001/contract-service/tree/main",
+        "query": {
+          "recursive": [
+            "true"
+          ]
+        }
+      },
+      "response": {
+        "body": {
+          "content": {
+            "entries": [
+              {
+                "name": ".gitmodules",
+                "path": ".gitmodules",
+                "type": "blob"
+              }
+            ],
+            "recursive": true
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ],
+          "Git-Commit-Sha": [
+            "0000000000000000000000000000000000000002"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.entries": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 0
+                }
+              ]
+            },
+            "$.entries[*].name": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.entries[*].path": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.entries[*].type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.recursive": {
               "combine": "AND",
               "matchers": [
                 {
