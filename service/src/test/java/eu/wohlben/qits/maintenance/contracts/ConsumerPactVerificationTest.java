@@ -75,24 +75,12 @@ class ConsumerPactVerificationTest {
     }
   }
 
-  private static final String FAILURE_NULL_REJECTED =
-      "the pact matches $.automations[*].failure as object-or-null but with an object example, and"
-          + " pact-jvm then rejects every honest failure: null ('Expected null (Null) to be the same"
-          + " type as {...}') — a defect in qits-projects-service's row generator; the fix comes as a"
-          + " new qits-projects-service-pacts-qits-maintenance-service version (ticket qits-1149)";
-
-  static final List<KnownWrong> KNOWN_WRONG =
-      List.of(
-          new KnownWrong(
-              "qits-projects-service",
-              "2026.1018.195756",
-              "AutomationRefresh.attempt: listReleaseRequestAutomations",
-              FAILURE_NULL_REJECTED),
-          new KnownWrong(
-              "qits-projects-service",
-              "2026.1018.195756",
-              "AutomationRefresh.attempt: triggerReleaseRequestAutomations",
-              FAILURE_NULL_REJECTED));
+  /**
+   * Empty: every pinned pact verifies. qits-projects-service 2026.1018.195756's two automation
+   * rows were here (their $.automations[*].failure matcher rejected an honest null); its
+   * 2026.1019.190811 pact carries the generator's fix and verifies them for real.
+   */
+  static final List<KnownWrong> KNOWN_WRONG = List.of();
 
   @Inject ProviderStates states;
 
