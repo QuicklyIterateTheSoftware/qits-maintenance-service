@@ -258,12 +258,13 @@
         }
       },
       "description": "SbomCheckService.probe: getNpmPackument",
-      "key": "642c8378",
+      "key": "481b0f78",
       "pending": false,
       "providerStates": [
         {
           "name": "an npm package published at a version",
           "params": {
+            "name": "contract-package",
             "package": "contract-package",
             "tag": "main",
             "tarball": "contract-package-2100.1.0.tgz",
@@ -406,12 +407,13 @@
         }
       },
       "description": "SbomCheckService.probe: getNpmPackument",
-      "key": "43b3ec6b",
+      "key": "3b81a9b1",
       "pending": false,
       "providerStates": [
         {
           "name": "no npm package with the given name",
           "params": {
+            "name": "contract-absent-package",
             "package": "contract-absent-package",
             "tag": "main",
             "tarball": "contract-absent-package-2100.1.0.tgz",
@@ -814,12 +816,13 @@
         }
       },
       "description": "ScanService.run: getNpmPackument",
-      "key": "5cf7c0a5",
+      "key": "40e64ca5",
       "pending": false,
       "providerStates": [
         {
           "name": "an npm package published at a version",
           "params": {
+            "name": "contract-package",
             "package": "contract-package",
             "tag": "main",
             "tarball": "contract-package-2100.1.0.tgz",
@@ -973,12 +976,13 @@
         }
       },
       "description": "ScanService.run: getNpmPackument",
-      "key": "3c7f2998",
+      "key": "344ce6de",
       "pending": false,
       "providerStates": [
         {
           "name": "no npm package with the given name",
           "params": {
+            "name": "contract-absent-package",
             "package": "contract-absent-package",
             "tag": "main",
             "tarball": "contract-absent-package-2100.1.0.tgz",

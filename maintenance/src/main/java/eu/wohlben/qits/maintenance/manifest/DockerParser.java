@@ -150,10 +150,6 @@ public final class DockerParser {
    * are facts about the reference rather than about the line.
    */
   private static ParsedPin image(String reference, String manifestPath, String location) {
-    // A build-arg reference resolves at build time, not here; there is no version to record.
-    if (reference.contains("$")) {
-      return null;
-    }
     if (reference.contains("@")) {
       return null;
     }
@@ -163,6 +159,12 @@ public final class DockerParser {
     }
     String image = unqualified(reference.substring(0, tagSeparator));
     String tag = reference.substring(tagSeparator + 1);
+    // A build-arg reference resolves at build time, not here; there is no version to record. The
+    // registry HOST is stripped first, because a host-only build-arg is the platform's domain
+    // (${QITS_DOMAIN}), which the record drops anyway — only a $ surviving past the host rejects.
+    if (image.contains("$") || tag.contains("$")) {
+      return null;
+    }
     if (image.isEmpty() || tag.isEmpty()) {
       return null;
     }

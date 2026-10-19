@@ -19,6 +19,9 @@ class DockerParserTest {
       FROM qits/build-images/ci-base
       FROM qits/build-images/${TAGGED}:latest
       from qits/build-images/lower:1.2.3
+      FROM registry.qits.${QITS_DOMAIN}/qits/workspace-base:2026.1016.123855
+      FROM mirror.qits.${QITS_DOMAIN}/quay/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-25
+      FROM registry.example/qits/${NAME}:1
       """;
 
   /**
@@ -39,6 +42,9 @@ class DockerParserTest {
       ARG TAGLESS=qits/workspace-base
       ARG DERIVED=${WORKSPACE_IMAGE}
       ARG WORKSPACE_IMAGE
+      ARG WORKSPACE_BASE=registry.qits.${QITS_DOMAIN}/qits/workspace-base:2026.1016.123855
+      ARG MANDREL_BUILDER=mirror.qits.${QITS_DOMAIN}/quay/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-25
+      ARG DOMAIN_STILL_NULL=registry.example/qits/${NAME}:1
       """;
 
   private static Optional<ParsedPin> find(List<ParsedPin> pins, String name) {
@@ -99,6 +105,43 @@ class DockerParserTest {
     assertTrue(
         DockerParser.parse("Dockerfile", DOCKERFILE).stream()
             .noneMatch(pin -> pin.name().contains("$")));
+  }
+
+  /**
+   * A build-arg HOST — {@code registry.qits.${QITS_DOMAIN}} / {@code mirror.qits.${QITS_DOMAIN}} —
+   * is the platform's public domain, which {@link DockerParser#unqualified} drops before the
+   * {@code $} rejection ever sees it. The {@code $} check only has to fire on what is left after the
+   * host is gone; whichever instruction wrote the reference, the result is the same unqualified name.
+   */
+  @Test
+  void aDollarConfinedToTheHostIsStrippedBeforeTheDollarCheck() {
+    ParsedPin fromWorkspace = at(DockerParser.parse("Dockerfile", DOCKERFILE), "line:8").orElseThrow();
+    assertEquals("qits/workspace-base", fromWorkspace.name());
+    assertEquals("2026.1016.123855", fromWorkspace.version());
+
+    ParsedPin fromMandrel = at(DockerParser.parse("Dockerfile", DOCKERFILE), "line:9").orElseThrow();
+    assertEquals("quay/quarkus/ubi9-quarkus-mandrel-builder-image", fromMandrel.name());
+    assertEquals("jdk-25", fromMandrel.version());
+
+    List<ParsedPin> argPins = DockerParser.parse("Dockerfile", ARG_DOCKERFILE);
+    ParsedPin argWorkspace = at(argPins, "arg:WORKSPACE_BASE").orElseThrow();
+    assertEquals("qits/workspace-base", argWorkspace.name());
+    assertEquals("2026.1016.123855", argWorkspace.version());
+
+    ParsedPin argMandrel = at(argPins, "arg:MANDREL_BUILDER").orElseThrow();
+    assertEquals("quay/quarkus/ubi9-quarkus-mandrel-builder-image", argMandrel.name());
+    assertEquals("jdk-25", argMandrel.version());
+  }
+
+  /**
+   * A {@code $} that survives past the host — in the namespace, the name or the tag — still
+   * resolves at build time and is still not a pin, whether the whole reference is one expression or
+   * only a piece of it is.
+   */
+  @Test
+  void aDollarPastTheHostStillRejects() {
+    assertTrue(at(DockerParser.parse("Dockerfile", DOCKERFILE), "line:10").isEmpty());
+    assertTrue(at(DockerParser.parse("Dockerfile", ARG_DOCKERFILE), "arg:DOMAIN_STILL_NULL").isEmpty());
   }
 
   @Test
