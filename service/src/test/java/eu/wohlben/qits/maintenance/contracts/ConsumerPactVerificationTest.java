@@ -33,8 +33,12 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * a changed pact. {@link ClasspathPactLoader} finds them all.
  *
  * <p><b>Pinned today: qits-projects-service</b> ({@code
- * qits-projects-service-pacts-qits-maintenance-service}) <b>and qits-artifacts-service</b> ({@code
- * qits-artifacts-service-pacts-qits-maintenance-service}, the pins it reads), ticket qits-1149. {@link
+ * qits-projects-service-pacts-qits-maintenance-service}), <b>qits-artifacts-service</b> ({@code
+ * qits-artifacts-service-pacts-qits-maintenance-service}, the pins it reads),
+ * <b>qits-orchestrator-service</b> ({@code qits-orchestrator-service-pacts-qits-maintenance-service},
+ * the pins its GC schedule reads) <b>and the qits CLI</b> ({@code
+ * qits-platform-access-cli-pacts-qits-maintenance-service}: bumps and release-request automations),
+ * ticket qits-1149. {@link
  * ClasspathPactLoader#REQUIRED} is true, so a classpath that lost its pinned pacts fails rather than
  * verifying nothing.
  *
@@ -71,12 +75,6 @@ class ConsumerPactVerificationTest {
     }
   }
 
-  private static final String FAILURE_NOT_NULLABLE =
-      "the pact binds $.automations[*].failure as an object in every element, but the golden master"
-          + " it was built from (state 'a release request with automations') answers null for every"
-          + " automation that did not fail — qits-projects-service's row builder drops the null"
-          + " alternative when it merges the elements (ticket qits-1149)";
-
   private static final String FAILURE_NULL_REJECTED =
       "the pact matches $.automations[*].failure as object-or-null but with an object example, and"
           + " pact-jvm then rejects every honest failure: null ('Expected null (Null) to be the same"
@@ -85,16 +83,6 @@ class ConsumerPactVerificationTest {
 
   static final List<KnownWrong> KNOWN_WRONG =
       List.of(
-          new KnownWrong(
-              "qits-projects-service",
-              "2026.1011.161452",
-              "AutomationRefresh.attempt: listReleaseRequestAutomations",
-              FAILURE_NOT_NULLABLE),
-          new KnownWrong(
-              "qits-projects-service",
-              "2026.1011.161452",
-              "AutomationRefresh.attempt: triggerReleaseRequestAutomations",
-              FAILURE_NOT_NULLABLE),
           new KnownWrong(
               "qits-projects-service",
               "2026.1018.195756",
