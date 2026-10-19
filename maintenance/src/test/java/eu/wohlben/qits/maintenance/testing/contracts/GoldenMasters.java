@@ -69,7 +69,9 @@ import java.util.regex.Pattern;
  * the provider's element order — which qits-projects does not guarantee (its recorder sorts
  * repository entries by name; the live answer need not). The template is the MERGE of every
  * recorded element: a leaf null in one element and a string in another becomes {@code type OR null}
- * (a V4 combined matcher), so a nullable field such as {@code component} matches in any position.
+ * (a V4 combined matcher), so a nullable field such as {@code component} matches in any position,
+ * and an array whose length differs between elements becomes {@code minMaxArrayLike(shortest,
+ * longest)}.
  * Unknown keys in {@code frozen} are tolerated.
  */
 public final class GoldenMasters {
@@ -626,6 +628,9 @@ public final class GoldenMasters {
     }
     boolean filtered = path.equals(op.listFilteredTo()) || selected.contains(path);
     int n = array.length;
+    // An array nested in merged elements may differ in length between them: it matches anything
+    // from the shortest recorded to the longest, never only the shortest.
+    int most = array.maxLength;
     if (n == 0) {
       // Nothing to build a template from: the recording says "empty", and an empty array with no
       // rule is compared as exactly that.
@@ -637,7 +642,7 @@ public final class GoldenMasters {
     switch (element.kind) {
       case OBJECT -> {
         PactDslJsonBody template =
-            filtered ? target.minArrayLike(name, n, n) : target.minMaxArrayLike(name, n, n, n);
+            filtered ? target.minArrayLike(name, n, n) : target.minMaxArrayLike(name, n, most, n);
         fillObject(template, element, elementPath, op, selected);
         DslPart closed = template.closeObject();
         ((PactDslJsonArray) closed).closeArray();
@@ -647,7 +652,7 @@ public final class GoldenMasters {
         if (filtered) {
           target.minArrayLike(name, n, value, n);
         } else {
-          target.minMaxArrayLike(name, n, n, value, n);
+          target.minMaxArrayLike(name, n, most, value, n);
         }
       }
       default -> throw unsupported(op, elementPath, "an array of " + element.kind);
@@ -726,6 +731,7 @@ public final class GoldenMasters {
     final LinkedHashMap<String, Shape> fields = new LinkedHashMap<>();
     Shape element;
     int length;
+    int maxLength;
 
     static Shape of(JsonNode node) {
       Shape shape = new Shape();
@@ -742,6 +748,7 @@ public final class GoldenMasters {
       } else if (node.isArray()) {
         shape.kind = Kind.ARRAY;
         shape.length = node.size();
+        shape.maxLength = node.size();
         for (JsonNode e : node) {
           shape.element = shape.element == null ? of(e) : merge(shape.element, of(e));
         }
@@ -787,6 +794,7 @@ public final class GoldenMasters {
         }
         case ARRAY -> {
           a.length = Math.min(a.length, b.length);
+          a.maxLength = Math.max(a.maxLength, b.maxLength);
           a.element =
               a.element == null ? b.element : b.element == null ? a.element : merge(a.element, b.element);
         }

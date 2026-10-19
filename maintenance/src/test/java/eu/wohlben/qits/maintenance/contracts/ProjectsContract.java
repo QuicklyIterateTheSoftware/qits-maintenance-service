@@ -60,8 +60,9 @@ import java.util.function.Supplier;
  * the object qits-projects answers, only when {@code detail} is null; no recorded state answers a
  * conflict without a {@code detail}, so no row reaches that read.
  *
- * <p><b>One call is pending</b> ({@link #PENDING}): the history read of a release whose request
- * went obsolete mid-publish needs a state qits-projects does not record yet.
+ * <p><b>No call is pending</b> ({@link #PENDING} is empty): the history read of a release whose
+ * request went obsolete mid-publish, the last row that waited, binds qits-projects' recorded state
+ * {@value #A_REPOSITORY_WITH_A_TAGGED_RELEASE_WHOSE_REQUEST_WENT_OBSOLETE_MID_PUBLISH}.
  */
 final class ProjectsContract {
 
@@ -78,6 +79,8 @@ final class ProjectsContract {
       "a release request open to another branch";
   static final String A_REPOSITORY_WITH_A_RELEASE_NOT_MERGED_TO_MAIN =
       "a repository with a release not merged to main";
+  static final String A_REPOSITORY_WITH_A_TAGGED_RELEASE_WHOSE_REQUEST_WENT_OBSOLETE_MID_PUBLISH =
+      "a repository with a tagged release whose request went obsolete mid-publish";
 
   static final String CREATE_WORK = "createWork";
   static final String GET_WORK = "getWork";
@@ -165,6 +168,18 @@ final class ProjectsContract {
    */
   static final List<String> HISTORY =
       List.of("requests[].id", "requests[].version", "requests[].state");
+
+  /**
+   * {@link ReleaseRequestClient#history} where a cut request's publish matters (qits-1133): the
+   * history's own fields plus the {@code PUBLISH} phase off {@code pipeline.phases[]}.
+   */
+  static final List<String> HISTORY_WITH_PUBLISH =
+      List.of(
+          "requests[].id",
+          "requests[].version",
+          "requests[].state",
+          "requests[].pipeline.phases[].phase",
+          "requests[].pipeline.phases[].state");
 
   /** What the consumer does with its clients for one row, asserting what that code path reads. */
   @FunctionalInterface
@@ -308,6 +323,25 @@ final class ProjectsContract {
             clients.releases().history(params.get("repositoryId"));
         assertTrue(history.readable(), history.error());
         assertFalse(history.cuts().isEmpty());
+      };
+
+  /**
+   * {@code GET …/release-requests?state=all}: a cut request that went OBSOLETE while its publish
+   * still ran — a release that is not, or not yet, published for good.
+   */
+  private static final Call HISTORY_MID_PUBLISH_READ =
+      (clients, params) -> {
+        ReleaseRequestClient.History history =
+            clients.releases().history(params.get("repositoryId"));
+        assertTrue(history.readable(), history.error());
+        assertFalse(history.cuts().isEmpty());
+        history
+            .cuts()
+            .forEach(
+                cut -> {
+                  assertFalse(cut.version().isBlank());
+                  assertFalse(cut.state().isBlank());
+                });
       };
 
   private static final Supplier<DslPart> OPEN_REQUEST_BODY =
@@ -472,7 +506,14 @@ final class ProjectsContract {
               LIST_REPOSITORY_RELEASE_REQUESTS,
               null,
               HISTORY,
-              HISTORY_READ));
+              HISTORY_READ),
+          new Case(
+              Trigger.schedule("BumpDispatcher.tick"),
+              A_REPOSITORY_WITH_A_TAGGED_RELEASE_WHOSE_REQUEST_WENT_OBSOLETE_MID_PUBLISH,
+              LIST_REPOSITORY_RELEASE_REQUESTS,
+              null,
+              HISTORY_WITH_PUBLISH,
+              HISTORY_MID_PUBLISH_READ));
 
   /**
    * The rows waiting for a qits-projects state, each with the sentence {@code
@@ -486,18 +527,7 @@ final class ProjectsContract {
     }
   }
 
-  static final List<Pending> PENDING =
-      List.of(
-          new Pending(
-              Trigger.schedule("BumpDispatcher.tick"),
-              "a repository with a tagged release whose request went obsolete mid-publish",
-              LIST_REPOSITORY_RELEASE_REQUESTS,
-              List.of(
-                  "requests[].id",
-                  "requests[].version",
-                  "requests[].state",
-                  "requests[].pipeline.phases[].phase",
-                  "requests[].pipeline.phases[].state")));
+  static final List<Pending> PENDING = List.of();
 
   private ProjectsContract() {}
 

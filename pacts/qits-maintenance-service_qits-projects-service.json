@@ -427,6 +427,172 @@
         "references": {
           "qits-call": {
             "app": "qits-projects-service",
+            "operationId": "listRepositoryReleaseRequests"
+          },
+          "qits-trigger": {
+            "app": "qits-maintenance-service",
+            "kind": "schedule",
+            "schedule": "BumpDispatcher.tick"
+          }
+        }
+      },
+      "description": "BumpDispatcher.tick: listRepositoryReleaseRequests",
+      "key": "e4e9b013",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a repository with a tagged release whose request went obsolete mid-publish",
+          "params": {
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "repositoryId": "00000000-0000-4000-8000-000000000002",
+            "requestId": "00000000-0000-4000-8000-000000000003"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/projects/api/repositories/${repositoryId}/release-requests",
+            "type": "ProviderState"
+          }
+        },
+        "method": "GET",
+        "path": "/projects/api/repositories/00000000-0000-4000-8000-000000000002/release-requests",
+        "query": {
+          "state": [
+            "all"
+          ]
+        }
+      },
+      "response": {
+        "body": {
+          "content": {
+            "requests": [
+              {
+                "id": "00000000-0000-4000-8000-000000000004",
+                "pipeline": {
+                  "phases": [
+                    {
+                      "phase": "QA",
+                      "state": "WAITING_FOR_PRE_RUN"
+                    }
+                  ]
+                },
+                "state": "PENDING",
+                "version": "2026.101.100100"
+              },
+              {
+                "id": "00000000-0000-4000-8000-000000000004",
+                "pipeline": {
+                  "phases": [
+                    {
+                      "phase": "QA",
+                      "state": "WAITING_FOR_PRE_RUN"
+                    }
+                  ]
+                },
+                "state": "PENDING",
+                "version": "2026.101.100100"
+              }
+            ]
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.requests": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "max": 2,
+                  "min": 2
+                }
+              ]
+            },
+            "$.requests[*].id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+                }
+              ]
+            },
+            "$.requests[*].pipeline.phases": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "max": 2,
+                  "min": 1
+                }
+              ]
+            },
+            "$.requests[*].pipeline.phases[*].phase": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.requests[*].pipeline.phases[*].state": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.requests[*].state": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.requests[*].version": {
+              "combine": "OR",
+              "matchers": [
+                {
+                  "match": "type"
+                },
+                {
+                  "match": "null"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json.*"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-projects-service",
             "operationId": "addReleaseRequestSource"
           },
           "qits-trigger": {
