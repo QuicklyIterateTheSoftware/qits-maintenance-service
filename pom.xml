@@ -76,7 +76,7 @@
         <qits.mirror-golden-masters.version>2026.1018.160931</qits.mirror-golden-masters.version>
         <!-- The shared JVM consumer helper (qits-integrations-quarkus-javalib): golden-master reader,
              row builder, pact-file compare. Test scope. -->
-        <qits.pact-consumer.version>2026.1018.164604</qits.pact-consumer.version>
+        <qits.pact-consumer.version>2026.1019.82625</qits.pact-consumer.version>
         <!-- THE CONSUMER PACTS this provider verifies (epic qits-546, ticket qits-1149): each
              consumer publishes its pact against qits-maintenance as
              eu.wohlben.qits:<consumer>-pacts-qits-maintenance-service, and
