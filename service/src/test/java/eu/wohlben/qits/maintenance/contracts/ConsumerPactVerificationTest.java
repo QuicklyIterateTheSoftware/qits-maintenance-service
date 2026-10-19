@@ -77,6 +77,12 @@ class ConsumerPactVerificationTest {
           + " automation that did not fail — qits-projects-service's row builder drops the null"
           + " alternative when it merges the elements (ticket qits-1149)";
 
+  private static final String FAILURE_NULL_REJECTED =
+      "the pact matches $.automations[*].failure as object-or-null but with an object example, and"
+          + " pact-jvm then rejects every honest failure: null ('Expected null (Null) to be the same"
+          + " type as {...}') — a defect in qits-projects-service's row generator; the fix comes as a"
+          + " new qits-projects-service-pacts-qits-maintenance-service version (ticket qits-1149)";
+
   static final List<KnownWrong> KNOWN_WRONG =
       List.of(
           new KnownWrong(
@@ -88,7 +94,17 @@ class ConsumerPactVerificationTest {
               "qits-projects-service",
               "2026.1011.161452",
               "AutomationRefresh.attempt: triggerReleaseRequestAutomations",
-              FAILURE_NOT_NULLABLE));
+              FAILURE_NOT_NULLABLE),
+          new KnownWrong(
+              "qits-projects-service",
+              "2026.1018.195756",
+              "AutomationRefresh.attempt: listReleaseRequestAutomations",
+              FAILURE_NULL_REJECTED),
+          new KnownWrong(
+              "qits-projects-service",
+              "2026.1018.195756",
+              "AutomationRefresh.attempt: triggerReleaseRequestAutomations",
+              FAILURE_NULL_REJECTED));
 
   @Inject ProviderStates states;
 
