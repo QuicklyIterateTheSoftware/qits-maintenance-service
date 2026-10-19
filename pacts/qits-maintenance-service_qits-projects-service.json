@@ -166,12 +166,13 @@
         }
       },
       "description": "BumpDispatcher.tick: listRepositoryReleaseRequests",
-      "key": "a12d5e89",
+      "key": "a2d2a19b",
       "pending": false,
       "providerStates": [
         {
           "name": "a release request awaiting approval",
           "params": {
+            "authorization": "Bearer qits_tok_contract-person-cli",
             "mergedSha": "bd6360a2c6b42a991c62e3418b7f6d4ac5d89f14",
             "projectId": "00000000-0000-4000-8000-000000000001",
             "repositoryId": "00000000-0000-4000-8000-000000000002",
@@ -811,12 +812,13 @@
         }
       },
       "description": "BumpService.sweep: getReleaseRequest",
-      "key": "1da5722d",
+      "key": "1f4ab53f",
       "pending": false,
       "providerStates": [
         {
           "name": "a release request awaiting approval",
           "params": {
+            "authorization": "Bearer qits_tok_contract-person-cli",
             "mergedSha": "bd6360a2c6b42a991c62e3418b7f6d4ac5d89f14",
             "projectId": "00000000-0000-4000-8000-000000000001",
             "repositoryId": "00000000-0000-4000-8000-000000000002",
@@ -959,12 +961,13 @@
         }
       },
       "description": "BumpService.sweep: withdrawReleaseRequest",
-      "key": "616dff0b",
+      "key": "6313421d",
       "pending": false,
       "providerStates": [
         {
           "name": "a release request awaiting approval",
           "params": {
+            "authorization": "Bearer qits_tok_contract-person-cli",
             "mergedSha": "bd6360a2c6b42a991c62e3418b7f6d4ac5d89f14",
             "projectId": "00000000-0000-4000-8000-000000000001",
             "repositoryId": "00000000-0000-4000-8000-000000000002",
@@ -1015,12 +1018,13 @@
         }
       },
       "description": "SCMRelease: listRepositoryReleaseRequests",
-      "key": "b2ef4535",
+      "key": "b4948847",
       "pending": false,
       "providerStates": [
         {
           "name": "a release request awaiting approval",
           "params": {
+            "authorization": "Bearer qits_tok_contract-person-cli",
             "mergedSha": "bd6360a2c6b42a991c62e3418b7f6d4ac5d89f14",
             "projectId": "00000000-0000-4000-8000-000000000001",
             "repositoryId": "00000000-0000-4000-8000-000000000002",
@@ -1783,12 +1787,13 @@
         }
       },
       "description": "SoftwareRelease: listRepositoryReleaseRequests",
-      "key": "4aa9d263",
+      "key": "4c4f1575",
       "pending": false,
       "providerStates": [
         {
           "name": "a release request awaiting approval",
           "params": {
+            "authorization": "Bearer qits_tok_contract-person-cli",
             "mergedSha": "bd6360a2c6b42a991c62e3418b7f6d4ac5d89f14",
             "projectId": "00000000-0000-4000-8000-000000000001",
             "repositoryId": "00000000-0000-4000-8000-000000000002",
@@ -1926,12 +1931,13 @@
         }
       },
       "description": "runReleaseRequestAutomation: getReleaseRequest",
-      "key": "494a725e",
+      "key": "4aefb570",
       "pending": false,
       "providerStates": [
         {
           "name": "a release request awaiting approval",
           "params": {
+            "authorization": "Bearer qits_tok_contract-person-cli",
             "mergedSha": "bd6360a2c6b42a991c62e3418b7f6d4ac5d89f14",
             "projectId": "00000000-0000-4000-8000-000000000001",
             "repositoryId": "00000000-0000-4000-8000-000000000002",
@@ -2074,12 +2080,13 @@
         }
       },
       "description": "triggerReleaseRequestAutomations: getReleaseRequest",
-      "key": "71c56118",
+      "key": "736aa42a",
       "pending": false,
       "providerStates": [
         {
           "name": "a release request awaiting approval",
           "params": {
+            "authorization": "Bearer qits_tok_contract-person-cli",
             "mergedSha": "bd6360a2c6b42a991c62e3418b7f6d4ac5d89f14",
             "projectId": "00000000-0000-4000-8000-000000000001",
             "repositoryId": "00000000-0000-4000-8000-000000000002",
