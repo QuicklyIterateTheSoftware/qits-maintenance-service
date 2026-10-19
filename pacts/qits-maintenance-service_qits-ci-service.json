@@ -678,6 +678,215 @@
         "status": 200
       },
       "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-ci-service",
+            "operationId": "triggerEvent"
+          },
+          "qits-trigger": {
+            "app": "qits-maintenance-service",
+            "kind": "operation",
+            "operationId": "triggerReleaseRequestAutomations"
+          }
+        }
+      },
+      "description": "triggerReleaseRequestAutomations: triggerEvent",
+      "key": "e3fb472f",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a repository with a ReleaseRequestAutomation platform pipeline",
+          "params": {
+            "branch": "maintenance/automations/entity-diagram/contract",
+            "bumpId": "00000000-0000-4000-8000-000000000001",
+            "foldSha": "0000000000000000000000000000000000000009",
+            "kind": "entity-diagram",
+            "projectId": "00000000-0000-4000-8000-000000000002",
+            "repositoryId": "00000000-0000-4000-8000-000000000003",
+            "repositoryName": "contract-service",
+            "requestId": "00000000-0000-4000-8000-000000000004"
+          }
+        }
+      ],
+      "request": {
+        "body": {
+          "content": {
+            "eventId": "00000000-0000-4000-8000-000000000001",
+            "name": "ReleaseRequestAutomation",
+            "payload": {
+              "baseRef": "main",
+              "branch": "maintenance/automations/entity-diagram/contract",
+              "commitPaths": [
+                "docs/"
+              ],
+              "foldSha": "0000000000000000000000000000000000000009",
+              "kind": "entity-diagram",
+              "repository": "contract-service",
+              "requestId": "00000000-0000-4000-8000-000000000004"
+            }
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "generators": {
+          "body": {
+            "$.eventId": {
+              "dataType": "STRING",
+              "expression": "${bumpId}",
+              "type": "ProviderState"
+            },
+            "$.payload.branch": {
+              "dataType": "STRING",
+              "expression": "${branch}",
+              "type": "ProviderState"
+            },
+            "$.payload.foldSha": {
+              "dataType": "STRING",
+              "expression": "${foldSha}",
+              "type": "ProviderState"
+            },
+            "$.payload.kind": {
+              "dataType": "STRING",
+              "expression": "${kind}",
+              "type": "ProviderState"
+            },
+            "$.payload.repository": {
+              "dataType": "STRING",
+              "expression": "${repositoryName}",
+              "type": "ProviderState"
+            },
+            "$.payload.requestId": {
+              "dataType": "STRING",
+              "expression": "${requestId}",
+              "type": "ProviderState"
+            }
+          }
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.eventId": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.payload.branch": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.payload.foldSha": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.payload.kind": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.payload.repository": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.payload.requestId": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          }
+        },
+        "method": "POST",
+        "path": "/ci/api/events/trigger"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "eventId": "00000000-0000-4000-8000-000000000001",
+            "runIds": [
+              "00000000-0000-4000-8000-000000000005"
+            ]
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.eventId": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+                }
+              ]
+            },
+            "$.runIds": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "max": 1,
+                  "min": 1
+                }
+              ]
+            },
+            "$.runIds[*]": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json.*"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
     }
   ],
   "metadata": {

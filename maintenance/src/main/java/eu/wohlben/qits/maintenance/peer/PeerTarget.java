@@ -75,14 +75,14 @@ public enum PeerTarget {
    */
   ARTIFACTS_DOCS("qits.maintenance.targets.artifacts-url"),
 
-  /** qits-platform-mirror's Maven Central pull-through. */
+  /** qits-mirror's Maven Central pull-through. */
   MAVEN_MIRROR("qits.maintenance.mirror.maven-url"),
 
   /**
-   * qits-platform-mirror's npmjs pull-through — and the one target that is NOT configuration.
+   * qits-mirror's npmjs pull-through — and the one target that is NOT configuration.
    *
    * <p><b>No key, on purpose (qits-472).</b> There used to be {@code qits.maintenance.mirror.npm-url},
-   * and all it ever held was {@code http://${QITS_ENVIRONMENT:dev}-qits-platform-mirror:8080/npm/npmjs}
+   * and all it ever held was {@code http://${QITS_ENVIRONMENT:dev}-qits-mirror:8080/npm/npmjs}
    * — a fact this process can work out and no deployment decides. So the address is derived here, in
    * {@link #derivedBase}, and a deployment row still setting {@code QITS_MAINTENANCE_MIRROR_NPM_URL}
    * is dead: nothing reads it.
@@ -95,7 +95,7 @@ public enum PeerTarget {
    */
   NPM_MIRROR(null);
 
-  /** Where qits-platform-mirror serves its npmjs cache, at the root of its host. */
+  /** Where qits-mirror serves its npmjs cache, at the root of its host. */
   static final String NPM_MIRROR_PATH = "/npm/npmjs";
 
   /** The environment a container that was told none is in — the shipped config's own default. */
@@ -124,6 +124,6 @@ public enum PeerTarget {
     }
     String env =
         environment == null || environment.isBlank() ? DEFAULT_ENVIRONMENT : environment.trim();
-    return "http://" + env + "-qits-platform-mirror:8080" + NPM_MIRROR_PATH;
+    return "http://" + env + "-qits-mirror:8080" + NPM_MIRROR_PATH;
   }
 }
