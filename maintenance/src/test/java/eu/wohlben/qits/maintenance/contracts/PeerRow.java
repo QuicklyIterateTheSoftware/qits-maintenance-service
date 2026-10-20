@@ -6,6 +6,7 @@ import eu.wohlben.qits.maintenance.control.DeployedVersions;
 import eu.wohlben.qits.maintenance.githost.GitHostReader;
 import eu.wohlben.qits.maintenance.githost.GitHostRefs;
 import eu.wohlben.qits.maintenance.latest.LatestResolver;
+import eu.wohlben.qits.maintenance.latest.OpenAdoptionGate;
 import eu.wohlben.qits.maintenance.peer.PeerClient;
 import eu.wohlben.qits.maintenance.sbom.SbomClient;
 import eu.wohlben.qits.maintenance.sbomcheck.ArtifactPresence;
@@ -72,7 +73,7 @@ record PeerRow(GoldenInteraction interaction, Call call, List<GoldenInteraction>
           Clients.wire(new DeployedVersions(), peers),
           Clients.wire(new SbomClient(), peers),
           Clients.wire(new ChangelogClient(), peers),
-          Clients.wire(new LatestResolver(), peers),
+          Clients.wire(OpenAdoptionGate.on(new LatestResolver()), peers),
           Clients.wire(new ArtifactPresence(), peers),
           Clients.wire(new GitHostRefs(), peers),
           Clients.wire(new GitHostReader(), peers));
