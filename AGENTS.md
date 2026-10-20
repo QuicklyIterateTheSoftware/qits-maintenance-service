@@ -638,9 +638,9 @@ terminal FAILED (`DAEMON_SBOM_UNREAD`) because the fetch took an `Ecosystem`; V1
 jar. Its rules live in that library's own repository and are not restated here. **This service
 subscribes and publishes nothing.**
 
-- **Two listeners, and their `consumerId()`s are STORAGE.** `maintenance-internal-latest`
-  (`SoftwareRelease`) and `maintenance-branch-tracking` (`SCMRelease`, `SCMDeleteBranch`,
-  `SCMPublishCommit`). Change one and you mint a brand-new consumer that initializes at the head of
+- **Three listeners, and their `consumerId()`s are STORAGE.** `maintenance-internal-latest`
+  (`SoftwareRelease`), `maintenance-branch-tracking` (`SCMRelease`, `SCMDeleteBranch`,
+  `SCMPublishCommit`) and `maintenance-release-finalized` (`ReleaseRequestStateChanged`, qits-1472). Change one and you mint a brand-new consumer that initializes at the head of
   the log, silently skipping everything in between; the old watermark is orphaned. Reuse one and a
   listener inherits another's watermark, believing it has handled events it was never offered. Both
   are pinned as literals in `bus/ForeignEventContractTest` for that reason.
@@ -654,9 +654,22 @@ subscribes and publishes nothing.**
   every release up to the day the trains were removed — it would start deaf, with nothing in any log.
   It is pinned as a literal in `bus/ForeignEventContractTest` beside the two that are live, with the
   assertion that no live listener claims it.
+- **A publish is not an adoption; a FINALIZATION is (qits-1472).** `SoftwareRelease` arrives after
+  RELEASED and before FINALIZED, and a request that goes OBSOLETE never finalizes. So the release
+  listener only records the artifact (`mt_published_artifact`, V27) beside the artifact row, and
+  `ReleaseFinalizedListener` records each FINALIZED `(repoId, version)` (`mt_finalized_release`,
+  `on conflict do nothing` — FINALIZED is often announced twice under two event ids). An artifact of
+  R at v is adopted iff a finalized `(R, V >= v)` exists, in either arrival order, the highest per
+  package, through `recordLatestIfNewer`'s forward-only body, in one transaction serialized per
+  repository by an advisory lock. **The join key is qits-projects' repository ROW ID verbatim on
+  both sides — never the `repositoryName` translation**, which depends on what the catalog held when
+  each frame arrived. The poll and the shared-property target pass through `latest/AdoptionGate`,
+  whose backfill rule is "at or below the current `mt_latest` counts as adopted"; a package nothing
+  has announced is ungated.
 - **`mt_latest` has three writers now and they are deliberately different methods.**
   `MaintenanceStore.recordLatest` is the POLL's and replaces the column whatever it says;
-  `recordLatestIfNewer` is the BUS's (`SoftwareRelease`) and only ever moves it forward. A poll asks
+  `recordLatestIfNewer` is the BUS's (its body is what `recordPublished` / `adoptFinalized` apply on
+  an adoption) and only ever moves it forward. A poll asks
   a registry what the newest version is — a downgrade is a real answer, because a package can be
   unpublished. An announcement is evidence that THIS version exists and never that a higher one does
   not, so letting the bus write through `recordLatest` would let a catch-up frame from yesterday

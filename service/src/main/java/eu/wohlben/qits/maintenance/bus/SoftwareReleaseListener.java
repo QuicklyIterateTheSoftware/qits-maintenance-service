@@ -16,9 +16,28 @@ import java.util.UUID;
 import org.jboss.logging.Logger;
 
 /**
- * <b>An internal package was published, so its latest version moves now rather than at the next
- * poll.</b> Consumes qits-ci's {@code SoftwareRelease} — one per declared artifact of a green
- * release pipeline — and writes it into {@code mt_latest}, forward only.
+ * <b>An internal package was published: record it, and move its latest only once its release has
+ * FINALIZED.</b> Consumes qits-ci's {@code SoftwareRelease} — one per declared artifact of a green
+ * release pipeline — and records it as published; {@code mt_latest} moves, forward only, when the
+ * adoption rule below says so.
+ *
+ * <h2>Published is not usable (qits-1472)</h2>
+ *
+ * <p>qits-ci announces a release once a green publish run and an {@code SCMRelease} exist for one
+ * (repository, version) — after the request is RELEASED and BEFORE it is FINALIZED. qits-projects
+ * finalizes only after the post-release gates (the publish run, and the deployment where the tag
+ * declares one) and then merges the tag into main; a RELEASED request a newer one folds past ends
+ * OBSOLETE and is never finalized. This listener used to move {@code mt_latest} — and through
+ * {@code UpstreamReplan} every consumer's bump — on the announcement, so a version that had not
+ * passed its deploy gate, or never would, was offered to the estate. <b>Finalization is the green
+ * light now</b>: {@code ReleaseFinalizedListener} records each FINALIZED (repository, version), and
+ * an artifact of repository R at version v is adopted iff R finalized some V &gt;= v. Either
+ * arrival order adopts — {@code MaintenanceStore.recordPublished} adopts at once when the
+ * finalization is already there, {@code MaintenanceStore.adoptFinalized} adopts what was waiting —
+ * and an artifact nothing ever finalizes past is never adopted. The join key is the frame's {@code
+ * repository} VERBATIM, qits-projects' row id, which is what {@code ReleaseRequestStateChanged.repoId}
+ * carries too; the catalog-name translation below is for the artifact row and is deliberately not
+ * applied to the join.
  *
  * <p><b>It makes TWO writes and they are two different facts.</b> {@code mt_latest} says a version
  * EXISTS — one column per dependency, moved forward only. An {@code mt_artifact} row says THIS
@@ -54,8 +73,8 @@ import org.jboss.logging.Logger;
  * service was mid-cutover. A {@link QitsDurableEventListener} closes that: a release published while
  * this process was restarting is caught up from the log.
  *
- * <p><b>The write is {@link MaintenanceStore#recordLatestIfNewer}, never {@code recordLatest}.</b> A
- * poll asks a registry what the newest version is and the answer replaces what was there; an
+ * <p><b>An adoption writes by {@link MaintenanceStore#recordLatestIfNewer}'s rule, never by {@code
+ * recordLatest}'s</b> — both adoption writes in the store apply the same forward-only body. A poll asks a registry what the newest version is and the answer replaces what was there; an
  * announcement is only ever evidence that THIS version exists, never that a higher one does not. A
  * catch-up frame from before a scan would otherwise rewind a column the scan had already moved, and
  * every pin of that dependency would read as up to date until the next scan. The guard is
@@ -271,19 +290,31 @@ public class SoftwareReleaseListener implements QitsDurableEventListener {
       daemon(frame, release, name, version);
       return;
     }
-    // The store throws out of here on a database that will not answer, which is exactly right: the
-    // claim rolls back and the next sweep offers this release again.
-    boolean moved =
-        store.recordLatestIfNewer(ecosystem, name, version, "event:" + frame.id(), Instant.now());
-    if (moved) {
-      LOG.infof(
-          "%s %s moved the latest %s %s to %s", frame.name(), frame.id(), ecosystem, name, version);
-      // A queue submit, never a call: the claim transaction holds no HTTP open (qits-1133).
-      upstream.latestMoved(ecosystem, name);
-    } else {
-      LOG.debugf(
-          "%s %s announced %s %s at %s, which is not newer than what is recorded; nothing moved",
+    // RECORDED as published, and adopted only through the finalization rule (qits-1472). The store
+    // throws out of here on a database that will not answer, which is exactly right: the claim
+    // rolls back and the next sweep offers this release again.
+    String repositoryId = trimmed(release.repository());
+    if (repositoryId == null) {
+      // No repository, so no finalization can ever name it: it is never adopted. The artifact row
+      // below is still a fact about a release.
+      LOG.warnf(
+          "%s %s announced %s %s at %s with no repository; it can never be finalized, so it is"
+              + " not adopted",
           frame.name(), frame.id(), ecosystem, name, version);
+    } else {
+      adopted(
+          frame,
+          store.recordPublished(
+              repositoryId,
+              ecosystem,
+              name,
+              version,
+              "event:" + frame.id(),
+              occurredAt(frame),
+              Instant.now()),
+          ecosystem,
+          name,
+          version);
     }
 
     // AND THE SECOND FACT, which is a different one. `mt_latest` says a version EXISTS; the artifact
@@ -297,6 +328,35 @@ public class SoftwareReleaseListener implements QitsDurableEventListener {
     // outbox — see SbomIngestService.
     sboms.announced(
         ecosystem, name, version, repository(release), occurredAt(frame), release.origin());
+  }
+
+  /**
+   * What the adoption did, said once and passed on: a column that MOVED is what the upstream hook is
+   * told about, and nothing else is.
+   */
+  private void adopted(
+      EventFrame frame,
+      java.util.Optional<MaintenanceStore.Adoption> adoption,
+      Ecosystem ecosystem,
+      String name,
+      String version) {
+    if (adoption.isEmpty()) {
+      LOG.debugf(
+          "%s %s published %s %s at %s; it waits for its release request to finalize",
+          frame.name(), frame.id(), ecosystem, name, version);
+      return;
+    }
+    if (adoption.get().moved()) {
+      LOG.infof(
+          "%s %s moved the latest %s %s to %s, its release having finalized already",
+          frame.name(), frame.id(), ecosystem, name, version);
+      // A queue submit, never a call: the claim transaction holds no HTTP open (qits-1133).
+      upstream.latestMoved(ecosystem, name);
+    } else {
+      LOG.debugf(
+          "%s %s announced %s %s at %s, which is not newer than what is recorded; nothing moved",
+          frame.name(), frame.id(), ecosystem, name, version);
+    }
   }
 
   /**

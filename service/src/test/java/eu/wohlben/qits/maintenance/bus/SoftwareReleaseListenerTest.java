@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -86,6 +87,44 @@ class SoftwareReleaseListenerTest {
       sourceUrls.put(key, sourceUrl);
       writes.add(key + "=" + version);
       return true;
+    }
+
+    /** What has finalized, per repository spelling as the frame carries it (qits-1472). */
+    final Map<String, List<String>> finalized = new LinkedHashMap<>();
+
+    /** Every (repository, ecosystem, name, version) recorded as published, and those adopted. */
+    final Set<String> published = new java.util.LinkedHashSet<>();
+
+    final Set<String> adopted = new java.util.LinkedHashSet<>();
+
+    /**
+     * The join, as {@code MaintenanceStore.recordPublished} makes it against a real PostgreSQL (see
+     * {@code MaintenanceStoreTest} and {@code FinalizedAdoptionTest}): recorded always, adopted
+     * through the forward-only writer only when the repository finalized at or above the version.
+     */
+    @Override
+    public Optional<Adoption> recordPublished(
+        String repository,
+        Ecosystem ecosystem,
+        String name,
+        String version,
+        String sourceUrl,
+        Instant occurredAt,
+        Instant now) {
+      if (failWith != null) {
+        throw failWith;
+      }
+      String key = repository + "|" + ecosystem.wireName() + ":" + name + "@" + version;
+      published.add(key);
+      if (adopted.contains(key)
+          || !MaintenanceStore.atOrBelowAny(
+              ecosystem, version, finalized.getOrDefault(repository, List.of()))) {
+        return Optional.empty();
+      }
+      adopted.add(key);
+      return Optional.of(
+          new Adoption(
+              ecosystem, name, version, recordLatestIfNewer(ecosystem, name, version, sourceUrl, now)));
     }
   }
 
@@ -160,7 +199,19 @@ class SoftwareReleaseListenerTest {
     listener.sboms = sboms;
     upstream = new RecordingUpstream();
     listener.upstream = upstream;
+    // THE FINALIZATION, already there (qits-1472). Every test above the finalization block is about
+    // what an ADOPTED release does — the forward-only rule, the names, the artifact row — so the
+    // default repository has finalized far past anything they release, which is the
+    // FINALIZED-before-SoftwareRelease order. The block at the end is about the gate itself, and
+    // uses a repository that has finalized nothing.
+    store.finalized.put(REPOSITORY, List.of("9999.1.1"));
   }
+
+  /** The repository {@link ForeignEventContractTest#softwareReleasePayload} names by default. */
+  private static final String REPOSITORY = "qits-eventstream-javalib";
+
+  /** qits-projects' row id of a repository that has finalized nothing. */
+  private static final String UNFINALIZED = "8f7e6d5c-0000-4000-8000-1a2b3c4d5e6f";
 
   private void release(String packageType, String packageName, String version) {
     listener.onFrame(
@@ -532,5 +583,65 @@ class SoftwareReleaseListenerTest {
     assertTrue(Ecosystem.of("daemon").isEmpty());
     assertTrue(Ecosystem.of(Ecosystem.DAEMON_WIRE_NAME).isEmpty());
     assertEquals("daemon", Ecosystem.DAEMON_WIRE_NAME, "the spelling is qits-artifacts' contract");
+  }
+
+  // --- the finalization gate (qits-1472) -----------------------------------------------------------
+
+  private void releaseOf(String repository, String packageType, String packageName, String version) {
+    listener.onFrame(
+        frame(
+            "SoftwareRelease",
+            ForeignEventContractTest.softwareReleasePayload(
+                repository, packageType, packageName, version)));
+  }
+
+  /**
+   * <b>THE BUG, as a unit test.</b> A {@code SoftwareRelease} alone used to move {@code mt_latest}
+   * and re-plan every consumer, 71 s before the release passed its deploy gate — or for good, for a
+   * request that went OBSOLETE. Now it is recorded and nothing moves; the artifact row is still
+   * written, because that is a fact about a release and not a verdict on it.
+   */
+  @Test
+  void aReleaseWhoseRequestHasNotFinalizedMovesNothingButStillOpensItsArtifactRow() {
+    releaseOf(UNFINALIZED, "maven", "eu.wohlben.qits:qits-eventstream", "2026.901.1");
+
+    assertTrue(store.writes.isEmpty(), "published is not usable");
+    assertTrue(upstream.moved.isEmpty(), "and nobody is re-planned onto it");
+    assertEquals(
+        Set.of(UNFINALIZED + "|maven:eu.wohlben.qits:qits-eventstream@2026.901.1"),
+        store.published,
+        "recorded under the frame's repository VERBATIM, the key FINALIZED joins on");
+    assertEquals(1, sboms.announced.size(), "and the artifact row is written as before");
+  }
+
+  /** A finalization BELOW the release is not one of it. */
+  @Test
+  void aReleaseAboveWhatItsRepositoryFinalizedWaits() {
+    store.finalized.put(UNFINALIZED, List.of("2026.901.1"));
+
+    releaseOf(UNFINALIZED, "docker", "qits/qits-ci", "2026.902.1");
+
+    assertTrue(store.writes.isEmpty());
+    assertTrue(upstream.moved.isEmpty());
+  }
+
+  /** FINALIZED, then the release: adopted at once, and the hook is told. */
+  @Test
+  void aReleaseAtOrBelowWhatItsRepositoryFinalizedIsAdoptedAtOnce() {
+    store.finalized.put(UNFINALIZED, List.of("2026.901.1"));
+
+    releaseOf(UNFINALIZED, "docker", "qits/qits-ci", "2026.901.1");
+
+    assertEquals(List.of("docker:qits/qits-ci=2026.901.1"), store.writes);
+    assertEquals(List.of("docker:qits/qits-ci"), upstream.moved);
+  }
+
+  /** The daemon arm has no column to gate and records no published row either. */
+  @Test
+  void aDaemonReleaseIsNeverRecordedForAdoption() {
+    releaseOf(UNFINALIZED, "daemon", "qits-platform-access-cli", "2026.918.1");
+
+    assertTrue(store.published.isEmpty());
+    assertEquals(1, sboms.announced.size());
   }
 }

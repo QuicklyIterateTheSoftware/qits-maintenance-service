@@ -19,6 +19,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Predicate;
 import org.w3c.dom.Element;
 
 /**
@@ -61,6 +62,15 @@ public class LatestResolver {
       java.util.regex.Pattern.compile("[A-Za-z0-9._:@/-]+");
 
   @Inject PeerClient peers;
+
+  /**
+   * Which versions of an INTERNAL package a lookup may adopt: only what its repository finalized
+   * (qits-1472). Both answers below pass through it — the highest version {@link #resolve} reports
+   * and the list {@link #published} hands the shared-property rule — so the poll and {@code
+   * PendingChanges.shared} can no longer adopt a version a {@code SoftwareRelease} alone could not.
+   * See {@link AdoptionGate}.
+   */
+  @Inject AdoptionGate gate;
 
   /**
    * The newest version of one dependency, or why there is none.
@@ -140,7 +150,14 @@ public class LatestResolver {
           null, "'" + name + "' is not a name this service can address; nothing was asked");
     }
     try {
-      return publishedMaven(kind, name);
+      PublishedLookup listed = publishedMaven(kind, name);
+      if (!listed.ok()) {
+        return listed;
+      }
+      // The shared-property target is chosen from this list, so it is gated like the latest is.
+      Predicate<String> admitted = gate.admits(ecosystem, kind, name);
+      return PublishedLookup.found(
+          listed.versions().stream().filter(admitted).toList(), listed.sourceUrl());
     } catch (RuntimeException e) {
       LOG.warnf("The published versions of %s could not be read: %s", name, e.toString());
       return PublishedLookup.failed(null, "the lookup failed: " + e);
@@ -160,7 +177,7 @@ public class LatestResolver {
     if (!published.ok()) {
       return LatestLookup.failed(published.sourceUrl(), published.error());
     }
-    return pick(Ecosystem.MAVEN, published.versions(), published.sourceUrl());
+    return pick(Ecosystem.MAVEN, kind, name, published.versions(), published.sourceUrl());
   }
 
   /**
@@ -239,7 +256,7 @@ public class LatestResolver {
     if (published.isEmpty()) {
       return LatestLookup.failed(url, "the packument lists no versions");
     }
-    return pick(Ecosystem.NPM, published, url);
+    return pick(Ecosystem.NPM, kind, name, published, url);
   }
 
   /** The OCI tag listing, paged. */
@@ -283,14 +300,36 @@ public class LatestResolver {
     if (tags.isEmpty()) {
       return LatestLookup.failed(url, "the image has no tags");
     }
-    return pick(Ecosystem.DOCKER, tags, url);
+    return pick(Ecosystem.DOCKER, kind, name, tags, url);
   }
 
-  private static LatestLookup pick(Ecosystem ecosystem, java.util.Collection<String> published, String url) {
-    Optional<String> highest = VersionOrder.highest(ecosystem, published);
+  /**
+   * The highest of what a registry listed, among the versions the {@link AdoptionGate} admits.
+   *
+   * <p>A listing the gate leaves EMPTY is an answer with a sentence rather than a version — every
+   * version published is one no release request has finalized yet — and the column says so, which
+   * is what a person reading the row needs to tell "awaiting finalization" from "up to date".
+   */
+  private LatestLookup pick(
+      Ecosystem ecosystem,
+      PinKind kind,
+      String name,
+      java.util.Collection<String> published,
+      String url) {
+    if (VersionOrder.highest(ecosystem, published).isEmpty()) {
+      return LatestLookup.failed(url, "nothing published there is a readable version");
+    }
+    Predicate<String> admitted = gate.admits(ecosystem, kind, name);
+    Optional<String> highest =
+        VersionOrder.highest(ecosystem, published.stream().filter(admitted).toList());
     return highest
         .map(latest -> LatestLookup.found(latest, url))
-        .orElseGet(() -> LatestLookup.failed(url, "nothing published there is a readable version"));
+        .orElseGet(
+            () ->
+                LatestLookup.failed(
+                    url,
+                    "nothing published there has been finalized yet: no release request of its"
+                        + " repository has finalized at or above any listed version"));
   }
 
   /**

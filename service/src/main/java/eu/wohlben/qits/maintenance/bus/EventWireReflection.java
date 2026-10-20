@@ -35,7 +35,7 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
  *
  * <ul>
  *   <li>{@link EventFrame} — a live frame off {@code /events/stream}, and every row of the catch-up
- *       log, which binds to the same record. Both listeners here read one.
+ *       log, which binds to the same record. Every listener here reads one.
  *   <li>{@code EventPage} — one page of {@code GET /events/api/events}, by string name because it is
  *       package-private in the library. <b>Without it the stream works in the binary and CATCH-UP
  *       ALONE fails</b> — the half that only matters after a cutover, which is the half a durable
@@ -68,6 +68,7 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
       EventFrame.class,
       EventEnvelope.class,
       SoftwareReleaseListener.SoftwareReleasePayload.class,
+      ReleaseFinalizedListener.ReleaseRequestStateChangedPayload.class,
       ScmEventListener.ScmReleasePayload.class,
       ScmEventListener.ScmDeleteBranchPayload.class,
       ScmEventListener.ScmPublishCommitPayload.class

@@ -27,6 +27,7 @@ The contract — routes, model, config keys, schedules and the bump payload — 
 | the bump's outcome | qits-ci + qits-githost | `GET /ci/api/runs/{id}`, then the branch head |
 | how much room CI has | qits-ci | `GET /ci/api/runs/queue` — the dispatch gate: connected, unquarantined runners' slots minus every running and queued run; an unreadable snapshot counts as busy |
 | an internal release | qits-events | `SoftwareRelease` off the durable bus — see **The event bus** |
+| a release is usable | qits-events | `ReleaseRequestStateChanged` with `state=FINALIZED` (qits-projects) — see **The event bus** |
 | a branch's life | qits-events | `SCMRelease`, `SCMDeleteBranch`, `SCMPublishCommit` |
 | what a release CONTAINS | qits-artifacts | `GET /artifacts/sboms/<type>/<name>/-/<version>` — one CycloneDX document per released artifact; see **The dependency graph** |
 | what a release DECLARED | qits-githost | the same manifests, read at `refs/tags/<version>` instead of at the main branch; see **The release ledger** |
@@ -282,16 +283,25 @@ to; on a group row it was the request it asked for, or a sentinel (`converged`, 
 
 ## The event bus
 
-**This service subscribes and publishes nothing.** Two durable listeners on the platform's
-`qits-eventstream` bus turn four facts other services know into inventory writes within seconds,
+**This service subscribes and publishes nothing.** Three durable listeners on the platform's
+`qits-eventstream` bus turn five facts other services know into inventory writes within seconds,
 where v1 waited up to six hours for a poll.
 
 | listener | `consumerId` (storage — never change it) | events | what it does |
 |---|---|---|---|
-| `bus/SoftwareReleaseListener` | `maintenance-internal-latest` | `SoftwareRelease` (qits-ci) | moves `mt_latest` **forward only**, so every pin of that dependency is pending the moment the package is in the registry |
+| `bus/SoftwareReleaseListener` | `maintenance-internal-latest` | `SoftwareRelease` (qits-ci) | writes the artifact row and records the package as **published** (`mt_published_artifact`); moves `mt_latest` **forward only** only once its repository has finalized at or above that version (qits-1472) |
+| `bus/ReleaseFinalizedListener` | `maintenance-release-finalized` | `ReleaseRequestStateChanged` (qits-projects), `state=FINALIZED` only | records the finalized `(repoId, version)` (`mt_finalized_release`, idempotent) and **adopts** every published, unadopted artifact of that repository at or below it — the highest per package — into `mt_latest` |
 | `bus/ScmEventListener` | `maintenance-branch-tracking` | `SCMRelease` (qits-projects), `SCMDeleteBranch`, `SCMPublishCommit` (qits-githost) | records every release in the **release ledger**, clears a maintenance branch when it is deleted, and after a push to a repository's main branch sets its **gitlink** latest to the release main's head carries and re-reads its manifests |
 
-- **`SoftwareRelease` is the only writer of `mt_latest` that moves it forward only**, and that is the
+- **FINALIZATION is the green light, not the publish (qits-1472).** qits-ci announces
+  `SoftwareRelease` after a request is RELEASED and before it FINALIZES (or goes OBSOLETE, never
+  finalizing), so an announcement alone adopts nothing. An artifact of repository R at version v is
+  adopted iff a finalized `(R, V)` with `V >= v` exists; the join key is the repository ROW ID
+  verbatim on both frames. Either arrival order adopts. The registry poll (`LatestResolver`) and the
+  shared-property target (`PendingChanges.shared`, via `LatestResolver.published`) go through the
+  same rule in `latest/AdoptionGate` for every INTERNAL package something has announced; a version
+  at or below the package's current `mt_latest` counts as adopted, which is the backfill.
+- **The adoption is the only writer of `mt_latest` that moves it forward only**, and that is the
   difference between an announcement and a poll. A poll ASKS a registry what the newest version is
   and the answer replaces what was there, downgrades included; an announcement is evidence that THIS
   version exists and never that a higher one does not. Without the guard, a catch-up frame from
@@ -931,8 +941,8 @@ recorded for …`, which is the honest answer rather than a silent success.
   arriving as `qits-eventstream` rather than `eu.wohlben.qits:qits-eventstream` would write a row
   nothing joins to and say nothing about it. After the first internal release following the deploy,
   read that frame's payload and compare it with the same artifact's `mt_pin.name`.
-- **Both consumers start at the HEAD of the log.** `maintenance-internal-latest` and
-  `maintenance-branch-tracking` are new storage keys, so every release published before the deploy
+- **Every consumer starts at the HEAD of the log.** `maintenance-internal-latest`,
+  `maintenance-branch-tracking` and `maintenance-release-finalized` were each new storage keys, so every release published before the deploy
   is skipped. That is what the 00:30 scan is for; nothing has to be replayed by hand.
 
 ## Building and testing

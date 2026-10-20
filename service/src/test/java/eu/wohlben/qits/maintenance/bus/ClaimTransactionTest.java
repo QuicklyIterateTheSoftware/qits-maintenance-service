@@ -74,6 +74,10 @@ class ClaimTransactionTest {
 
   @Inject ScmEventListener scm;
 
+  @Inject SoftwareReleaseListener releases;
+
+  @Inject ReleaseFinalizedListener finalizations;
+
   @Inject InventoryReset reset;
 
   /** The bus jar's own datasource — its outbox, its claims and its watermarks. */
@@ -166,6 +170,9 @@ class ClaimTransactionTest {
           store.releasesOf(REPOSITORY);
           store.releaseRecorded(REPOSITORY, "1.0.0");
           store.releasePinCarriers(Ecosystem.GITLINK, REPOSITORY);
+          store.adoptionFacts(Ecosystem.MAVEN, "g:a");
+          store.publishedArtifacts(REPOSITORY);
+          store.finalizedReleases(REPOSITORY);
 
           // AND THEN A WRITE, which is where the production failure actually surfaced: the bare
           // read enlists, and the inNewTx behind it is the one that dies.
@@ -223,6 +230,41 @@ class ClaimTransactionTest {
         version,
         store.latest(Ecosystem.GITLINK, REPOSITORY).orElseThrow().latest,
         "the main-head gitlink latest is what must survive a push handled inside a claim");
+  }
+
+  /**
+   * <b>The finalization join, both halves inside their claims</b> (qits-1472). Each frame is a
+   * store write in its own transaction — with an advisory lock and, for FINALIZED, a native insert —
+   * reached from inside the eventstream datasource's claim, which is exactly the shape that wedged
+   * this consumer twice. The announcement arrives first, adopts nothing; the finalization adopts it.
+   */
+  @Test
+  void aReleaseAndItsFinalizationAreAdoptedWhenTheFramesArriveInsideTheirClaims() {
+    String repoId = UUID.randomUUID().toString();
+    String version = "2026.903.1";
+
+    insideAClaim(
+        () ->
+            releases.onFrame(
+                frame(
+                    "SoftwareRelease",
+                    ForeignEventContractTest.softwareReleasePayload(
+                        repoId, "maven", "eu.wohlben.qits:qits-claim-tx", version))));
+    assertTrue(
+        store.latest(Ecosystem.MAVEN, "eu.wohlben.qits:qits-claim-tx").isEmpty(),
+        "published is not usable");
+
+    insideAClaim(
+        () ->
+            finalizations.onFrame(
+                frame(
+                    "ReleaseRequestStateChanged",
+                    ForeignEventContractTest.releaseRequestStateChangedPayload(
+                        repoId, "FINALIZED", version))));
+    assertEquals(
+        version,
+        store.latest(Ecosystem.MAVEN, "eu.wohlben.qits:qits-claim-tx").orElseThrow().latest,
+        "the adoption is what must survive a finalization handled inside a claim");
   }
 
   @Test

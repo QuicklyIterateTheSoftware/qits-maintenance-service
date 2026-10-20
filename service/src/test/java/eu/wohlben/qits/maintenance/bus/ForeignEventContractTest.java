@@ -17,7 +17,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 /**
- * <b>The four foreign events this service consumes, checked against the wire form they have to
+ * <b>The five foreign events this service consumes, checked against the wire form they have to
  * match.</b>
  *
  * <p>Both listeners here read their payloads through {@code CanonicalJson.payloadTo} into records of
@@ -164,7 +164,63 @@ class ForeignEventContractTest {
     }
   }
 
+  /**
+   * qits-projects' {@code ReleaseRequestStateChanged}, from
+   * {@code components/qits-projects/qits-projects-service/service/src/main/java/eu/wohlben/qits/projects/bus/ReleaseRequestStateChanged.java}
+   * (qits-1472: FINALIZED is the green light for adopting a release).
+   *
+   * <p>The whole component list, like {@link SCMPublishCommit}'s, so the bytes are what the real
+   * publisher emits — {@code branches} and {@code detail} included, which the listener ignores. Its
+   * {@code occurredAt} is an override returning {@code changedAt}, spelled here as it is there: the
+   * mix-in would drop a component named {@code occurredAt}.
+   */
+  record ReleaseRequestStateChanged(
+      UUID eventId,
+      String releaseRequestId,
+      String releaseRequestQualifiedId,
+      String projectId,
+      String repoId,
+      String repoName,
+      String backingBranch,
+      String state,
+      String previousState,
+      Instant changedAt,
+      String mergedSha,
+      String version,
+      String detail,
+      List<String> branches)
+      implements QitsEvent {
+
+    @Override
+    public Instant occurredAt() {
+      return changedAt;
+    }
+  }
+
   // --- what a publisher would send ---------------------------------------------------------------
+
+  /**
+   * A release request of {@code repoId} moving to {@code state} at {@code version} — qits-projects'
+   * row id as the repository, which is what {@code SoftwareRelease.repository} carries too.
+   */
+  static String releaseRequestStateChangedPayload(String repoId, String state, String version) {
+    return CanonicalJson.payload(
+        new ReleaseRequestStateChanged(
+            UUID.randomUUID(),
+            "rr-uuid-1",
+            "qits-eventstream-javalib-rr-7",
+            "qits",
+            repoId,
+            "qits-eventstream-javalib",
+            "release/rr-uuid-1",
+            state,
+            "RELEASED",
+            WHEN,
+            "abc1234",
+            version,
+            null,
+            List.of("main")));
+  }
 
   static String softwareReleasePayload(String packageType, String packageName, String version) {
     return softwareReleasePayload("qits-eventstream-javalib", packageType, packageName, version);
@@ -264,6 +320,8 @@ class ForeignEventContractTest {
     assertEquals(SCMRelease.class.getSimpleName(), ScmEventListener.RELEASE_SIGNATURE);
     assertEquals(SCMDeleteBranch.class.getSimpleName(), ScmEventListener.DELETE_SIGNATURE);
     assertEquals(SCMPublishCommit.class.getSimpleName(), ScmEventListener.PUSH_SIGNATURE);
+    assertEquals(
+        ReleaseRequestStateChanged.class.getSimpleName(), ReleaseFinalizedListener.SIGNATURE);
   }
 
   /**
@@ -275,6 +333,7 @@ class ForeignEventContractTest {
   void theConsumerIdsAreStorageKeysAndAreSpelledOut() {
     assertEquals("maintenance-internal-latest", SoftwareReleaseListener.CONSUMER_ID);
     assertEquals("maintenance-branch-tracking", ScmEventListener.CONSUMER_ID);
+    assertEquals("maintenance-release-finalized", ReleaseFinalizedListener.CONSUMER_ID);
   }
 
   /**
@@ -297,6 +356,7 @@ class ForeignEventContractTest {
     String abandoned = "maintenance-release-trains";
     assertNotEquals(abandoned, SoftwareReleaseListener.CONSUMER_ID);
     assertNotEquals(abandoned, ScmEventListener.CONSUMER_ID);
+    assertNotEquals(abandoned, ReleaseFinalizedListener.CONSUMER_ID);
   }
 
   // --- the field lists ----------------------------------------------------------------------------
@@ -418,6 +478,43 @@ class ForeignEventContractTest {
   }
 
   /**
+   * The finalization (qits-1472): {@code repoId}, {@code state} and {@code version} are the three
+   * the adoption joins on, and the record binds despite the seven components it does not carry.
+   */
+  @Test
+  void aReleaseRequestStateChangedBindsIntoTheRecordThisServiceReads() throws Exception {
+    String payload =
+        releaseRequestStateChangedPayload(
+            "daf73ae4-1c9a-4f8e-9a51-0b0d0e0f1234", "FINALIZED", "2026.901.1");
+
+    ReleaseFinalizedListener.ReleaseRequestStateChangedPayload read =
+        CanonicalJson.payloadTo(
+            payload, ReleaseFinalizedListener.ReleaseRequestStateChangedPayload.class);
+    assertEquals("daf73ae4-1c9a-4f8e-9a51-0b0d0e0f1234", read.repoId());
+    assertEquals("FINALIZED", read.state());
+    assertEquals("RELEASED", read.previousState());
+    assertEquals("2026.901.1", read.version());
+    assertEquals("rr-uuid-1", read.releaseRequestId());
+    assertEquals("qits-eventstream-javalib-rr-7", read.releaseRequestQualifiedId());
+    assertEquals("qits-eventstream-javalib", read.repoName());
+
+    JsonNode json = MAPPER.readTree(payload);
+    for (String field :
+        List.of(
+            "releaseRequestId",
+            "releaseRequestQualifiedId",
+            "repoId",
+            "repoName",
+            "state",
+            "previousState",
+            "version")) {
+      assertTrue(json.has(field), "the canonical payload carries no " + field);
+    }
+    assertTrue(json.has("branches"), "the publisher really does send the fields we ignore");
+    assertTrue(json.has("changedAt"), "and changedAt, which is not occurredAt");
+  }
+
+  /**
    * The two the payloads must NOT carry, which is why both listeners read them off the frame.
    *
    * <p>{@code eventId} and {@code occurredAt} are {@code QitsEvent}'s own accessors and the canonical
@@ -434,7 +531,8 @@ class ForeignEventContractTest {
             softwareReleasePayload("docker", "qits/qits-ci", "2026.901.1"),
             scmReleasePayload("qits-ci-service", "maintenance/dependencies", "2026.901.1"),
             scmDeleteBranchPayload("qits-ci-service", "maintenance/dependencies"),
-            scmPublishCommitPayload("qits-ci-service", "main", "abc1234"));
+            scmPublishCommitPayload("qits-ci-service", "main", "abc1234"),
+            releaseRequestStateChangedPayload("storage-1", "FINALIZED", "2026.901.1"));
     for (String payload : payloads) {
       JsonNode json = MAPPER.readTree(payload);
       assertFalse(json.has("eventId"), "identity travels in the envelope, never in the payload");

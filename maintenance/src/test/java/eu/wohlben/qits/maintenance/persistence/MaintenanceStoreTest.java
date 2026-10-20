@@ -828,4 +828,132 @@ class MaintenanceStoreTest {
     assertFalse(MaintenanceStore.wroteABump(List.of()));
     assertFalse(MaintenanceStore.wroteABump(List.of(historyRow(BumpStatus.NOTHING_TO_DO))));
   }
+
+  // --- adoption on finalization (qits-1472) -------------------------------------------------------
+
+  /** A published artifact of {@code repository}, as the SoftwareRelease listener records one. */
+  private java.util.Optional<MaintenanceStore.Adoption> published(
+      String repository, Ecosystem ecosystem, String name, String version) {
+    return store.recordPublished(
+        repository, ecosystem, name, version, "event:sr-" + version, Instant.now(), Instant.now());
+  }
+
+  private List<MaintenanceStore.Adoption> finalized(String repository, String version) {
+    return store.adoptFinalized(
+        repository, version, "event:fin-" + version, Instant.now(), Instant.now());
+  }
+
+  @Test
+  void aPublishedArtifactIsRecordedAndAdoptsNothingUntilItsRepositoryFinalizes() {
+    String repository = "r-" + UUID.randomUUID();
+    String name = "g:" + UUID.randomUUID();
+
+    assertTrue(published(repository, Ecosystem.MAVEN, name, "2026.901.1").isEmpty());
+
+    assertTrue(store.latest(Ecosystem.MAVEN, name).isEmpty(), "published is not usable");
+    var rows = store.publishedArtifacts(repository);
+    assertEquals(1, rows.size());
+    assertEquals("2026.901.1", rows.get(0).version);
+    assertNull(rows.get(0).adoptedAt);
+  }
+
+  @Test
+  void aFinalizationAdoptsTheHighestWaitingVersionPerPackageAtOrBelowIt() {
+    String repository = "r-" + UUID.randomUUID();
+    String jar = "g:" + UUID.randomUUID();
+    String image = "qits/" + UUID.randomUUID();
+    published(repository, Ecosystem.MAVEN, jar, "2026.901.1");
+    published(repository, Ecosystem.MAVEN, jar, "2026.902.1");
+    published(repository, Ecosystem.DOCKER, image, "2026.902.1");
+    // Above the finalization, so it waits for one of its own.
+    published(repository, Ecosystem.MAVEN, jar, "2026.903.1");
+
+    List<MaintenanceStore.Adoption> adopted = finalized(repository, "2026.902.1");
+
+    assertEquals(2, adopted.size(), adopted.toString());
+    assertTrue(adopted.stream().allMatch(MaintenanceStore.Adoption::moved));
+    assertEquals("2026.902.1", store.latest(Ecosystem.MAVEN, jar).orElseThrow().latest);
+    assertEquals("event:fin-2026.902.1", store.latest(Ecosystem.MAVEN, jar).orElseThrow().sourceUrl);
+    assertEquals("2026.902.1", store.latest(Ecosystem.DOCKER, image).orElseThrow().latest);
+    var waiting =
+        store.publishedArtifacts(repository).stream().filter(row -> row.adoptedAt == null).toList();
+    assertEquals(1, waiting.size(), "every version at or below is adopted, the one above waits");
+    assertEquals("2026.903.1", waiting.get(0).version);
+  }
+
+  /** FINALIZED is often announced twice under two event ids: one row, one adoption. */
+  @Test
+  void aFinalizationRecordedTwiceIsOneRowAndAdoptsOnce() {
+    String repository = "r-" + UUID.randomUUID();
+    String name = "g:" + UUID.randomUUID();
+    published(repository, Ecosystem.MAVEN, name, "2026.901.1");
+
+    assertEquals(1, finalized(repository, "2026.901.1").size());
+    assertTrue(finalized(repository, "2026.901.1").isEmpty(), "nothing left to adopt");
+
+    assertEquals(List.of("2026.901.1"), store.finalizedReleases(repository));
+  }
+
+  /** The other arrival order: finalized first, then the announcement is adopted on the spot. */
+  @Test
+  void anArtifactPublishedAtOrBelowAnExistingFinalizationIsAdoptedOnTheSpot() {
+    String repository = "r-" + UUID.randomUUID();
+    String name = "@qits/" + UUID.randomUUID();
+    assertTrue(finalized(repository, "2026.902.1").isEmpty());
+
+    var adoption = published(repository, Ecosystem.NPM, name, "2026.902.1").orElseThrow();
+    assertTrue(adoption.moved());
+    assertTrue(
+        published(repository, Ecosystem.NPM, name, "2026.902.1").isEmpty(),
+        "a redelivery of an adopted announcement is a read and a return");
+    assertTrue(
+        published(repository, Ecosystem.NPM, name, "2026.903.1").isEmpty(),
+        "and one above the finalization waits");
+
+    assertEquals("2026.902.1", store.latest(Ecosystem.NPM, name).orElseThrow().latest);
+  }
+
+  /** Another repository's finalization, or a lower one, is not this artifact's. */
+  @Test
+  void aFinalizationOfAnotherRepositoryOrALowerVersionAdoptsNothing() {
+    String repository = "r-" + UUID.randomUUID();
+    String name = "g:" + UUID.randomUUID();
+    published(repository, Ecosystem.MAVEN, name, "2026.902.1");
+
+    assertTrue(finalized("r-" + UUID.randomUUID(), "2026.903.1").isEmpty());
+    assertTrue(finalized(repository, "2026.901.1").isEmpty());
+
+    assertTrue(store.latest(Ecosystem.MAVEN, name).isEmpty());
+  }
+
+  /** The adoption is forward-only: it never rewinds a column already past it. */
+  @Test
+  void anAdoptionBelowTheCurrentLatestMovesNothing() {
+    String repository = "r-" + UUID.randomUUID();
+    String name = "g:" + UUID.randomUUID();
+    store.recordLatestIfNewer(Ecosystem.MAVEN, name, "2026.905.1", "event:older", Instant.now());
+    published(repository, Ecosystem.MAVEN, name, "2026.902.1");
+
+    List<MaintenanceStore.Adoption> adopted = finalized(repository, "2026.902.1");
+
+    assertEquals(1, adopted.size());
+    assertFalse(adopted.get(0).moved());
+    assertEquals("2026.905.1", store.latest(Ecosystem.MAVEN, name).orElseThrow().latest);
+  }
+
+  @Test
+  void theAdoptionFactsAreEmptyForAPackageNothingAnnouncedAndNameItsRepositoriesOtherwise() {
+    String repository = "r-" + UUID.randomUUID();
+    String name = "g:" + UUID.randomUUID();
+    assertTrue(store.adoptionFacts(Ecosystem.MAVEN, name).repositories().isEmpty());
+
+    published(repository, Ecosystem.MAVEN, name, "2026.902.1");
+    finalized(repository, "2026.901.1");
+    store.recordLatestIfNewer(Ecosystem.MAVEN, name, "2026.900.1", "registry", Instant.now());
+
+    MaintenanceStore.AdoptionFacts facts = store.adoptionFacts(Ecosystem.MAVEN, name);
+    assertEquals(java.util.Set.of(repository), facts.repositories());
+    assertEquals(List.of("2026.901.1"), facts.finalized());
+    assertEquals("2026.900.1", facts.latest());
+  }
 }

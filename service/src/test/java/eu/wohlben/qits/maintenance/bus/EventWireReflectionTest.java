@@ -50,6 +50,7 @@ class EventWireReflectionTest {
     List<Class<?>> payloads =
         List.of(
             SoftwareReleaseListener.SoftwareReleasePayload.class,
+            ReleaseFinalizedListener.ReleaseRequestStateChangedPayload.class,
             ScmEventListener.ScmReleasePayload.class,
             ScmEventListener.ScmDeleteBranchPayload.class,
             ScmEventListener.ScmPublishCommitPayload.class);

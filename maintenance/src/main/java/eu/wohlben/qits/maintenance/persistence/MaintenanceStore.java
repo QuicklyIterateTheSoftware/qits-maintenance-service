@@ -8,12 +8,14 @@ import eu.wohlben.qits.maintenance.entity.MtArtifactComponent;
 import eu.wohlben.qits.maintenance.entity.MtArtifactEdge;
 import eu.wohlben.qits.maintenance.entity.MtBranch;
 import eu.wohlben.qits.maintenance.entity.MtBump;
+import eu.wohlben.qits.maintenance.entity.MtFinalizedRelease;
 import eu.wohlben.qits.maintenance.entity.MtGitlinkPin;
 import eu.wohlben.qits.maintenance.entity.MtGitlinkTree;
 import eu.wohlben.qits.maintenance.entity.MtGroup;
 import eu.wohlben.qits.maintenance.entity.MtLatest;
 import eu.wohlben.qits.maintenance.entity.MtMainPin;
 import eu.wohlben.qits.maintenance.entity.MtPin;
+import eu.wohlben.qits.maintenance.entity.MtPublishedArtifact;
 import eu.wohlben.qits.maintenance.entity.MtRelease;
 import eu.wohlben.qits.maintenance.entity.MtReleasePin;
 import eu.wohlben.qits.maintenance.entity.MtReleaseRequest;
@@ -51,6 +53,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -546,31 +549,268 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
     return DbRetry.inNewTx(
         "record the announced latest of " + name,
         () -> {
+          boolean moved = advanceLatest(ecosystem, name, version, sourceUrl, now);
+          getEntityManager().flush();
+          return moved;
+        });
+  }
+
+  /**
+   * The body of {@link #recordLatestIfNewer}, inside a transaction the caller already owns — so the
+   * two adoption writes below can move the column in the SAME transaction that marks the artifact
+   * adopted. Two transactions would let a crash between them strand an artifact marked adopted
+   * whose latest never moved, and a redelivery would then find nothing left to adopt.
+   */
+  private static boolean advanceLatest(
+      Ecosystem ecosystem, String name, String version, String sourceUrl, Instant now) {
+    MtLatest row =
+        MtLatest.find("ecosystem = ?1 and name = ?2", ecosystem.wireName(), name).firstResult();
+    if (row != null && row.latest != null && !VersionOrder.newer(ecosystem, row.latest, version)) {
+      return false;
+    }
+    boolean fresh = row == null;
+    if (fresh) {
+      row = new MtLatest();
+      row.id = UUID.randomUUID();
+      row.ecosystem = ecosystem.wireName();
+      row.name = name;
+    }
+    row.latest = version;
+    row.sourceUrl = sourceUrl;
+    row.error = null;
+    row.checkedAt = now;
+    if (fresh) {
+      row.persist();
+    }
+    return true;
+  }
+
+  // --- adoption on finalization (qits-1472) ------------------------------------------------------
+
+  /**
+   * What one adoption did to one package: the version handed to the forward-only writer, and
+   * whether {@code mt_latest} actually moved — which is what {@code UpstreamReplan.latestMoved} is
+   * told about, and nothing else.
+   */
+  public record Adoption(Ecosystem ecosystem, String name, String version, boolean moved) {}
+
+  /**
+   * <b>A {@code SoftwareRelease} is RECORDED as published, and adopted only if its repository has
+   * already finalized at or above its version</b> (qits-1472).
+   *
+   * <p>The row is written whatever happens next — it is the half of the join the later FINALIZED
+   * looks for, and the package → repository map {@link #adoptionFacts} answers the poll gate from.
+   * If {@code mt_finalized_release} holds {@code (repository, V)} with {@code V >= version} in the
+   * artifact's own ecosystem order — the FINALIZED-then-SoftwareRelease order, which for a library
+   * is a coin toss about 200 ms wide — the artifact is adopted on the spot, through the same
+   * forward-only rule {@link #recordLatestIfNewer} applies.
+   *
+   * <p><b>Idempotent:</b> a redelivery finds its row, and a row already adopted is a read and a
+   * return. <b>Serialized per repository</b> against {@link #adoptFinalized} by a transaction-scoped
+   * advisory lock: without it the two frames' transactions could each miss the other's uncommitted
+   * row — the announcement seeing no finalization, the finalization seeing no announcement — and
+   * the artifact would never be adopted.
+   *
+   * @param repository qits-projects' repository row id, verbatim off the frame
+   * @return the adoption, or empty while nothing finalized the artifact
+   */
+  @ActivateRequestContext
+  public Optional<Adoption> recordPublished(
+      String repository,
+      Ecosystem ecosystem,
+      String name,
+      String version,
+      String sourceUrl,
+      Instant occurredAt,
+      Instant now) {
+    return DbRetry.inNewTx(
+        "record the published " + name + " " + version,
+        () -> {
+          lockAdoption(repository);
+          MtPublishedArtifact row =
+              MtPublishedArtifact.<MtPublishedArtifact>find(
+                      "repository = ?1 and ecosystem = ?2 and name = ?3 and version = ?4",
+                      repository,
+                      ecosystem.wireName(),
+                      name,
+                      version)
+                  .firstResult();
+          if (row != null && row.adoptedAt != null) {
+            return Optional.<Adoption>empty();
+          }
+          if (row == null) {
+            row = new MtPublishedArtifact();
+            row.id = UUID.randomUUID();
+            row.repository = repository;
+            row.ecosystem = ecosystem.wireName();
+            row.name = name;
+            row.version = version;
+            row.publishedAt = occurredAt;
+            row.persist();
+          }
+          List<String> finalized = finalizedVersions(List.of(repository));
+          if (!atOrBelowAny(ecosystem, version, finalized)) {
+            getEntityManager().flush();
+            return Optional.<Adoption>empty();
+          }
+          row.adoptedAt = now;
+          boolean moved = advanceLatest(ecosystem, name, version, sourceUrl, now);
+          getEntityManager().flush();
+          return Optional.of(new Adoption(ecosystem, name, version, moved));
+        });
+  }
+
+  /**
+   * <b>A release request FINALIZED: record it, and adopt every artifact of its repository that was
+   * published at or below its version and not adopted yet</b> (qits-1472).
+   *
+   * <p>"At or below", not "equal": an OBSOLETE request's tag is folded into the next request, which
+   * finalizes past it, and qits-ci announces an {@code if-changed} artifact only at a version where
+   * it changed — so an artifact first published at a version that went OBSOLETE has no announcement
+   * at the version that finalizes. Of the eligible artifacts only the HIGHEST per package is handed
+   * to the forward-only writer; every eligible one is marked adopted, because a finalization past it
+   * is the verdict for all of them.
+   *
+   * <p><b>Idempotent, and it has to be:</b> FINALIZED is often announced twice under two event ids,
+   * so the insert is {@code on conflict do nothing} on {@code (repository, version)} and a second
+   * pass finds nothing left unadopted. One transaction for the row, the adoption marks and the
+   * latest moves, serialized per repository with {@link #recordPublished} — see there.
+   *
+   * @param repository qits-projects' repository row id, verbatim off the frame
+   * @return what was adopted, one entry per package; empty when nothing was waiting
+   */
+  @ActivateRequestContext
+  public List<Adoption> adoptFinalized(
+      String repository, String version, String sourceUrl, Instant finalizedAt, Instant now) {
+    return DbRetry.inNewTx(
+        "adopt what " + repository + " " + version + " finalized",
+        () -> {
+          lockAdoption(repository);
+          getEntityManager()
+              .createNativeQuery(
+                  "insert into mt_finalized_release (id, repository, version, finalized_at)"
+                      + " values (?1, ?2, ?3, ?4) on conflict (repository, version) do nothing")
+              .setParameter(1, UUID.randomUUID())
+              .setParameter(2, repository)
+              .setParameter(3, version)
+              .setParameter(4, finalizedAt)
+              .executeUpdate();
+          List<MtPublishedArtifact> waiting =
+              MtPublishedArtifact.<MtPublishedArtifact>find(
+                      "repository = ?1 and adoptedAt is null", repository)
+                  .list();
+          Map<String, MtPublishedArtifact> highest = new LinkedHashMap<>();
+          for (MtPublishedArtifact row : waiting) {
+            Optional<Ecosystem> ecosystem = Ecosystem.of(row.ecosystem);
+            if (ecosystem.isEmpty()
+                || VersionOrder.newer(ecosystem.get(), version, row.version)) {
+              continue;
+            }
+            row.adoptedAt = now;
+            String key = row.ecosystem + ":" + row.name;
+            MtPublishedArtifact best = highest.get(key);
+            if (best == null || VersionOrder.newer(ecosystem.get(), best.version, row.version)) {
+              highest.put(key, row);
+            }
+          }
+          List<Adoption> adopted = new ArrayList<>();
+          for (MtPublishedArtifact row : highest.values()) {
+            Ecosystem ecosystem = Ecosystem.of(row.ecosystem).orElseThrow();
+            boolean moved = advanceLatest(ecosystem, row.name, row.version, sourceUrl, now);
+            adopted.add(new Adoption(ecosystem, row.name, row.version, moved));
+          }
+          getEntityManager().flush();
+          return List.copyOf(adopted);
+        });
+  }
+
+  /**
+   * What the registry poll's gate needs about one package, in one transaction.
+   *
+   * @param repositories every repository that has ever announced this package — empty for a package
+   *     nothing announced, which the gate leaves ungated
+   * @param finalized every version those repositories finalized
+   * @param latest the package's current {@code mt_latest}, or null
+   */
+  public record AdoptionFacts(Set<String> repositories, List<String> finalized, String latest) {}
+
+  /** The facts {@code latest/AdoptionGate} decides one package's admissible versions from. */
+  @ActivateRequestContext
+  public AdoptionFacts adoptionFacts(Ecosystem ecosystem, String name) {
+    return DbRetry.inNewTx(
+        "read the adoption facts of " + name,
+        () -> {
+          List<String> repositories =
+              getEntityManager()
+                  .createQuery(
+                      "select distinct p.repository from MtPublishedArtifact p"
+                          + " where p.ecosystem = ?1 and p.name = ?2",
+                      String.class)
+                  .setParameter(1, ecosystem.wireName())
+                  .setParameter(2, name)
+                  .getResultList();
+          if (repositories.isEmpty()) {
+            return new AdoptionFacts(Set.of(), List.of(), null);
+          }
           MtLatest row =
               MtLatest.find("ecosystem = ?1 and name = ?2", ecosystem.wireName(), name)
                   .firstResult();
-          if (row != null
-              && row.latest != null
-              && !VersionOrder.newer(ecosystem, row.latest, version)) {
-            return false;
-          }
-          boolean fresh = row == null;
-          if (fresh) {
-            row = new MtLatest();
-            row.id = UUID.randomUUID();
-            row.ecosystem = ecosystem.wireName();
-            row.name = name;
-          }
-          row.latest = version;
-          row.sourceUrl = sourceUrl;
-          row.error = null;
-          row.checkedAt = now;
-          if (fresh) {
-            row.persist();
-          }
-          getEntityManager().flush();
-          return true;
+          return new AdoptionFacts(
+              Set.copyOf(repositories),
+              finalizedVersions(repositories),
+              row == null ? null : row.latest);
         });
+  }
+
+  /** Every published-artifact row of one repository — the tests' and an operator's read. */
+  @ActivateRequestContext
+  public List<MtPublishedArtifact> publishedArtifacts(String repository) {
+    return DbRetry.inNewTx(
+        "read the published artifacts of one repository",
+        () ->
+            MtPublishedArtifact.<MtPublishedArtifact>find(
+                    "repository = ?1", Sort.by("ecosystem").and("name").and("version"), repository)
+                .list());
+  }
+
+  /** Every finalized version of one repository. */
+  @ActivateRequestContext
+  public List<String> finalizedReleases(String repository) {
+    return DbRetry.inNewTx(
+        "read the finalized releases of one repository",
+        () -> finalizedVersions(List.of(repository)));
+  }
+
+  private static List<String> finalizedVersions(Collection<String> repositories) {
+    return MtFinalizedRelease.<MtFinalizedRelease>find(
+            "repository in ?1", Sort.by("version"), repositories)
+        .list()
+        .stream()
+        .map(row -> row.version)
+        .toList();
+  }
+
+  /** Whether {@code version} is at or below any of {@code ceilings}, in that ecosystem's order. */
+  public static boolean atOrBelowAny(
+      Ecosystem ecosystem, String version, Collection<String> ceilings) {
+    for (String ceiling : ceilings) {
+      if (ceiling != null && version != null && !VersionOrder.newer(ecosystem, ceiling, version)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * One repository's adoption writes, one at a time: a transaction-scoped advisory lock, released
+   * at commit or rollback. Two frames about two different repositories never wait on each other.
+   */
+  private void lockAdoption(String repository) {
+    getEntityManager()
+        .createNativeQuery(
+            "select count(*) from (select pg_advisory_xact_lock(hashtext(?1))) as adoption")
+        .setParameter(1, "mt-adoption:" + repository)
+        .getSingleResult();
   }
 
   /**
