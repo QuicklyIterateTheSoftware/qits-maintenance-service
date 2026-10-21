@@ -454,12 +454,13 @@
         }
       },
       "description": "ScanService.run: getRootTree",
-      "key": "724dd078",
+      "key": "14acfd95",
       "pending": false,
       "providerStates": [
         {
           "name": "a repository missing the requested commit",
           "params": {
+            "path": ".config/qits/release.yml",
             "projectId": "00000000-0000-4000-8000-000000000001",
             "repoName": "contract-service",
             "repositoryId": "00000000-0000-4000-8000-000000000002",
