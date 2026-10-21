@@ -71,7 +71,7 @@
         <qits.ci-golden-masters.version>2026.1018.180637</qits.ci-golden-masters.version>
         <qits.deployments-golden-masters.version>2026.1010.145913</qits.deployments-golden-masters.version>
         <qits.artifacts-golden-masters.version>2026.1019.62657</qits.artifacts-golden-masters.version>
-        <qits.githost-golden-masters.version>2026.1019.94801</qits.githost-golden-masters.version>
+        <qits.githost-golden-masters.version>2026.1020.204038</qits.githost-golden-masters.version>
         <qits.idp-golden-masters.version>2026.1019.100619</qits.idp-golden-masters.version>
         <qits.mirror-golden-masters.version>2026.1018.160931</qits.mirror-golden-masters.version>
         <!-- The shared JVM consumer helper (qits-integrations-quarkus-javalib): golden-master reader,
