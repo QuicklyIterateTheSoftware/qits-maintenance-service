@@ -199,6 +199,14 @@ class GoldenMasterRecordingTest {
               "listReleaseRequestAutomations",
               AUTOMATIONS,
               Map.of(),
+              null),
+          // The automation kinds catalogue (epic qits-1038): qits-projects' AutomationContentSource
+          // reads it to open approval requirements from a kind's own declaration.
+          Interaction.read(
+              ProviderStates.THE_AUTOMATION_KINDS_CATALOGUE,
+              "listAutomationKinds",
+              "/maintenance/api/automations/kinds",
+              Map.of(),
               null));
 
   private static final ObjectMapper JSON = new ObjectMapper();

@@ -123,6 +123,13 @@ components:
           $ref: "#/components/schemas/FailureDto"
         reason:
           type: string
+    AutomationKindsDto:
+      type: object
+      properties:
+        kinds:
+          type: array
+          items:
+            $ref: "#/components/schemas/KindDto"
     BumpDto:
       type: object
       properties:
@@ -342,6 +349,21 @@ components:
       format: date-time
       examples:
       - 2022-03-10T16:15:50Z
+    KindDto:
+      type: object
+      properties:
+        kind:
+          type: string
+        label:
+          type: string
+        committablePaths:
+          type: array
+          items:
+            type: string
+        approvalRoles:
+          type: array
+          items:
+            type: string
     PackageDto:
       type: object
       properties:
@@ -685,6 +707,29 @@ paths:
         - qits:admin
         - qits:admin-agent
         - qits:system
+  /maintenance/api/automations/kinds:
+    get:
+      summary: Every release-request automation kind this build offers
+      operationId: listAutomationKinds
+      responses:
+        "200":
+          description: "Every registered, switched-on kind, by id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutomationKindsDto"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      tags:
+      - Automation Kinds Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+        - qits:admin-agent
+        - qits:system
+        - qits:agent
   /maintenance/api/bumps:
     get:
       summary: "The newest bumps, of one repository or of all of them"
@@ -1220,4 +1265,4 @@ paths:
         - qits:agent
 info:
   title: qits-platform-maintenance API
-  version: 2026.1016.121007
+  version: 2026.1020.162040

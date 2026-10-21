@@ -1,0 +1,46 @@
+{
+  "kinds": [
+    {
+      "kind": "dependency-bump",
+      "label": "Dependency bump",
+      "committablePaths": [
+        ":(glob)**/pom.xml",
+        ":(glob)**/package.json",
+        ":(glob)**/package-lock.json",
+        ":(glob)**/Dockerfile",
+        ":(glob)**/Dockerfile.*",
+        ":(glob)**/*.Dockerfile"
+      ],
+      "approvalRoles": []
+    },
+    {
+      "kind": "entity-diagram",
+      "label": "Entity diagram",
+      "committablePaths": [
+        ":(glob)docs/database/**"
+      ],
+      "approvalRoles": [
+        "agent",
+        "person"
+      ]
+    },
+    {
+      "kind": "estate-pins",
+      "label": "Estate pins",
+      "committablePaths": [],
+      "approvalRoles": []
+    },
+    {
+      "kind": "screenshot-baselines",
+      "label": "Screenshot baselines",
+      "committablePaths": [
+        ":(glob)**/__screenshots__/**",
+        ":(glob)**/testing/browser/renderer.txt"
+      ],
+      "approvalRoles": [
+        "agent",
+        "person"
+      ]
+    }
+  ]
+}

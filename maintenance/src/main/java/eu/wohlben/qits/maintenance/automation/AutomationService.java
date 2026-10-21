@@ -8,6 +8,8 @@ import eu.wohlben.qits.maintenance.bump.ReleaseRequestClient;
 import eu.wohlben.qits.maintenance.bump.changelog.ChangelogRange;
 import eu.wohlben.qits.maintenance.bump.changelog.ChangelogRanges;
 import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
+import eu.wohlben.qits.maintenance.dto.AutomationKindsDto;
+import eu.wohlben.qits.maintenance.dto.AutomationKindsDto.KindDto;
 import eu.wohlben.qits.maintenance.dto.FailureDto;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto.AutomationDto;
@@ -325,6 +327,26 @@ public class AutomationService {
   /** The kind offered under that id: registered and switched on. */
   public Optional<ReleaseRequestAutomation> kind(String kind) {
     return kinds().stream().filter(candidate -> candidate.kind().equals(kind)).findFirst();
+  }
+
+  /**
+   * <b>The catalogue</b> (epic qits-1038): {@code GET /maintenance/api/automations/kinds}'s answer,
+   * built from {@link #kinds()} — already sorted by kind — with each kind's {@code approvalRoles}
+   * sorted too, so qits-projects' {@code AutomationContentSource} can open an approval requirement
+   * from a kind's own declaration without holding a kind table of its own.
+   */
+  public AutomationKindsDto kindsDto() {
+    List<KindDto> entries =
+        kinds().stream()
+            .map(
+                k ->
+                    new KindDto(
+                        k.kind(),
+                        k.label(),
+                        List.copyOf(k.committablePaths()),
+                        k.approvalRoles().stream().sorted().toList()))
+            .toList();
+    return new AutomationKindsDto(entries);
   }
 
   /**

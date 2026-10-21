@@ -351,6 +351,27 @@
           }
         }
       ]
+    },
+    {
+      "name": "the automation kinds catalogue",
+      "slug": "the-automation-kinds-catalogue",
+      "params": {},
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "listAutomationKinds",
+          "method": "GET",
+          "path": "/maintenance/api/automations/kinds",
+          "status": 200,
+          "file": "the-automation-kinds-catalogue/listAutomationKinds.json",
+          "frozen": {
+            "ids": [],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        }
+      ]
     }
   ]
 }

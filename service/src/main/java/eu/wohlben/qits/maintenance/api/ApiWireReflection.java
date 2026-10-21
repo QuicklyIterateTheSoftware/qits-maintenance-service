@@ -2,6 +2,7 @@ package eu.wohlben.qits.maintenance.api;
 
 import eu.wohlben.qits.maintenance.dto.AdoptionJourneyDto;
 import eu.wohlben.qits.maintenance.dto.ArtifactDto;
+import eu.wohlben.qits.maintenance.dto.AutomationKindsDto;
 import eu.wohlben.qits.maintenance.dto.BumpDto;
 import eu.wohlben.qits.maintenance.dto.PendingBumpsDto;
 import eu.wohlben.qits.maintenance.dto.DependencyDto;
@@ -47,6 +48,10 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
       ReleaseRequestAutomationController.RunRequest.class,
       ReleaseRequestAutomationsDto.class,
       ReleaseRequestAutomationsDto.AutomationDto.class,
+      // The automation kinds catalogue (epic qits-1038): qits-projects' AutomationContentSource
+      // reads it to open approval requirements from a kind's own declaration.
+      AutomationKindsDto.class,
+      AutomationKindsDto.KindDto.class,
       // Why a run went red (qits-1116), on an automation entry and on a bump.
       FailureDto.class,
       ScanController.StartScanRequest.class,

@@ -71,6 +71,7 @@ public class ProviderStates {
       "a release request with automations at its newest fold";
   public static final String A_RELEASE_REQUEST_WITH_AN_AUTOMATION_TO_RERUN_FOR_A_WORK_ITEM =
       "a release request with an automation to re-run for a work item";
+  public static final String THE_AUTOMATION_KINDS_CATALOGUE = "the automation kinds catalogue";
 
   /** The work item the CLI's {@code qits maintenance automation run --work-item} names. */
   static final String WORK_ITEM = "qits-112";
@@ -125,6 +126,7 @@ public class ProviderStates {
     states.put(
         A_RELEASE_REQUEST_WITH_AN_AUTOMATION_TO_RERUN_FOR_A_WORK_ITEM,
         this::releaseRequestToRerunForAWorkItem);
+    states.put(THE_AUTOMATION_KINDS_CATALOGUE, ProviderStates::automationKindsCatalogue);
   }
 
   /** Every state name this provider answers for. */
@@ -264,6 +266,14 @@ public class ProviderStates {
 
   /** Nothing of this state's own: the list it answers holds no bump a state created. */
   private Setup noPendingBumps() {
+    return new Setup(Map.of(), List.of());
+  }
+
+  /**
+   * Nothing of this state's own either: the catalogue is the registered {@code
+   * ReleaseRequestAutomation} beans this build offers, read from the code rather than seeded.
+   */
+  private static Setup automationKindsCatalogue() {
     return new Setup(Map.of(), List.of());
   }
 

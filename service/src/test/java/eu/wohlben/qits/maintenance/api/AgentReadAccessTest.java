@@ -82,6 +82,11 @@ class AgentReadAccessTest {
   }
 
   @Test
+  void anAgentReadsTheAutomationKinds() {
+    agent().get(BASE + "/automations/kinds").then().statusCode(200);
+  }
+
+  @Test
   void anAgentReadsTheBumps() {
     agent().get(BASE + "/bumps").then().statusCode(200);
     agent().get(BASE + "/bumps/pending").then().statusCode(200);
@@ -107,5 +112,6 @@ class AgentReadAccessTest {
   @Test
   void aRoleOutsideTheBoundaryIsStillRefused() {
     as("qits:reader").get(BASE + "/repositories").then().statusCode(403);
+    as("qits:reader").get(BASE + "/automations/kinds").then().statusCode(403);
   }
 }
