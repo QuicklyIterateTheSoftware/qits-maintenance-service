@@ -127,6 +127,15 @@ public class DependencyBumpAutomation implements ReleaseRequestAutomation {
     return Stage.SOURCE;
   }
 
+  /**
+   * Internal pins only, moved by ruling (epic qits-1038): {@code dependency-bump} is already gated
+   * by CI, so no approval is required.
+   */
+  @Override
+  public Set<String> approvalRoles() {
+    return Set.of();
+  }
+
   @Override
   public Applicability applicability(AutomationSubject subject) {
     boolean wrapper = wrapper(subject);

@@ -249,6 +249,12 @@ public class EstatePinsAutomation implements ReleaseRequestAutomation {
     return Stage.SOURCE;
   }
 
+  /** Internal pins moved by ruling, not by review (epic qits-1038): no approval is required. */
+  @Override
+  public Set<String> approvalRoles() {
+    return Set.of();
+  }
+
   /** {@code EstatePinRefresh.attempt}'s decision, at the fold: see the class javadoc. */
   @Override
   public Plan plan(AutomationSubject subject) {

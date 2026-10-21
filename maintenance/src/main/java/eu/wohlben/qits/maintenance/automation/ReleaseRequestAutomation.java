@@ -2,6 +2,7 @@ package eu.wohlben.qits.maintenance.automation;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * <b>A release-request automation</b> (epic qits-978): a regeneration that has to land INSIDE a
@@ -122,4 +123,15 @@ public interface ReleaseRequestAutomation {
   default boolean checkedByQa() {
     return false;
   }
+
+  /**
+   * <b>The roles that may approve a fold this kind commits into</b> (epic qits-1038): {@code
+   * "person"}, {@code "agent"}, or both — rendered on {@code GET /maintenance/api/automations/kinds}
+   * and read by qits-projects' {@code AutomationContentSource}, which opens one approval requirement
+   * admitting these roles whenever the fold changes a path matching {@link #committablePaths()}.
+   * {@code Set.of()} means the kind needs no approval at all. No default: every kind states its own
+   * choice, because the roles a generated commit may ship under are a decision about THAT content,
+   * never a default this interface gets to make for a kind nobody has looked at yet.
+   */
+  Set<String> approvalRoles();
 }

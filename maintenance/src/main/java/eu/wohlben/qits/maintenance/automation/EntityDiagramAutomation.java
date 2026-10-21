@@ -123,6 +123,12 @@ public class EntityDiagramAutomation implements ReleaseRequestAutomation {
     return true;
   }
 
+  /** A generated diagram lands in the fold unreviewed (epic qits-1038); an agent or a person approves it. */
+  @Override
+  public Set<String> approvalRoles() {
+    return Set.of("agent", "person");
+  }
+
   /**
    * What the generator reads: the sources it compiles and the poms that decide what it compiles
    * against (qits-1133). A fold that changed neither — a screenshot join, a lockfile, a README —

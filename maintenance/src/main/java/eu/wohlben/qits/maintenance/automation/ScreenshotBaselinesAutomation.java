@@ -6,6 +6,7 @@ import eu.wohlben.qits.maintenance.bump.CiClient;
 import eu.wohlben.qits.maintenance.githost.FileLookup;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.util.List;
+import java.util.Set;
 
 /**
  * <b>Screenshot baselines</b>: render a release request's screenshot tests in the CI image the QA
@@ -115,6 +116,12 @@ public class ScreenshotBaselinesAutomation implements ReleaseRequestAutomation {
   @Override
   public boolean checkedByQa() {
     return true;
+  }
+
+  /** A generated screenshot lands in the fold unreviewed (epic qits-1038); an agent or a person approves it. */
+  @Override
+  public Set<String> approvalRoles() {
+    return Set.of("agent", "person");
   }
 
   /** Whether a {@code package.json} declares the script. One that does not parse declares nothing. */

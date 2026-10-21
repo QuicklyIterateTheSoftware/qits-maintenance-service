@@ -92,6 +92,30 @@ class AutomationRegistryTest {
     }
   }
 
+  /**
+   * <b>Every kind declares the approval roles epic qits-1038 decided</b> (qits-1045):
+   * {@code screenshot-baselines} and {@code entity-diagram} admit an agent or a person —
+   * generated content a release request would otherwise ship unreviewed — and {@code estate-pins}
+   * and {@code dependency-bump}, which move internal pins only and are already gated by CI, admit
+   * nobody.
+   */
+  @Test
+  void everyKindDeclaresItsApprovalRoles() {
+    for (ReleaseRequestAutomation kind : automations.kinds()) {
+      Set<String> expected =
+          switch (kind.kind()) {
+            case ScreenshotBaselinesAutomation.KIND, EntityDiagramAutomation.KIND ->
+                Set.of("agent", "person");
+            case EstatePinsAutomation.KIND, DependencyBumpAutomation.KIND -> Set.of();
+            default ->
+                throw new AssertionError(
+                    "a new kind declares approvalRoles with no expectation pinned here: "
+                        + kind.kind());
+          };
+      assertEquals(expected, kind.approvalRoles(), kind.kind());
+    }
+  }
+
   /** The other direction holds by design: the bump's manifests are the diagram's inputs. */
   @Test
   void aDerivedKindReadsWhatASourceKindWrites() {
