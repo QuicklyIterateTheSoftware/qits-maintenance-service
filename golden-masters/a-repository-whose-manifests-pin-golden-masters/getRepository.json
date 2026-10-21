@@ -1,0 +1,42 @@
+{
+  "name": "contract-service",
+  "project": "qits",
+  "archetype": "SERVICE",
+  "lastScanAt": "2026-01-01T00:00:00Z",
+  "headSha": "3f1a9c0b7d2e4f5a6b8c9d0e1f2a3b4c5d6e7f80",
+  "status": "OK",
+  "message": null,
+  "pending": 0,
+  "groups": [],
+  "pins": [
+    {
+      "manifestPath": "package.json",
+      "ecosystem": "npm",
+      "name": "@qits/contract-service-golden-masters",
+      "version": "2026.1.1",
+      "range": null,
+      "kind": "INTERNAL",
+      "latest": null,
+      "latestError": null,
+      "pending": false,
+      "group": null,
+      "location": "dependency:@qits/contract-service-golden-masters",
+      "scope": "DIRECT"
+    },
+    {
+      "manifestPath": "pom.xml",
+      "ecosystem": "maven",
+      "name": "eu.wohlben.qits:contract-service-golden-masters",
+      "version": "2026.1.1",
+      "range": null,
+      "kind": "INTERNAL",
+      "latest": null,
+      "latestError": null,
+      "pending": false,
+      "group": null,
+      "location": "dependency:eu.wohlben.qits:contract-service-golden-masters",
+      "scope": "DIRECT"
+    }
+  ],
+  "transitives": []
+}

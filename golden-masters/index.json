@@ -217,6 +217,31 @@
       ]
     },
     {
+      "name": "a repository whose manifests pin golden masters",
+      "slug": "a-repository-whose-manifests-pin-golden-masters",
+      "params": {
+        "repoName": "contract-service"
+      },
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "getRepository",
+          "method": "GET",
+          "path": "/maintenance/api/repositories/{repoName}",
+          "status": 200,
+          "file": "a-repository-whose-manifests-pin-golden-masters/getRepository.json",
+          "frozen": {
+            "ids": [],
+            "instants": [
+              "$.lastScanAt"
+            ],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
       "name": "a repository with downstream components",
       "slug": "a-repository-with-downstream-components",
       "params": {

@@ -59,6 +59,8 @@ public class ProviderStates {
   public static final String PENDING_BUMPS = "pending bumps";
   public static final String NO_PENDING_BUMPS = "no pending bumps";
   public static final String MANIFESTS_THAT_PIN_ARTIFACTS = "manifests that pin artifacts";
+  public static final String A_REPOSITORY_WHOSE_MANIFESTS_PIN_GOLDEN_MASTERS =
+      "a repository whose manifests pin golden masters";
   public static final String A_REPOSITORY_WITH_DOWNSTREAM_COMPONENTS =
       "a repository with downstream components";
   public static final String A_RELEASE_REQUEST_WITH_AUTOMATIONS =
@@ -117,6 +119,8 @@ public class ProviderStates {
     states.put(PENDING_BUMPS, this::pendingBumps);
     states.put(NO_PENDING_BUMPS, this::noPendingBumps);
     states.put(MANIFESTS_THAT_PIN_ARTIFACTS, this::manifestsThatPinArtifacts);
+    states.put(
+        A_REPOSITORY_WHOSE_MANIFESTS_PIN_GOLDEN_MASTERS, this::repositoryPinningGoldenMasters);
     states.put(A_REPOSITORY_WITH_DOWNSTREAM_COMPONENTS, this::downstreamComponents);
     states.put(A_RELEASE_REQUEST_WITH_AUTOMATIONS, this::releaseRequestWithAutomations);
     states.put(A_RELEASE_REQUEST_WITH_A_FAILED_AUTOMATION, this::releaseRequestToRerun);
@@ -352,6 +356,38 @@ public class ProviderStates {
         released);
     store.upsertDaemonArtifact(
         "qits-eventstream-daemon", "2026.811.1", "qits-eventstream-javalib", released);
+    Map<String, String> params = new TreeMap<>();
+    params.put("repoName", REPOSITORY);
+    return new Setup(params, List.of());
+  }
+
+  /**
+   * One repository whose manifests pin another repository's golden-master packages — a maven jar
+   * and an npm package, both named {@code <app>-golden-masters} — which is what {@code
+   * getRepository} answers for qits-projects' contract-change approval source ({@code
+   * ContractChangeSource}): it reads this repository's {@code pins[]} to tell whether a consumer
+   * pins the provider whose fold just touched {@code golden-masters/}.
+   */
+  private Setup repositoryPinningGoldenMasters() {
+    emptyEstate();
+    scanned(
+        REPOSITORY,
+        REPOSITORY_ID,
+        RepositoryArchetype.SERVICE,
+        ParsedPin.of(
+            Ecosystem.MAVEN,
+            "pom.xml",
+            "eu.wohlben.qits:contract-service-golden-masters",
+            "2026.1.1",
+            null,
+            "dependency:eu.wohlben.qits:contract-service-golden-masters"),
+        ParsedPin.of(
+            Ecosystem.NPM,
+            "package.json",
+            "@qits/contract-service-golden-masters",
+            "2026.1.1",
+            null,
+            "dependency:@qits/contract-service-golden-masters"));
     Map<String, String> params = new TreeMap<>();
     params.put("repoName", REPOSITORY);
     return new Setup(params, List.of());

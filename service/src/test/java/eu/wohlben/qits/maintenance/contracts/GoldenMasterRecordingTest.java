@@ -150,6 +150,14 @@ class GoldenMasterRecordingTest {
               "/maintenance/api/pins",
               Map.of(),
               null),
+          // qits-projects' ContractChangeSource reads this to see a consumer's pins[]
+          // (HttpDownstreamPins.pinsOf, epic qits-1038).
+          Interaction.read(
+              ProviderStates.A_REPOSITORY_WHOSE_MANIFESTS_PIN_GOLDEN_MASTERS,
+              "getRepository",
+              "/maintenance/api/repositories/{repoName}",
+              Map.of(),
+              null),
           Interaction.read(
               ProviderStates.A_REPOSITORY_WITH_DOWNSTREAM_COMPONENTS,
               "getRepositoryDownstream",
