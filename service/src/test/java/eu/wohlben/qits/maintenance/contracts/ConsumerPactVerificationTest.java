@@ -183,4 +183,14 @@ class ConsumerPactVerificationTest {
     return states.params(
         ProviderStates.A_RELEASE_REQUEST_WITH_AN_AUTOMATION_TO_RERUN_FOR_A_WORK_ITEM);
   }
+
+  @State(ProviderStates.THE_AUTOMATION_KINDS_CATALOGUE)
+  Map<String, String> theAutomationKindsCatalogue() {
+    return states.params(ProviderStates.THE_AUTOMATION_KINDS_CATALOGUE);
+  }
+
+  @State(ProviderStates.A_REPOSITORY_WHOSE_MANIFESTS_PIN_GOLDEN_MASTERS)
+  Map<String, String> aRepositoryWhoseManifestsPinGoldenMasters() {
+    return states.params(ProviderStates.A_REPOSITORY_WHOSE_MANIFESTS_PIN_GOLDEN_MASTERS);
+  }
 }
