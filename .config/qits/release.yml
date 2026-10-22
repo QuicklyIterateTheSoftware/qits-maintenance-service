@@ -4,6 +4,9 @@ artifacts:
 # The provider golden masters (epic qits-112): the platform packages `golden-masters/` as
 # `eu.wohlben.qits:qits-maintenance-golden-masters` and `@qits/maintenance-golden-masters`, each
 # published only when its content changed. `GoldenMasterRecordingTest` records them.
+# Since epic qits-1038 they also record "the automation kinds catalogue"
+# (GET /maintenance/api/automations/kinds), which qits-projects' AutomationContentSource reads to
+# open an approval requirement from each kind's own approvalRoles().
 # THE PACTS (epics qits-546, qits-965; ticket qits-1149): qits-maintenance's own consumer pacts,
 # one per provider it calls, declared the way qits-landing-app declares its — keyed by the
 # provider's repository name. Each sits flat in `pacts/` as
