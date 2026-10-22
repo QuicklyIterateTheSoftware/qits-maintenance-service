@@ -27,6 +27,7 @@ import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import java.time.Duration;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -159,19 +160,25 @@ class QaCheckedAutomationTest {
     assertEquals(0, triggers());
   }
 
+  private static final Set<String> DISPATCHED =
+      Set.of(AutomationState.REQUESTED.name(), AutomationState.RUNNING.name());
+
   /** A caller that does not accept DEFERRED gets today's pre-run, whatever QA checks. */
   @Test
   void aCallerThatDoesNotAcceptDeferredRunsAsToday() {
     ReleaseRequestAutomationsDto answer = trigger(FOLD_A, null, null, WITHOUT_DEFERRED);
 
+    // Dispatched, not deferred: the answer reads REQUESTED, or RUNNING when the dispatch already
+    // reached qits-ci before the answer was built (qits-1516 saw that race in a gate).
     AutomationDto screenshots =
         AutomationFixture.entry(answer, ScreenshotBaselinesAutomation.KIND);
-    assertEquals(AutomationState.REQUESTED.name(), screenshots.state(), screenshots.detail());
+    assertTrue(
+        DISPATCHED.contains(screenshots.state()),
+        screenshots.state() + ": " + screenshots.detail());
     assertNotNull(screenshots.bumpId());
     assertEquals(1, rows(FOLD_A, ScreenshotBaselinesAutomation.KIND).size());
-    assertEquals(
-        AutomationState.REQUESTED.name(),
-        AutomationFixture.entry(answer, EntityDiagramAutomation.KIND).state());
+    AutomationDto diagram = AutomationFixture.entry(answer, EntityDiagramAutomation.KIND);
+    assertTrue(DISPATCHED.contains(diagram.state()), diagram.state() + ": " + diagram.detail());
     assertTrue(triggers() >= 1, "the kinds were dispatched");
   }
 
