@@ -31,6 +31,18 @@
       "approvalRoles": []
     },
     {
+      "kind": "golden-recordings-maven",
+      "label": "Golden recordings (maven)",
+      "committablePaths": [],
+      "approvalRoles": []
+    },
+    {
+      "kind": "golden-recordings-npm",
+      "label": "Golden recordings (npm)",
+      "committablePaths": [],
+      "approvalRoles": []
+    },
+    {
       "kind": "screenshot-baselines",
       "label": "Screenshot baselines",
       "committablePaths": [

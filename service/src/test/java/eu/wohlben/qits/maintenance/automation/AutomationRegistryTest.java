@@ -5,10 +5,14 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.maintenance.bump.CiClient;
+import eu.wohlben.qits.maintenance.entity.MtRepository;
+import eu.wohlben.qits.maintenance.githost.FileLookup;
+import eu.wohlben.qits.maintenance.githost.GitHostReader;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
@@ -51,7 +55,54 @@ class AutomationRegistryTest {
     assertDisjoint(automations.kinds(), null);
   }
 
-  /** Each of the four kinds in the stage the ticket put it in. */
+  /**
+   * <b>Per subject, for both build shapes</b> (qits-1516): the two {@code golden-recordings-*} kinds
+   * both write {@code pacts/*.json}, and the root {@code pom.xml} decides which one names it — a
+   * maven fold (with a {@code package.json} beside the pom) and an npm fold each give the path to
+   * exactly one of them.
+   */
+  @Test
+  void committablePathsAreDisjointPerSubjectForBothBuildShapes() {
+    AutomationSubject maven = subject(Map.of("pom.xml", "<project/>", "package.json", "{}"));
+    assertEquals(
+        List.of(":(glob)pacts/*.json"),
+        automations.kind(GoldenRecordingsMavenAutomation.KIND).orElseThrow().committablePaths(maven));
+    assertEquals(
+        List.of(),
+        automations.kind(GoldenRecordingsNpmAutomation.KIND).orElseThrow().committablePaths(maven));
+    assertDisjoint(automations.kinds(), maven);
+
+    AutomationSubject npm = subject(Map.of("package.json", "{}"));
+    assertEquals(
+        List.of(":(glob)pacts/*.json"),
+        automations.kind(GoldenRecordingsNpmAutomation.KIND).orElseThrow().committablePaths(npm));
+    assertEquals(
+        List.of(),
+        automations.kind(GoldenRecordingsMavenAutomation.KIND).orElseThrow().committablePaths(npm));
+    assertDisjoint(automations.kinds(), npm);
+  }
+
+  /** A subject whose fold holds exactly these root files, and nothing else. */
+  private static AutomationSubject subject(Map<String, String> files) {
+    GitHostReader host =
+        new GitHostReader() {
+          @Override
+          public FileLookup blob(String project, String repository, String revision, String path) {
+            String content = files.get(path);
+            return content == null ? FileLookup.absent() : FileLookup.found(content);
+          }
+        };
+    MtRepository repository = new MtRepository();
+    repository.name = "repo-under-test";
+    repository.project = "qits";
+    repository.archetype = "SERVICE";
+    String sha = "3f1a9c0b7d2e4f5a6b8c9d0e1f2a3b4c5d6e7f80";
+    return new AutomationSubject(
+        repository, "request-1", sha, "release/request-1", List.of("work"), null,
+        new FoldReader(host, "qits", "repo-under-test", sha));
+  }
+
+  /** Each kind in the stage its ticket put it in. */
   @Test
   void everyKindHasItsStage() {
     for (ReleaseRequestAutomation kind : automations.kinds()) {
@@ -97,7 +148,8 @@ class AutomationRegistryTest {
    * {@code screenshot-baselines} and {@code entity-diagram} admit an agent or a person —
    * generated content a release request would otherwise ship unreviewed — and {@code estate-pins}
    * and {@code dependency-bump}, which move internal pins only and are already gated by CI, admit
-   * nobody.
+   * nobody — nor do qits-1516's two {@code golden-recordings-*} kinds, whose re-recorded pacts the
+   * gate re-checks and the providers verify.
    */
   @Test
   void everyKindDeclaresItsApprovalRoles() {
@@ -106,7 +158,11 @@ class AutomationRegistryTest {
           switch (kind.kind()) {
             case ScreenshotBaselinesAutomation.KIND, EntityDiagramAutomation.KIND ->
                 Set.of("agent", "person");
-            case EstatePinsAutomation.KIND, DependencyBumpAutomation.KIND -> Set.of();
+            case EstatePinsAutomation.KIND,
+                DependencyBumpAutomation.KIND,
+                GoldenRecordingsMavenAutomation.KIND,
+                GoldenRecordingsNpmAutomation.KIND ->
+                Set.of();
             default ->
                 throw new AssertionError(
                     "a new kind declares approvalRoles with no expectation pinned here: "

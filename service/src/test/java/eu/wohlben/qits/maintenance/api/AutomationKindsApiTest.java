@@ -30,7 +30,13 @@ class AutomationKindsApiTest {
         .get(PATH)
         .then()
         .statusCode(200)
-        .body("kinds.kind", contains("dependency-bump", "entity-diagram", "estate-pins", "screenshot-baselines"))
+        .body("kinds.kind", contains(
+                "dependency-bump",
+                "entity-diagram",
+                "estate-pins",
+                "golden-recordings-maven",
+                "golden-recordings-npm",
+                "screenshot-baselines"))
         .body("kinds.find { it.kind == 'screenshot-baselines' }.label", org.hamcrest.Matchers.is("Screenshot baselines"))
         .body(
             "kinds.find { it.kind == 'screenshot-baselines' }.committablePaths",
@@ -42,6 +48,13 @@ class AutomationKindsApiTest {
             "kinds.find { it.kind == 'entity-diagram' }.approvalRoles", contains("agent", "person"))
         .body("kinds.find { it.kind == 'estate-pins' }.approvalRoles", empty())
         .body("kinds.find { it.kind == 'dependency-bump' }.approvalRoles", empty())
+        .body(
+            "kinds.find { it.kind == 'golden-recordings-maven' }.label",
+            org.hamcrest.Matchers.is("Golden recordings (maven)"))
+        .body("kinds.find { it.kind == 'golden-recordings-maven' }.committablePaths", empty())
+        .body("kinds.find { it.kind == 'golden-recordings-maven' }.approvalRoles", empty())
+        .body("kinds.find { it.kind == 'golden-recordings-npm' }.committablePaths", empty())
+        .body("kinds.find { it.kind == 'golden-recordings-npm' }.approvalRoles", empty())
         .body(
             "kinds.find { it.kind == 'dependency-bump' }.committablePaths",
             containsInAnyOrder(
