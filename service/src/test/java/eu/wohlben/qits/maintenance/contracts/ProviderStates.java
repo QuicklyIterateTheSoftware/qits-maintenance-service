@@ -442,16 +442,36 @@ public class ProviderStates {
   }
 
   /**
-   * One release request at one fold, with a row for every kind this build offers: screenshot
+   * The kinds {@link #releaseRequestWithAutomations} seeds a row for: the four registered before
+   * qits-1516, and deliberately not every kind this build offers. qits-projects-service's and
+   * qits-platform-access-cli's pacts of this state pin {@code $.automations} at these four entries
+   * (a max length of 4), so a row for each of the {@code golden-recordings-*} kinds would fail their
+   * verification here although neither consumer cares which kinds it is told about. The catalogue
+   * state is where every registered kind is answered.
+   */
+  private static final Set<String> SEEDED_KINDS =
+      Set.of("dependency-bump", "entity-diagram", "estate-pins", "screenshot-baselines");
+
+  /**
+   * One release request at one fold, with a row for each of the {@link #SEEDED_KINDS}: screenshot
    * baselines FAILED (with its failing step and two CI runs), every other kind alternately FRESH and
-   * COMMITTED. The trigger at that fold answers from those rows and asks no peer.
+   * COMMITTED. The trigger at that fold answers from those rows and asks no peer for them; the
+   * kinds with no row are asked about a fold whose root holds neither a pom nor a package.json, so
+   * they answer NOT_APPLICABLE and are left out of the answer.
    */
   private Setup releaseRequestWithAutomations() {
     emptyEstate();
     scanned(REPOSITORY, REPOSITORY_ID, RepositoryArchetype.SERVICE);
+    peers.answer(
+        PeerTarget.GITHOST,
+        "/git/qits/" + REPOSITORY + "/tree/" + FOLD_SHA,
+        FakePeers.Scripted.ok("{\"entries\":[]}", Map.of("Git-Commit-Sha", FOLD_SHA)));
     int other = 0;
     int second = 0;
     for (ReleaseRequestAutomation kind : automations.kinds()) {
+      if (!SEEDED_KINDS.contains(kind.kind())) {
+        continue;
+      }
       String branch = AutomationService.BRANCH_PREFIX + kind.kind() + "/" + REQUEST_ID;
       Instant at = FUTURE.plusSeconds(++second);
       if (ScreenshotBaselinesAutomation.KIND.equals(kind.kind())) {
