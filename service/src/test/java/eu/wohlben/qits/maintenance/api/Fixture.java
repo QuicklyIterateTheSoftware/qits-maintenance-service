@@ -359,32 +359,26 @@ public final class Fixture {
   }
 
   /**
-   * qits-ci has nothing queued and nothing running, and one connected runner with ONE slot — room
-   * for exactly one bump, the state the dispatch gate waits for.
+   * qits-ci has nothing queued and nothing running — the state the dispatch gate waits for.
    *
    * <p>Every test that expects the clock to hand a bump out has to say this: an UNSCRIPTED snapshot
    * is a 404, and the gate reads a snapshot it could not read as BUSY.
    */
   public static void scriptCiQueueEmpty(FakePeers peers) {
-    scriptCiQueue(peers, 0, runner("qits-ci", 1, true, false));
-  }
-
-  /** qits-ci is full: {@code active} runs queued or running on a runner with that many slots. */
-  public static void scriptCiQueue(FakePeers peers, int active) {
-    scriptCiQueue(peers, active, runner("qits-ci", Math.max(1, active), true, false));
+    scriptCiQueue(peers, 0);
   }
 
   /**
-   * qits-ci's queue snapshot — {@code GET /ci/api/runs/queue} — with {@code active} runs and these
-   * runners.
+   * qits-ci's queue snapshot — {@code GET /ci/api/runs/queue} — with {@code active} runs. <b>There
+   * is no {@code runners} field any more</b> (epic qits-1481): the snapshot carries only {@code
+   * running} and {@code queued}, and the dispatch gate no longer reads a capacity out of it — see
+   * {@code BumpDispatcher}'s class doc.
    *
    * <p>The first active run is QUEUED and the rest RUNNING: the gate counts both halves rather than
    * matching on a status, and a fixture that only ever filled one half would let a gate that read
    * only the other pass unnoticed.
-   *
-   * @param runners JSON objects, see {@link #runner}
    */
-  public static void scriptCiQueue(FakePeers peers, int active, String... runners) {
+  public static void scriptCiQueue(FakePeers peers, int active) {
     StringBuilder running = new StringBuilder();
     StringBuilder queued = new StringBuilder();
     for (int index = 0; index < active; index++) {
@@ -404,24 +398,7 @@ public final class Fixture {
                 + running
                 + "],\"queued\":["
                 + queued
-                + "],\"runners\":["
-                + String.join(",", runners)
                 + "]}"));
-  }
-
-  /** One runner as qits-ci's queue snapshot lists it. */
-  public static String runner(String name, int slots, boolean connected, boolean quarantined) {
-    return "{\"id\":\"00000000-0000-0000-0000-"
-        + String.format("%012d", Math.abs(name.hashCode()))
-        + "\",\"name\":\""
-        + name
-        + "\",\"slots\":"
-        + slots
-        + ",\"held\":0,\"connected\":"
-        + connected
-        + ",\"quarantined\":"
-        + quarantined
-        + "}";
   }
 
   public static void scriptRun(FakePeers peers, String runId, String status) {

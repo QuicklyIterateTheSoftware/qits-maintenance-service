@@ -7,11 +7,10 @@ import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
 /**
- * What opens the owed repositories' main-only release requests, as many per tick as qits-ci has
- * free slots.
+ * What opens the owed repositories' main-only release requests, every READY one per tick.
  *
- * <p><b>The tick is short and the decision is small</b>: ask whether anything is owed and how many
- * of qits-ci's slots are free and, if any are, open that many of the deepest owed repositories'
+ * <p><b>The tick is short and the decision is small</b>: ask whether anything is owed and whether
+ * qits-ci can be asked at all and, if so, open every READY one of the deepest owed repositories'
  * requests; what the tick returns — the requests it opened — is for the tests. Everything about why
  * — the gates, the holds, the ordering, the cycle rule — is {@link BumpDispatcher}'s; what lives here
  * is the clock and the one guarantee a schedule owes: a failure is a line in the log and a retry

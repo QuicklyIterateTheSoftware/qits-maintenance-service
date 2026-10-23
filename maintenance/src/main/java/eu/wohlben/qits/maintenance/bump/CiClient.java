@@ -73,7 +73,11 @@ public class CiClient {
 
   /**
    * qits-ci's queue snapshot: everything it has accepted and not finished, across every
-   * repository, AND the runners that execute it — the capacity half the dispatch gate reads.
+   * repository. <b>It carries no capacity any more</b> (epic qits-1481): a run is a CI lease, and
+   * how many run at once is qits-system's {@code SlotAllocator} to grant, never a number qits-ci
+   * reports — a lease it cannot grant yet simply sits {@code QUEUED} rather than being refused. So
+   * the dispatch gate reads this for whether qits-ci could be asked at all, never for how much room
+   * it has.
    */
   public static final String QUEUE_PATH = "/ci/api/runs/queue";
 
@@ -599,15 +603,13 @@ public class CiClient {
   }
 
   /**
-   * How much room qits-ci has right now.
+   * Whether qits-ci could be asked at all right now.
    *
-   * @param slots how many runs its connected, unquarantined runners execute at once, or null when
-   *     the snapshot could not be read
    * @param active how many runs it has accepted and not finished, or null when the snapshot could
    *     not be read
    * @param error why it could not be read
    */
-  public record QueueState(Integer slots, Integer active, String error) {
+  public record QueueState(Integer active, String error) {
 
     /**
      * Whether the snapshot answered at all. <b>An unreadable queue is not an empty one</b>: a
@@ -615,24 +617,23 @@ public class CiClient {
      * at the one moment qits-ci is least able to say so.
      */
     public boolean readable() {
-      return slots != null && active != null;
+      return active != null;
     }
 
     static QueueState unreadable(String error) {
-      return new QueueState(null, null, error);
+      return new QueueState(null, error);
     }
   }
 
   /**
-   * qits-ci's capacity and what is already using it, from one read of {@code GET
-   * /ci/api/runs/queue}.
+   * What is already using qits-ci's queue, from one read of {@code GET /ci/api/runs/queue}.
    *
-   * <p><b>{@code slots} is qits-ci's own rule, {@code CiQueueForecast.slotCount}</b>: the sum of
-   * {@code max(0, slots)} over the runners that are {@code connected} and not {@code quarantined}.
-   * A runner that is not connected would claim nothing whatever its row grants, and a quarantined
-   * one takes nothing but its health check — counting either would hand qits-ci builds nobody is
-   * going to run. A field that is missing reads as the cautious answer: not connected, not
-   * quarantined, no slots.
+   * <p><b>There is no {@code slots} any more</b> (epic qits-1481): a run is a CI lease, how many
+   * run at once is qits-system's to grant, and qits-ci itself holds no runner, no connection and no
+   * quarantine state to report one from. A lease the estate cannot grant yet does not make qits-ci
+   * refuse the trigger — it queues the run and grants the lease later — so the dispatch gate no
+   * longer rations how many bumps it sends by a number read here; see {@link
+   * eu.wohlben.qits.maintenance.bump.BumpDispatcher}'s class doc for what replaced it.
    *
    * <p><b>{@code active} is every entry of {@code running} and {@code queued}, whatever its status
    * says.</b> qits-ci partitions QUEUED from everything else, so the honest reading of "how much is
@@ -640,8 +641,8 @@ public class CiClient {
    * qits-ci invents tomorrow is still work in flight, and a gate matching on a status would quietly
    * stop seeing it.
    *
-   * <p>A snapshot missing any of the three arrays is UNREADABLE rather than empty, for the reason
-   * {@link QueueState#readable()} gives.
+   * <p>A snapshot missing either array is UNREADABLE rather than empty, for the reason {@link
+   * QueueState#readable()} gives.
    */
   public QueueState queue() {
     PeerAnswer answer = peers.get(PeerTarget.CI, QUEUE_PATH).answer();
@@ -649,20 +650,12 @@ public class CiClient {
       return QueueState.unreadable("the queue could not be read: " + answer.failure());
     }
     JsonNode body = answer.json();
-    for (String field : List.of("running", "queued", "runners")) {
+    for (String field : List.of("running", "queued")) {
       if (body == null || !body.hasNonNull(field) || !body.get(field).isArray()) {
         return QueueState.unreadable("the queue snapshot carried no `" + field + "` array");
       }
     }
-    int slots = 0;
-    for (JsonNode runner : body.get("runners")) {
-      boolean connected = runner.path("connected").asBoolean(false);
-      boolean quarantined = runner.path("quarantined").asBoolean(false);
-      if (connected && !quarantined) {
-        slots += Math.max(0, runner.path("slots").asInt(0));
-      }
-    }
-    return new QueueState(slots, body.get("running").size() + body.get("queued").size(), null);
+    return new QueueState(body.get("running").size() + body.get("queued").size(), null);
   }
 
   private static List<String> runIds(JsonNode result) {

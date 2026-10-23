@@ -13,8 +13,12 @@ import java.util.Map;
 
 /**
  * <b>What qits-maintenance asks qits-ci, and why</b> (ticket qits-1149): the trigger that applies a
- * bump or an automation, the run it names, the automatic retry of a run, and the queue the
- * dispatcher paces itself by — every call {@link CiClient} makes.
+ * bump or an automation, the run it names, the automatic retry of a run, and the queue snapshot the
+ * dispatcher reads for whether qits-ci can be asked at all — every call {@link CiClient} makes.
+ * <b>The queue carries no capacity any more</b> (epic qits-1481): its provider state was renamed
+ * from {@code runners with free slots} to {@code a run queue with a run waiting}, and {@code
+ * runners[]} is gone from the body, because a run is now a CI lease and qits-system's allocator,
+ * never qits-ci, decides how many run at once.
  *
  * <p><b>Each trigger is its own state</b>, since the request is the recording's: qits-ci answers a
  * {@code MaintenanceBump} body with a run in {@code a repository a maintenance bump targets}. The
@@ -25,7 +29,7 @@ final class CiContract {
   static final GoldenMasters CI = GoldenMasters.of("qits-ci-service", "qits-ci");
 
   static final String A_FAILED_RUN_THAT_RETRIES_ANOTHER = "a failed run that retries another";
-  static final String RUNNERS_WITH_FREE_SLOTS = "runners with free slots";
+  static final String A_RUN_QUEUE_WITH_A_RUN_WAITING = "a run queue with a run waiting";
   static final String A_REPOSITORY_A_BUMP_TARGETS = "a repository a maintenance bump targets";
   static final String A_RELEASE_REQUEST_AUTOMATION_PIPELINE =
       "a repository with a ReleaseRequestAutomation platform pipeline";
@@ -124,19 +128,17 @@ final class CiContract {
           new PeerRow(
               GoldenInteraction.of(
                       Trigger.schedule("BumpDispatcher.tick"),
-                      RUNNERS_WITH_FREE_SLOTS,
+                      A_RUN_QUEUE_WITH_A_RUN_WAITING,
                       "getRunQueue")
-                  .consumes(
-                      "running[]",
-                      "queued[]",
-                      "runners[].connected",
-                      "runners[].quarantined",
-                      "runners[].slots")
-                  .anyLength("running", "queued", "runners"),
+                  .consumes("running[]", "queued[]")
+                  .anyLength("running", "queued"),
               (peers, p) -> {
+                // No more runners[] (epic qits-1481): the dispatcher reads this only for whether
+                // qits-ci can be asked at all, never for a slot count. See CiClient#queue and
+                // BumpDispatcher's class doc.
                 CiClient.QueueState queue = peers.ci().queue();
                 assertTrue(queue.readable(), queue.error());
-                assertTrue(queue.slots() > 0, "a connected runner with free slots");
+                assertEquals(2, queue.active(), "one running and one queued");
               }));
 
   static final PeerRow.Contract CONTRACT = new PeerRow.Contract(CI, ROWS);

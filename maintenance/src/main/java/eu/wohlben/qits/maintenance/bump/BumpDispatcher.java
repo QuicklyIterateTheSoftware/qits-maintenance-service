@@ -12,7 +12,6 @@ import eu.wohlben.qits.maintenance.entity.MtReleaseRequest;
 import eu.wohlben.qits.maintenance.entity.MtRepository;
 import eu.wohlben.qits.maintenance.latest.LatestResolver;
 import eu.wohlben.qits.maintenance.manifest.GroupConfig;
-import eu.wohlben.qits.maintenance.model.BumpStatus;
 import eu.wohlben.qits.maintenance.model.RepositoryStatus;
 import eu.wohlben.qits.maintenance.pending.Change;
 import eu.wohlben.qits.maintenance.pending.PendingChanges;
@@ -33,8 +32,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.jboss.logging.Logger;
 
 /**
- * A MAIN-ONLY RELEASE REQUEST FOR EVERY REPOSITORY OWED A BUMP AND WITHOUT ONE — as many per tick as
- * qits-ci has free slots, and always from the bottom of the chain.
+ * A MAIN-ONLY RELEASE REQUEST FOR EVERY REPOSITORY OWED A BUMP AND WITHOUT ONE — every READY one in
+ * the same tick, always from the bottom of the chain.
  *
  * <h2>What it does</h2>
  *
@@ -50,8 +49,24 @@ import org.jboss.logging.Logger;
  * <p><b>This used to cut a {@code maintenance/<group>} branch</b>, under a dispatch window that a
  * cron, a door or the debt itself opened. qits-1133 replaced the branch with the request (R2) and
  * removed the group path and the window with it (R5). The gates the group path learned the hard way
- * are kept, because a main-only request is still a CI build: the capacity gate, bottom of the chain
- * first, least recently dispatched first, the quiet hours and the refusal set.
+ * are kept, because a main-only request is still a CI build: bottom of the chain first, least
+ * recently dispatched first, the quiet hours and the refusal set.
+ *
+ * <h2>There is no capacity gate any more (epic qits-1481)</h2>
+ *
+ * <p><b>Behaviour change: this used to ration dispatch by qits-ci's free slots, and it no longer
+ * does, because qits-ci no longer has any to report.</b> A CI run is a lease, and how many run at
+ * once is qits-system's {@code SlotAllocator} to grant against every target's minimums — a fact
+ * qits-ci itself does not hold and {@code GET /ci/api/runs/queue} no longer carries ({@code
+ * runners} is gone; only {@code running} and {@code queued} are left, see {@link
+ * CiClient#queue()}). A lease the allocator cannot grant yet does not make the trigger door refuse
+ * the bump — it queues the run, same as it always queued a run behind a busier one, and qits-ci's
+ * own {@code CiRunOrdering} priority still decides who goes first there. So this class stopped
+ * rationing by a number it has no way to read and relies on
+ * qits-ci's queue to do the ordering it was always going to do anyway: every READY repository is
+ * sent in the same tick, exactly as {@link BumpOrder#nextUpTo} answers when asked for as many as
+ * there are candidates. What is left of {@link CiClient#queue()} here is read ONLY for whether
+ * qits-ci could be asked at all — an unreadable snapshot still means "do not dispatch blind".
  *
  * <h2>The gates, in the order they are asked</h2>
  *
@@ -65,14 +80,10 @@ import org.jboss.logging.Logger;
  *       withdrawn by its pre-run — the same set would only find nothing again. A person's withdrawal
  *       frees it. An unreadable answer holds, as every read here does.
  *   <li><b>Is this a quiet hour</b> ({@link MaintenanceConfig#bumpQuietHours()}). Empty by default.
- *   <li><b>How many of qits-ci's slots are free</b> — {@link CiClient#queue()}, one read of {@code
- *       GET /ci/api/runs/queue}, and an unreadable snapshot counts as BUSY. {@code free = slots -
- *       active - requested}: the connected, unquarantined runners' slots, minus every run qits-ci
- *       holds (running or queued), minus this service's automation rows qits-ci has not accepted yet.
- *       A RUNNING row already has its run in {@code active}, and counting it twice would hide a slot.
- *       How much qits-ci can take is a fact qits-ci reports about its runners, never a number
- *       configured here (qits-882).
- *   <li><b>Which owed repositories are READY</b> — up to {@code free} of them, from {@link
+ *   <li><b>Can qits-ci be asked at all</b> — {@link CiClient#queue()}, one read of {@code GET
+ *       /ci/api/runs/queue}, and an unreadable snapshot counts as BUSY: nothing is dispatched blind.
+ *       A readable one no longer bounds how many go (see above).
+ *   <li><b>Which owed repositories are READY</b> — every one of them, from {@link
  *       BumpOrder#nextUpTo}: an upstream that is itself owed goes before its consumer, and never more
  *       than one cycle break per tick.
  * </ol>
@@ -145,12 +156,9 @@ public class BumpDispatcher {
    * @param outcome the short name of the gate that answered
    * @param summary the sentence for a person
    * @param inFlight automation rows not yet ended, or null when the gate answered before asking
-   * @param slots qits-ci's connected, unquarantined runner slots, null when it was not asked or
-   *     could not be read
-   * @param free how many of those this tick may fill — slots minus qits-ci's active runs minus our
-   *     REQUESTED rows, floored at zero — null when it was not asked or could not be read
    * @param ciActive what qits-ci holds, running and queued, null when it was not asked or could not
-   *     be read
+   *     be read. <b>No longer a bound on {@code picks}</b> (epic qits-1481): qits-ci reports no
+   *     capacity any more, so this is read for visibility only — see the class doc
    * @param owed how many repositories are owed a bump and could still be sent one
    * @param held how many of those are held by a request already on its way
    * @param picks what would be dispatched this tick, in order — empty on every outcome but DISPATCH
@@ -159,15 +167,13 @@ public class BumpDispatcher {
       String outcome,
       String summary,
       Integer inFlight,
-      Integer slots,
-      Integer free,
       Integer ciActive,
       int owed,
       int held,
       List<BumpOrder.Pick> picks) {
 
     static Decision of(String outcome, String summary) {
-      return new Decision(outcome, summary, null, null, null, null, 0, 0, List.of());
+      return new Decision(outcome, summary, null, null, 0, 0, List.of());
     }
 
     /** The first pick, or null. */
@@ -212,18 +218,12 @@ public class BumpDispatcher {
 
     List<MtBump> active = store.activeBumps();
     int inFlight = active.size();
-    // A REQUESTED row is a build this service asked qits-ci for and qits-ci has not accepted yet, so
-    // it is in nobody's queue listing — it would be a slot counted free twice.
-    int requested =
-        (int)
-            active.stream().filter(bump -> BumpStatus.REQUESTED.name().equals(bump.status)).count();
 
     List<BumpOrder.Candidate> candidates = assess().candidates();
     int held = (int) candidates.stream().filter(BumpOrder.Candidate::held).count();
 
     if (candidates.isEmpty()) {
-      return new Decision(
-          "NOTHING_OWED", "nothing is owed a bump", inFlight, null, null, null, 0, 0, List.of());
+      return new Decision("NOTHING_OWED", "nothing is owed a bump", inFlight, null, 0, 0, List.of());
     }
 
     QuietHours quiet = config.bumpQuietHours();
@@ -240,71 +240,36 @@ public class BumpDispatcher {
               + ")",
           inFlight,
           null,
-          null,
-          null,
           candidates.size(),
           held,
           List.of());
     }
 
+    // qits-ci reports no capacity any more (epic qits-1481): this read is only for whether it can
+    // be asked at all. Dispatching blind is precisely the wavefront this gate exists for.
     CiClient.QueueState queue = ci.queue();
     if (!queue.readable()) {
-      // Unreadable is BUSY. Dispatching blind is precisely the wavefront this gate exists for.
       LOG.debugf("qits-ci's queue could not be read (%s); nothing is dispatched.", queue.error());
       return new Decision(
           "CI_UNREADABLE",
           "qits-ci's queue could not be read (" + queue.error() + "), which counts as busy",
           inFlight,
           null,
-          null,
-          null,
           candidates.size(),
           held,
           List.of());
     }
-    int slots = queue.slots();
     int ciActive = queue.active();
-    if (slots == 0) {
-      // No runner connected, or every one quarantined: nothing would claim a run.
-      return new Decision(
-          "NO_SLOTS",
-          "qits-ci has no slot to run anything: no runner is connected, or every one is quarantined",
-          inFlight,
-          0,
-          0,
-          ciActive,
-          candidates.size(),
-          held,
-          List.of());
-    }
-    int free = Math.max(0, slots - ciActive - requested);
-    if (free == 0) {
-      return new Decision(
-          "CI_BUSY",
-          "qits-ci has "
-              + slots
-              + " slot(s), "
-              + ciActive
-              + " active run(s) and "
-              + requested
-              + " bump(s) waiting to reach it; nothing is free",
-          inFlight,
-          slots,
-          0,
-          ciActive,
-          candidates.size(),
-          held,
-          List.of());
-    }
 
-    List<BumpOrder.Pick> picks = BumpOrder.nextUpTo(candidates, artifacts.producers(), free);
+    // Every READY candidate goes in the same tick: qits-ci no longer rations by a slot count, and
+    // a lease the estate cannot grant yet queues behind the others exactly as it always did.
+    List<BumpOrder.Pick> picks =
+        BumpOrder.nextUpTo(candidates, artifacts.producers(), candidates.size());
     if (picks.isEmpty()) {
       return new Decision(
           "WAITING_ON_RELEASES",
           "all " + candidates.size() + " owed bump(s) wait on a release request already open",
           inFlight,
-          slots,
-          free,
           ciActive,
           candidates.size(),
           held,
@@ -318,14 +283,10 @@ public class BumpDispatcher {
         "DISPATCH",
         (picks.size() == 1 ? "the next bump is " : "the next " + picks.size() + " bumps are ")
             + String.join(", ", names)
-            + " ("
-            + free
-            + " of "
-            + slots
-            + " slot(s) free)",
+            + " (qits-ci has "
+            + ciActive
+            + " active run(s))",
         inFlight,
-        slots,
-        free,
         ciActive,
         candidates.size(),
         held,
