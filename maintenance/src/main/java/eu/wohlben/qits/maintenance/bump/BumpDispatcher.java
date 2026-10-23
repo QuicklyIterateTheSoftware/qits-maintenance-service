@@ -33,8 +33,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.jboss.logging.Logger;
 
 /**
- * A MAIN-ONLY RELEASE REQUEST FOR EVERY REPOSITORY OWED A BUMP AND WITHOUT ONE — as many per tick as
- * qits-ci has free slots, and always from the bottom of the chain.
+ * A MAIN-ONLY RELEASE REQUEST FOR EVERY REPOSITORY OWED A BUMP AND WITHOUT ONE — as many at a time
+ * as qits-ci has room for, and always from the bottom of the chain.
  *
  * <h2>What it does</h2>
  *
@@ -53,6 +53,22 @@ import org.jboss.logging.Logger;
  * are kept, because a main-only request is still a CI build: the capacity gate, bottom of the chain
  * first, least recently dispatched first, the quiet hours and the refusal set.
  *
+ * <h2>The capacity gate is CONFIGURED again, not read (epic qits-1481)</h2>
+ *
+ * <p><b>Behaviour change: qits-882's free slots were read off qits-ci's connected, unquarantined
+ * runners, and qits-ci no longer has any to report.</b> A CI run is a lease now, and how many run at
+ * once is qits-system's {@code SlotAllocator} to grant against every target's minimums — a fact
+ * qits-ci itself does not hold any more, so {@code GET /ci/api/runs/queue} lost {@code runners}
+ * (only {@code running} and {@code queued} are left, see {@link CiClient#queue()}). Reading no
+ * capacity is not the same as having none to ration by: this service still must not flood a
+ * resource-restricted platform with main-only requests, so {@link
+ * MaintenanceConfig#bumpCiActiveCap()} replaces the read number with a configured one (default 4).
+ * {@code free = max(0, cap - ciActive - requested)} — qits-ci's running-plus-queued count, minus
+ * this service's own automation rows it has not accepted yet (a {@code REQUESTED} row is in no
+ * listing qits-ci answers, and counting it twice would hide room that is not really free). An
+ * unreadable snapshot still counts as BUSY, and a cap of zero still means nothing is ever free
+ * (the old {@code NO_SLOTS} wording now says the cap itself, not a missing runner).
+ *
  * <h2>The gates, in the order they are asked</h2>
  *
  * <ol>
@@ -65,13 +81,10 @@ import org.jboss.logging.Logger;
  *       withdrawn by its pre-run — the same set would only find nothing again. A person's withdrawal
  *       frees it. An unreadable answer holds, as every read here does.
  *   <li><b>Is this a quiet hour</b> ({@link MaintenanceConfig#bumpQuietHours()}). Empty by default.
- *   <li><b>How many of qits-ci's slots are free</b> — {@link CiClient#queue()}, one read of {@code
- *       GET /ci/api/runs/queue}, and an unreadable snapshot counts as BUSY. {@code free = slots -
- *       active - requested}: the connected, unquarantined runners' slots, minus every run qits-ci
- *       holds (running or queued), minus this service's automation rows qits-ci has not accepted yet.
- *       A RUNNING row already has its run in {@code active}, and counting it twice would hide a slot.
- *       How much qits-ci can take is a fact qits-ci reports about its runners, never a number
- *       configured here (qits-882).
+ *   <li><b>How much of the configured cap is free</b> — {@link CiClient#queue()}, one read of {@code
+ *       GET /ci/api/runs/queue}, and an unreadable snapshot counts as BUSY. {@code free = cap -
+ *       active - requested}, floored at zero; a cap of zero is {@code NO_SLOTS} rather than {@code
+ *       CI_BUSY} — nothing this service sends is ever allowed to run.
  *   <li><b>Which owed repositories are READY</b> — up to {@code free} of them, from {@link
  *       BumpOrder#nextUpTo}: an upstream that is itself owed goes before its consumer, and never more
  *       than one cycle break per tick.
@@ -145,9 +158,9 @@ public class BumpDispatcher {
    * @param outcome the short name of the gate that answered
    * @param summary the sentence for a person
    * @param inFlight automation rows not yet ended, or null when the gate answered before asking
-   * @param slots qits-ci's connected, unquarantined runner slots, null when it was not asked or
-   *     could not be read
-   * @param free how many of those this tick may fill — slots minus qits-ci's active runs minus our
+   * @param cap {@link MaintenanceConfig#bumpCiActiveCap()} as asked this tick, null when it was not
+   *     asked or the queue could not be read
+   * @param free how many of the cap this tick may fill — cap minus qits-ci's active runs minus our
    *     REQUESTED rows, floored at zero — null when it was not asked or could not be read
    * @param ciActive what qits-ci holds, running and queued, null when it was not asked or could not
    *     be read
@@ -159,7 +172,7 @@ public class BumpDispatcher {
       String outcome,
       String summary,
       Integer inFlight,
-      Integer slots,
+      Integer cap,
       Integer free,
       Integer ciActive,
       int owed,
@@ -213,7 +226,7 @@ public class BumpDispatcher {
     List<MtBump> active = store.activeBumps();
     int inFlight = active.size();
     // A REQUESTED row is a build this service asked qits-ci for and qits-ci has not accepted yet, so
-    // it is in nobody's queue listing — it would be a slot counted free twice.
+    // it is in nobody's queue listing — it would be counted free twice.
     int requested =
         (int)
             active.stream().filter(bump -> BumpStatus.REQUESTED.name().equals(bump.status)).count();
@@ -247,9 +260,10 @@ public class BumpDispatcher {
           List.of());
     }
 
+    // qits-ci reports no capacity of its own any more (epic qits-1481); this read is for whether it
+    // can be asked at all, and for how much of the CONFIGURED cap is already in use.
     CiClient.QueueState queue = ci.queue();
     if (!queue.readable()) {
-      // Unreadable is BUSY. Dispatching blind is precisely the wavefront this gate exists for.
       LOG.debugf("qits-ci's queue could not be read (%s); nothing is dispatched.", queue.error());
       return new Decision(
           "CI_UNREADABLE",
@@ -262,13 +276,14 @@ public class BumpDispatcher {
           held,
           List.of());
     }
-    int slots = queue.slots();
+    int cap = config.bumpCiActiveCap();
     int ciActive = queue.active();
-    if (slots == 0) {
-      // No runner connected, or every one quarantined: nothing would claim a run.
+    if (cap == 0) {
+      // The cap itself refuses everything: a platform that wants no automated bump traffic on CI
+      // at all, rather than qits-882's "no runner is connected".
       return new Decision(
           "NO_SLOTS",
-          "qits-ci has no slot to run anything: no runner is connected, or every one is quarantined",
+          "qits.maintenance.bump.ci-active-cap is 0; nothing may be dispatched",
           inFlight,
           0,
           0,
@@ -277,19 +292,19 @@ public class BumpDispatcher {
           held,
           List.of());
     }
-    int free = Math.max(0, slots - ciActive - requested);
+    int free = Math.max(0, cap - ciActive - requested);
     if (free == 0) {
       return new Decision(
           "CI_BUSY",
-          "qits-ci has "
-              + slots
-              + " slot(s), "
+          "qits-ci's queue is at its cap of "
+              + cap
+              + " ("
               + ciActive
               + " active run(s) and "
               + requested
-              + " bump(s) waiting to reach it; nothing is free",
+              + " bump(s) waiting to reach it); nothing is free",
           inFlight,
-          slots,
+          cap,
           0,
           ciActive,
           candidates.size(),
@@ -303,7 +318,7 @@ public class BumpDispatcher {
           "WAITING_ON_RELEASES",
           "all " + candidates.size() + " owed bump(s) wait on a release request already open",
           inFlight,
-          slots,
+          cap,
           free,
           ciActive,
           candidates.size(),
@@ -321,10 +336,10 @@ public class BumpDispatcher {
             + " ("
             + free
             + " of "
-            + slots
-            + " slot(s) free)",
+            + cap
+            + " free)",
         inFlight,
-        slots,
+        cap,
         free,
         ciActive,
         candidates.size(),

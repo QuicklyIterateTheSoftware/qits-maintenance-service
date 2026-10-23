@@ -37,6 +37,10 @@ public class MaintenanceConfig {
   @ConfigProperty(name = "qits.maintenance.bump.dispatch.refusal-ttl", defaultValue = "6h")
   Duration bumpRefusalTtl;
 
+  /** {@link #bumpCiActiveCap()}. */
+  @ConfigProperty(name = "qits.maintenance.bump.ci-active-cap", defaultValue = "4")
+  int bumpCiActiveCap;
+
   @ConfigProperty(name = "qits.maintenance.bump.dispatch.retry-attempts", defaultValue = "5")
   int bumpDispatchRetryAttempts;
 
@@ -165,6 +169,22 @@ public class MaintenanceConfig {
     return bumpRefusalTtl == null || bumpRefusalTtl.isNegative()
         ? Duration.ofHours(6)
         : bumpRefusalTtl;
+  }
+
+  /**
+   * How many runs {@link eu.wohlben.qits.maintenance.bump.BumpDispatcher} will let qits-ci hold —
+   * running or queued, plus this service's own automation rows still {@code REQUESTED} — before it
+   * stops opening main-only requests for the tick.
+   *
+   * <p>Since a CI run is a lease (epic qits-1481) qits-ci reports no slot count of its own any
+   * more: {@code GET /ci/api/runs/queue} carries only {@code running} and {@code queued}, because
+   * how many run at once is qits-system's {@code SlotAllocator} to grant. So this is a CONFIGURED
+   * ceiling again rather than a read one (qits-882 relied on the runners' slots for exactly that
+   * number) — the shipped 4 is a guess at a comfortable estate-wide share, not a measurement, and a
+   * platform with more or less CI headroom should set its own. Zero refuses every dispatch.
+   */
+  public int bumpCiActiveCap() {
+    return Math.max(0, bumpCiActiveCap);
   }
 
   /**
