@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import eu.wohlben.qits.maintenance.api.Fixture;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
 import eu.wohlben.qits.maintenance.automation.DependencyBumpAutomation;
+import eu.wohlben.qits.maintenance.automation.EstatePinsAutomation;
 import eu.wohlben.qits.maintenance.bump.BumpDispatcher;
 import eu.wohlben.qits.maintenance.bump.BumpOrder;
 import eu.wohlben.qits.maintenance.bump.CiClient;
@@ -45,16 +46,17 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 /**
- * THE GATE: a main-only release request for every READY repository owed a bump, in one tick, and
- * none when qits-ci's queue cannot even be read.
+ * THE GATE: a main-only release request for every repository owed a bump and without one, as many
+ * at a time as the configured CI cap has room for, and none when it has none.
  *
  * <p>The subject here is the DISPATCH DECISION rather than the selection — which repository goes
  * first is {@code BumpOrderTest}'s, stated against a graph. What this pins is the part no unit test
- * can: that the CI queue snapshot (no longer a capacity, since epic qits-1481 — see {@link
- * BumpDispatcher}'s class doc), the automation rows still REQUESTED and the release requests
- * already open are actually wired to the thing that opens a request. Since qits-1133 R5 that thing
- * is a MAIN-ONLY {@code LOWEST} request, never a {@code maintenance/<group>} branch, and there is no
- * window to open first.
+ * can: that the CI queue snapshot, {@code qits.maintenance.bump.ci-active-cap} (a configured number
+ * since epic qits-1481 — see {@link BumpDispatcher}'s class doc, qits-ci no longer reports one of
+ * its own), the automation rows still REQUESTED and the release requests already open are actually
+ * wired to the thing that opens a request. Since qits-1133 R5 that thing is a MAIN-ONLY {@code
+ * LOWEST} request, never a {@code maintenance/<group>} branch, and there is no window to open
+ * first.
  *
  * <p><b>Every method drives {@link BumpDispatcher#tick()} by hand.</b> The suite's scheduler is off,
  * so a test that waited for the timer would be indistinguishable from a test that hung.
@@ -451,7 +453,22 @@ class BumpDispatchTest {
     assertEquals(List.of(repository), after.refused());
   }
 
-  // --- qits-ci no longer gates dispatch by capacity (epic qits-1481) -------------------------
+  // --- the capacity gate (epic qits-1481: a CONFIGURED cap, qits-ci reports no slots) ----------
+
+  /**
+   * A busy qits-ci is not handed another build, and room under the cap is what it was waiting for.
+   * The shipped cap is 4 ({@code qits.maintenance.bump.ci-active-cap}, unoverridden in this suite).
+   */
+  @Test
+  void aQueueAtTheCapOpensNothingAndRoomUnderItOpensOne() {
+    Fixture.scriptCiQueue(peers, 4);
+
+    assertTrue(dispatcher.tick().isEmpty(), "four active runs fill the cap of four");
+    assertEquals(0, asks(Fixture.CATALOG_ID));
+
+    Fixture.scriptCiQueueEmpty(peers);
+    assertEquals(1, dispatcher.tick().size());
+  }
 
   /** <b>UNREADABLE IS BUSY.</b> Nothing is opened blind. */
   @Test
@@ -476,22 +493,55 @@ class BumpDispatchTest {
   }
 
   /**
-   * <b>A BUSY QUEUE NO LONGER HOLDS ANYTHING BACK</b> (epic qits-1481): {@code GET
-   * /ci/api/runs/queue} carries no slot count any more, so a repository is dispatched whether
-   * qits-ci's queue is idle or already busy with other runs — the lease the trigger produces just
-   * queues behind them, as it always could.
+   * <b>AN AUTOMATION ROW OF OURS STILL REQUESTED COUNTS AGAINST THE CAP.</b> It is a build this
+   * service asked for that qits-ci has not accepted yet, so it is in no listing qits-ci answers.
+   * Once qits-ci accepts it, it is counted there and not again here.
    */
   @Test
-  void aBusyQueueOpensExactlyAsMuchAsAnIdleOne() {
-    Fixture.scriptCiQueue(peers, 2);
+  void aRequestedAutomationRowCountsAgainstTheCap() {
+    UUID requested =
+        store.openAutomation(
+            new MaintenanceStore.AutomationOpening(
+                "qits-other-service",
+                EstatePinsAutomation.KIND,
+                null,
+                null,
+                null,
+                null,
+                "workspace/ws-7",
+                null,
+                "dev",
+                BumpTrigger.MANUAL,
+                List.of(),
+                Map.of(),
+                BumpStatus.REQUESTED,
+                null),
+            true,
+            Instant.now());
+    Fixture.scriptCiQueue(peers, 3);
 
-    assertEquals(1, dispatcher.tick().size(), "two active runs do not hold the dispatch back");
-    assertEquals(1, asks(Fixture.CATALOG_ID));
+    BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
+    assertEquals("CI_BUSY", decision.outcome());
+    assertEquals(4, decision.cap());
+    assertEquals(0, decision.free());
+    assertEquals(1, decision.inFlight());
+    assertTrue(
+        decision.summary().contains("cap of 4 (3 active run(s) and 1 bump(s) waiting to reach it)"),
+        decision.summary());
+    assertTrue(dispatcher.tick().isEmpty());
+
+    // The queue snapshot is unchanged: only the row's own status moved, REQUESTED to dispatched,
+    // so it stops being counted here — it is qits-ci's queue listing's to count from now on, and
+    // this fixture does not need to grow `active` to prove that: it is enough that `requested`
+    // dropping to zero is what frees the room, not a coincidence of a larger snapshot.
+    store.bumpDispatched(requested, "e-other", List.of("run-other"));
+    assertEquals(1, dispatcher.explain(Instant.now()).free(), "a dispatched row is not counted twice");
+    assertEquals(1, dispatcher.tick().size());
   }
 
-  /** QITS-882, carried forward without a slot count: every READY repository goes in one tick. */
+  /** QITS-882: every READY repository goes in one tick while there is room under the cap. */
   @Test
-  void everyReadyRepositoryGoesInOneTickHoweverBusyTheQueueIs() {
+  void everyReadyRepositoryGoesInOneTickWhileThereIsRoomUnderTheCap() {
     inventory.clear();
     owes("qits-aaa-service", "eu.wohlben.qits:qits-a");
     owes("qits-bbb-service", "eu.wohlben.qits:qits-b");
@@ -499,18 +549,53 @@ class BumpDispatchTest {
     lastReached("qits-aaa-service", Instant.now().minus(Duration.ofHours(1)));
     lastReached("qits-bbb-service", Instant.now().minus(Duration.ofDays(2)));
     lastReached("qits-ccc-service", Instant.now().minus(Duration.ofDays(1)));
-    Fixture.scriptCiQueue(peers, 5);
+    Fixture.scriptCiQueue(peers, 1);
 
     BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
     assertEquals("DISPATCH", decision.outcome());
-    assertEquals(5, decision.ciActive());
+    assertEquals(4, decision.cap());
+    assertEquals(1, decision.ciActive());
+    assertEquals(3, decision.free());
 
     List<UUID> sent = dispatcher.tick();
     assertEquals(
         List.of("qits-bbb-service", "qits-ccc-service", "qits-aaa-service"),
         repositoriesOf(sent),
-        "every READY one in one tick, the longest-waiting first, whatever qits-ci's queue holds");
+        "every READY one in one tick, the longest-waiting first");
   }
+
+  /** Two free under the cap and five READY: exactly two go, and the other three wait. */
+  @Test
+  void twoFreeUnderTheCapOpenExactlyTwoOfFive() {
+    inventory.clear();
+    for (String name : List.of("qits-r1", "qits-r2", "qits-r3", "qits-r4", "qits-r5")) {
+      owes(name, "eu.wohlben.qits:" + name);
+    }
+    Fixture.scriptCiQueue(peers, 2);
+
+    assertEquals(2, dispatcher.explain(Instant.now()).free());
+    assertEquals(List.of("qits-r1", "qits-r2"), repositoriesOf(dispatcher.tick()));
+    assertEquals(0, asks("catalog-qits-r3"));
+    assertEquals(0, asks("catalog-qits-r4"));
+    assertEquals(0, asks("catalog-qits-r5"));
+  }
+
+  /** The cap fully used: CI_BUSY, saying how it counted, and nothing opened. */
+  @Test
+  void theCapFullyUsedIsBusyAndOpensNothing() {
+    Fixture.scriptCiQueue(peers, 4);
+
+    BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
+    assertEquals("CI_BUSY", decision.outcome());
+    assertEquals(
+        "qits-ci's queue is at its cap of 4 (4 active run(s) and 0 bump(s) waiting to reach it);"
+            + " nothing is free",
+        decision.summary());
+    assertTrue(dispatcher.tick().isEmpty());
+  }
+
+  // A cap of zero, even an idle queue, is NO_SLOTS — see BumpDispatchCapZeroTest, a separate
+  // @QuarkusTest because the cap is read once at config time and this suite runs with the default.
 
   // --- the order ----------------------------------------------------------------------------------
 

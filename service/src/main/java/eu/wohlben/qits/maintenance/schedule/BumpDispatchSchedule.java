@@ -7,14 +7,15 @@ import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
 /**
- * What opens the owed repositories' main-only release requests, every READY one per tick.
+ * What opens the owed repositories' main-only release requests, as many per tick as qits-ci has
+ * room for under its configured cap.
  *
- * <p><b>The tick is short and the decision is small</b>: ask whether anything is owed and whether
- * qits-ci can be asked at all and, if so, open every READY one of the deepest owed repositories'
- * requests; what the tick returns — the requests it opened — is for the tests. Everything about why
- * — the gates, the holds, the ordering, the cycle rule — is {@link BumpDispatcher}'s; what lives here
- * is the clock and the one guarantee a schedule owes: a failure is a line in the log and a retry
- * fifteen seconds later, never a dead scheduler thread.
+ * <p><b>The tick is short and the decision is small</b>: ask whether anything is owed and how much
+ * of the cap is free and, if any, open that many of the deepest owed repositories' requests; what
+ * the tick returns — the requests it opened — is for the tests. Everything about why — the gates,
+ * the holds, the ordering, the cycle rule — is {@link BumpDispatcher}'s; what lives here is the
+ * clock and the one guarantee a schedule owes: a failure is a line in the log and a retry fifteen
+ * seconds later, never a dead scheduler thread.
  *
  * <p><b>It is the only thing that arms a dispatch</b>, and debt is what it answers to: there is no
  * cron and no window (both retired with group bumps, qits-1133 R5). On 2026-09-11 fifteen

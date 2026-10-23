@@ -188,26 +188,26 @@ public final class BumpOrder {
 
   /**
    * UP TO {@code n} BUMPS TO SEND NOW — every free candidate nothing else owed sits below, in the
-   * caller's order, as many as the caller has room for.
+   * caller's order, as many as qits-ci has room for.
    *
    * <p><b>Two READY candidates can always go together</b>: neither has an owed upstream, so neither
    * is waiting on the other, and sending both in one tick costs nothing the ordering exists to
    * prevent. That is what makes a batch safe here and is the whole of qits-882 — the dispatcher used
-   * to hand out one per tick only when qits-ci was idle, while it had slots free to spare.
-   * <b>{@link BumpDispatcher}, the one caller, passes every candidate</b> (epic qits-1481: qits-ci
-   * no longer reports a slot count to bound {@code n} by), so in practice every READY one goes —
-   * {@code n} stays general here because the rule above is the caller's to pick, not this class's.
+   * to hand out one per tick only when qits-ci was idle, while eight slots sat seven-free. <b>{@code
+   * n} is {@link BumpDispatcher}'s configured cap minus what is already using it</b> (epic
+   * qits-1481: qits-ci stopped reporting a slot count of its own to read {@code n} off, so it is
+   * configured — {@code qits.maintenance.bump.ci-active-cap} — rather than read).
    *
    * <p><b>The cycle rule is unchanged and never multiplied.</b> Only when NOT ONE free candidate is
    * READY does this fall back to {@link #next} — a single least-blocked pick marked {@code
    * cycleBroken}, or nothing when everything waits on a release in flight. A cycle break is a
    * guess, and one guess per tick against a graph one release smaller is the most this should ever
-   * make, whatever {@code n} is.
+   * make, however much room is free.
    *
    * @param candidates every repository owed a bump this tick, held ones included, in a stable order
    * @param producers {@link ArtifactGraph#producers()} — coordinate to publishing repository
-   * @param n how many may go, at most — the caller's own ceiling, if it has one; zero or less is an
-   *     empty answer
+   * @param n how many may go — the room free under the configured cap; zero or less is an empty
+   *     answer
    * @return the picks in dispatch order: up to {@code n} READY ones, else at most one cycle break,
    *     else none. For {@code n == 1} the head is exactly what {@link #next} returns
    */
