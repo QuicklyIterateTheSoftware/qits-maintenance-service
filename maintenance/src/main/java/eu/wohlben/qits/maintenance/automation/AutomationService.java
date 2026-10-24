@@ -941,9 +941,12 @@ public class AutomationService {
 
   // --- dispatch -----------------------------------------------------------------------------------
 
-  /** Queues one row's dispatch on the worker. */
+  /**
+   * Queues one row's dispatch on the worker, straight off the open that just checked its request —
+   * {@code start()}/{@code trigger()}, right before this is called.
+   */
   private void queueDispatch(UUID id) {
-    queue.submit("automation " + id, () -> dispatch(id));
+    queue.submit("automation " + id, () -> store.bump(id).ifPresent(row -> dispatch(row, true)));
   }
 
   /** Sends one automation row to qits-ci, or leaves it waiting. */
@@ -957,6 +960,14 @@ public class AutomationService {
    * again, and so does every ending.
    */
   public void dispatch(MtBump row) {
+    dispatch(row, false);
+  }
+
+  /**
+   * @param justOpened whether this is the immediate dispatch off {@code queueDispatch}, straight
+   *     after {@code start()}/{@code trigger()} asked the request — so it skips asking again
+   */
+  private void dispatch(MtBump row, boolean justOpened) {
     if (!BumpStatus.REQUESTED.name().equals(row.status)
         || !BumpMode.AUTOMATION.name().equals(row.mode)) {
       return;
@@ -1012,25 +1023,28 @@ public class AutomationService {
           row.id, BumpStatus.FAILED, null, "the repository left the inventory", Instant.now());
       return;
     }
-    // THE REQUEST, ASKED AGAIN BEFORE THE RUN (qits-1578). Whether it was open was asked when the
-    // row was opened, and a row may wait REQUESTED long after that — behind the cap, behind a run
-    // of its branch. A request that released meanwhile has no fold branch any more, and a run sent
-    // onto it fails on exactly that. Asked here, after every cheap wait, it costs no CI run. An
-    // answer that cannot be read sends the row as before.
-    ReleaseRequestClient.ReleaseState request = closedRequest(row, repository);
-    if (request != null) {
-      store.bumpFinished(
-          row.id,
-          BumpStatus.SUPERSEDED,
-          null,
-          "superseded: release request " + requestName(row) + " is " + request.state()
-              + " and takes no commit; nothing was run",
-          Instant.now());
-      owedAReoffer(row);
-      LOG.infof(
-          "The %s automation %s of %s was superseded before its run: release request %s is %s",
-          row.automationKind, row.id, row.repository, requestName(row), request.state());
-      return;
+    // THE REQUEST, ASKED AGAIN BEFORE THE RUN (qits-1578) — unless this dispatch is justOpened.
+    // start()/trigger() just asked whether it was open, so asking again here would cost that same
+    // read twice for nothing; only a row left REQUESTED past that moment — behind the cap, behind a
+    // run of its branch — can go stale, and a request that released meanwhile has no fold branch any
+    // more, so a run sent onto it fails on exactly that. Every later offer re-asks, and costs no CI
+    // run for it. An answer that cannot be read sends the row as before.
+    if (!justOpened) {
+      ReleaseRequestClient.ReleaseState request = closedRequest(row, repository);
+      if (request != null) {
+        store.bumpFinished(
+            row.id,
+            BumpStatus.SUPERSEDED,
+            null,
+            "superseded: release request " + requestName(row) + " is " + request.state()
+                + " and takes no commit; nothing was run",
+            Instant.now());
+        owedAReoffer(row);
+        LOG.infof(
+            "The %s automation %s of %s was superseded before its run: release request %s is %s",
+            row.automationKind, row.id, row.repository, requestName(row), request.state());
+        return;
+      }
     }
     if (target(row, kind) == Target.OWN_BRANCH) {
       dispatchOwnBranch(row, kind, repository.get());
