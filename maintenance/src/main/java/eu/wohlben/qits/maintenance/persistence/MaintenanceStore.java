@@ -1663,6 +1663,41 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
         });
   }
 
+  /**
+   * Marks a repository as owed a prompt re-offer (qits-1578): its {@code dependency-bump} ended
+   * SUPERSEDED because its release request closed. The first mark is kept — a second stranding
+   * changes nothing about how long it has waited. A repository this inventory does not hold is
+   * ignored.
+   */
+  @ActivateRequestContext
+  public void markReofferOwed(String repository, Instant now) {
+    DbRetry.runInNewTx(
+        "mark " + repository + " as owed a re-offer",
+        () -> {
+          MtRepository row = findById(repository);
+          if (row == null || row.reofferOwedAt != null) {
+            return;
+          }
+          row.reofferOwedAt = now;
+          getEntityManager().flush();
+        });
+  }
+
+  /** Clears a repository's re-offer mark — the dispatcher opened its main-only request. */
+  @ActivateRequestContext
+  public void clearReofferOwed(String repository) {
+    DbRetry.runInNewTx(
+        "clear the re-offer mark of " + repository,
+        () -> {
+          MtRepository row = findById(repository);
+          if (row == null || row.reofferOwedAt == null) {
+            return;
+          }
+          row.reofferOwedAt = null;
+          getEntityManager().flush();
+        });
+  }
+
   // --- release-request automations -----------------------------------------------------------
 
   /**

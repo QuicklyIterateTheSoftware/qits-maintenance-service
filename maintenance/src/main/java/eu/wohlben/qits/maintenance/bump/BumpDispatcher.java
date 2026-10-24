@@ -105,6 +105,13 @@ import org.jboss.logging.Logger;
  * repositories after {@code qits-projects-daemon} for the same two jars, for no reason but its
  * name). The candidates are ordered by {@link MaintenanceStore#lastDispatchedAt()} ascending, a
  * repository never reached counting as {@link Instant#EPOCH}, the name the final tiebreak.
+ *
+ * <p><b>Except a repository owed a RE-OFFER, which goes before all of them</b> (qits-1578). When a
+ * {@code dependency-bump} ends SUPERSEDED because its release request closed before the bump could
+ * land, {@code mt_repository.reoffer_owed_at} is set; such a repository was reached recently by
+ * construction, so least-recently-dispatched alone would put it last behind the per-tick cap. The
+ * mark sorts it ahead of every unmarked one (each group keeping the order above), never decides
+ * whether it is held, and is cleared when its main-only request is opened.
  */
 @ApplicationScoped
 public class BumpDispatcher {
@@ -387,6 +394,8 @@ public class BumpDispatcher {
             MtReleaseRequest.MAIN_ONLY,
             candidate.changes(),
             Instant.now());
+        // The re-offer a stranded bump was owed is this request (qits-1578).
+        store.clearReofferOwed(candidate.repository());
         listings.remove(repoId);
         LOG.infof(
             "Opened the main-only release request %s of %s for its pre-run to bump %d"
@@ -539,6 +548,7 @@ public class BumpDispatcher {
     Map<String, MtLatest> latest = PendingChanges.index(store.allLatest());
     List<BumpOrder.Candidate> candidates = new ArrayList<>();
     List<String> refusals = new ArrayList<>();
+    Set<String> reofferOwed = new LinkedHashSet<>();
     for (MtRepository row : store.repositories()) {
       if (!RepositoryStatus.OK.name().equals(row.status)) {
         continue;
@@ -558,11 +568,19 @@ public class BumpDispatcher {
         continue;
       }
       candidates.add(new BumpOrder.Candidate(row.name, group, changes, held(row, changes)));
+      if (row.reofferOwedAt != null) {
+        reofferOwed.add(row.name);
+      }
     }
     if (!candidates.isEmpty()) {
       Map<String, Instant> lastDispatched = store.lastDispatchedAt();
+      // OWED A RE-OFFER FIRST (qits-1578): a repository whose bump was stranded on a request that
+      // closed was, by construction, reached recently — least-recently-dispatched alone would put it
+      // last behind the cap. The mark only reorders; held() above is untouched by it.
       candidates.sort(
           Comparator.comparing(
+                  (BumpOrder.Candidate candidate) -> !reofferOwed.contains(candidate.repository()))
+              .thenComparing(
                   (BumpOrder.Candidate candidate) ->
                       lastDispatched.getOrDefault(candidate.repository(), Instant.EPOCH))
               .thenComparing(BumpOrder.Candidate::repository));

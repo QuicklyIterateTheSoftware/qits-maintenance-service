@@ -10,20 +10,28 @@ import static eu.wohlben.qits.maintenance.automation.AutomationFixture.STALE_POM
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.maintenance.api.Fixture;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
 import eu.wohlben.qits.maintenance.bump.BumpDispatcher;
 import eu.wohlben.qits.maintenance.bump.BumpService;
+import eu.wohlben.qits.maintenance.bump.CiClient;
+import eu.wohlben.qits.maintenance.bump.ReleaseRequestClient;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto.AutomationDto;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto;
 import eu.wohlben.qits.maintenance.entity.MtBump;
 import eu.wohlben.qits.maintenance.entity.MtReleaseRequest;
+import eu.wohlben.qits.maintenance.manifest.GroupConfig;
+import eu.wohlben.qits.maintenance.manifest.ParsedPin;
 import eu.wohlben.qits.maintenance.model.BumpMode;
 import eu.wohlben.qits.maintenance.model.BumpStatus;
 import eu.wohlben.qits.maintenance.model.BumpTrigger;
 import eu.wohlben.qits.maintenance.model.Ecosystem;
+import eu.wohlben.qits.maintenance.model.GroupSource;
+import eu.wohlben.qits.maintenance.model.PinKind;
+import eu.wohlben.qits.maintenance.model.RepositoryStatus;
 import eu.wohlben.qits.maintenance.model.ScanScope;
 import eu.wohlben.qits.maintenance.peer.FakePeers;
 import eu.wohlben.qits.maintenance.peer.PeerTarget;
@@ -37,6 +45,7 @@ import jakarta.inject.Inject;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -514,5 +523,139 @@ class UpstreamReplanTest {
     assertEquals(PUSHED, done.resultSha);
     assertEquals(1, peers.bodiesFor(AutomationFixture.joinPath(MAIN_REQUEST)).size());
     assertTrue(peers.bodiesFor(withdraw).isEmpty(), "still never asked to withdraw");
+  }
+
+  // --- the race: a request that releases while its re-planned bump waits (qits-1578) -----------
+
+  /**
+   * <b>Reproduction (qits-1578, qits-system-service-rr-67, run 934e4822).</b> An upstream release
+   * re-plans the bump onto the consumer's open request while the automation slots are full; the
+   * request releases before a slot frees, so the row that finally reaches the front would run onto
+   * a fold branch that is gone. It ends SUPERSEDED with no CI run, and once the request finalized
+   * with main still on the old pin, the dispatcher's next tick re-offers the bump against main —
+   * FIRST, ahead of a repository it reached a fortnight ago, under a cap of one.
+   */
+  @Test
+  void aBumpStrandedOnARequestThatReleasedWhileItWaitedIsReofferedAgainstMainFirst() {
+    // 1. The consumer, pinned at 2026.811.1 on main, has an open main-only request at FOLD_A.
+    store.recordOpenedRequest(
+        REQUEST, Fixture.REPOSITORY, "main", MtReleaseRequest.MAIN_ONLY, List.of(),
+        Instant.now());
+    listing("PENDING", "PENDING");
+    List<UUID> busy = new java.util.ArrayList<>();
+    for (String other :
+        List.of(
+            "6e1f0c3a-2b4d-4e6f-8a9b-0c1d2e3f4a5b", "7e1f0c3a-2b4d-4e6f-8a9b-0c1d2e3f4a5b")) {
+      busy.add(
+          store.openAutomation(
+              new MaintenanceStore.AutomationOpening(
+                  Fixture.REPOSITORY,
+                  ScreenshotBaselinesAutomation.KIND,
+                  other,
+                  FOLD_B,
+                  null,
+                  false,
+                  AutomationFixture.branch(other),
+                  null,
+                  "test",
+                  BumpTrigger.MANUAL,
+                  List.of(),
+                  Map.of(),
+                  BumpStatus.RUNNING,
+                  null),
+              false,
+              Instant.now()));
+    }
+    assertEquals(AutomationService.MAX_RUNNING, store.runningAutomationCount(), "the slots are full");
+
+    // 2. The upstream is at 2026.821.3: its consumers are re-planned, and the row waits.
+    upstream.replanConsumers(Ecosystem.MAVEN, EVENTSTREAM);
+    queue.awaitIdle(Duration.ofSeconds(30));
+    queue.awaitIdle(Duration.ofSeconds(30));
+    List<MtBump> rows = bumpRows(REQUEST);
+    assertEquals(1, rows.size(), rows.toString());
+    UUID id = rows.getFirst().id;
+    assertEquals(BumpStatus.REQUESTED.name(), rows.getFirst().status, rows.getFirst().message);
+    assertTrue(peers.bodiesFor(CiClient.TRIGGER_PATH).isEmpty(), "waiting behind the cap");
+
+    // 3. The request releases; then a slot frees and the waiting rows are dispatched.
+    AutomationFixture.scriptRequest(peers, REQUEST, "RELEASED", FOLD_A);
+    for (UUID running : busy) {
+      store.bumpFinished(running, BumpStatus.NOTHING_TO_DO, "SUCCESS", "unchanged", Instant.now());
+    }
+    automations.dispatchWaiting();
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    MtBump stranded = store.bump(id).orElseThrow();
+    assertEquals(BumpStatus.SUPERSEDED.name(), stranded.status, stranded.message);
+    assertTrue(stranded.message.contains("is RELEASED and takes no commit"), stranded.message);
+    assertTrue(peers.bodiesFor(CiClient.TRIGGER_PATH).isEmpty(), "never sent onto a gone fold");
+    assertNotNull(store.repository(Fixture.REPOSITORY).orElseThrow().reofferOwedAt);
+
+    // 4. The request finalizes with main still on 2026.811.1. Another repository is owed too, and
+    // was reached a fortnight ago — the clock alone would send it first.
+    AutomationFixture.scriptRequest(peers, REQUEST, "FINALIZED", FOLD_A);
+    peers.answer(
+        PeerTarget.PROJECTS,
+        Fixture.RELEASE_REQUESTS_PATH,
+        FakePeers.Scripted.ok(
+            "{\"requests\":[{\"id\":\"" + REQUEST + "\",\"state\":\"FINALIZED\","
+                + "\"mergedSha\":\"" + FOLD_A + "\"}],"
+                + "\"request\":{\"id\":\"" + MAIN_REQUEST + "\",\"state\":\"PENDING\"}}"));
+    peers.answer(
+        PeerTarget.PROJECTS,
+        Fixture.RELEASE_REQUESTS_PATH + "/" + MAIN_REQUEST,
+        FakePeers.Scripted.ok(
+            "{\"request\":{\"id\":\"" + MAIN_REQUEST + "\",\"state\":\"PENDING\"}}"));
+    String older = "qits-older-service";
+    String olderCollection =
+        ReleaseRequestClient.REQUESTS_PATH_PREFIX + "catalog-" + older
+            + ReleaseRequestClient.REQUESTS_PATH_SUFFIX;
+    store.replaceInventory(
+        older,
+        Fixture.PROJECT,
+        "catalog-" + older,
+        null,
+        "main",
+        RepositoryStatus.OK,
+        "sha-" + older,
+        null,
+        List.of(
+            ParsedPin.of(
+                Ecosystem.MAVEN, "pom.xml", EVENTSTREAM, "2026.811.1", null,
+                "dependency:" + EVENTSTREAM)),
+        List.of(GroupConfig.Group.ofKind(GroupConfig.DEFAULT_GROUP, PinKind.INTERNAL)),
+        GroupSource.DEFAULT,
+        candidate -> PinKind.INTERNAL,
+        Instant.now());
+    peers.answer(
+        PeerTarget.PROJECTS,
+        olderCollection,
+        FakePeers.Scripted.ok(
+            "{\"requests\":[],\"request\":{\"id\":\"9e1f0c3a-2b4d-4e6f-8a9b-0c1d2e3f4a5b\","
+                + "\"state\":\"PENDING\"}}"));
+    store.recordOpenedRequest(
+        "reached-" + older, older, "main", MtReleaseRequest.MAIN_ONLY, List.of(),
+        Instant.now().minus(Duration.ofDays(14)));
+    // A cap of four with three active: one free.
+    Fixture.scriptCiQueue(peers, 3);
+
+    List<UUID> sent = dispatcher.tick();
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    assertEquals(List.of(UUID.fromString(MAIN_REQUEST)), sent, "the stranded consumer goes first");
+    MtReleaseRequest reoffer = store.releaseRequest(MAIN_REQUEST).orElseThrow();
+    assertEquals(Fixture.REPOSITORY, reoffer.repository);
+    assertEquals(MtReleaseRequest.MAIN_ONLY, reoffer.purpose);
+    assertEquals("main", reoffer.branch);
+    assertTrue(reoffer.changes.contains(EVENTSTREAM), reoffer.changes);
+    assertTrue(reoffer.changes.contains("2026.821.3"), "carrying the newer upstream: " + reoffer.changes);
+    assertTrue(
+        peers.bodiesFor(olderCollection).stream().noneMatch(java.util.Objects::nonNull),
+        "the older one waits for the next tick");
+    assertNull(store.repository(Fixture.REPOSITORY).orElseThrow().reofferOwedAt, "mark cleared");
+    assertEquals(
+        List.of(id), bumpRows(REQUEST).stream().map(row -> row.id).toList(),
+        "nothing more was ever opened onto the closed request");
   }
 }

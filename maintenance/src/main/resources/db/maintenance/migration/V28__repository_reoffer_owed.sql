@@ -1,0 +1,15 @@
+-- A REPOSITORY WHOSE BUMP WAS STRANDED ON A CLOSED REQUEST IS OWED A PROMPT RE-OFFER (qits-1578).
+--
+-- An upstream release re-plans a dependency bump onto an OPEN release request, and the row then
+-- waits REQUESTED behind the automation cap. If the request releases meanwhile, its fold branch is
+-- gone: the row used to be sent anyway, its run failed on "the fold's branch is missing", and it
+-- ended FAILED with nothing re-offering the bump. The dispatcher was the only fallback, and it sorts
+-- least-recently-dispatched first — so the repository it had just reached landed LAST behind the
+-- per-tick cap (qits-system-service-rr-67 released on an old pin, run 934e4822).
+--
+-- Such a row now ends SUPERSEDED, and its repository is marked here. The dispatcher sorts a marked
+-- repository before every unmarked one, and clears the mark when it opens a main-only request for
+-- it. The mark changes ORDER only, never whether the repository is held.
+--
+-- Null on every row before this column and on every repository nothing stranded.
+alter table mt_repository add column reoffer_owed_at timestamp(6) with time zone;

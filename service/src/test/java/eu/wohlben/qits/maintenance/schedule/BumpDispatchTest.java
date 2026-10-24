@@ -2,6 +2,8 @@ package eu.wohlben.qits.maintenance.schedule;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.maintenance.api.Fixture;
@@ -638,6 +640,53 @@ class BumpDispatchTest {
         "the starved one IS first in the order handed to BumpOrder");
     assertEquals(List.of("qits-zzz-lib"), repositoriesOf(dispatcher.tick()));
     assertEquals(0, asks("catalog-qits-aaa-consumer"), "it waits on the upstream's release");
+  }
+
+  /**
+   * <b>A REPOSITORY OWED A RE-OFFER GOES FIRST</b> (qits-1578). Its dependency bump was stranded on
+   * a request that closed, so the dispatcher reached it recently — least-recently-dispatched alone
+   * would put it behind one reached a fortnight ago, and under a cap of one it would wait a whole
+   * tick or more. Marked, it goes first; the main-only request it is opened clears the mark, and
+   * the order falls back to the clock.
+   */
+  @Test
+  void aRepositoryOwedAReofferGoesBeforeAnOlderDispatchedOneAndItsMarkIsCleared() {
+    inventory.clear();
+    owes("qits-aaa-service", "eu.wohlben.qits:qits-agents-early");
+    owes("qits-zzz-service", "eu.wohlben.qits:qits-agents-late");
+    lastReached("qits-aaa-service", Instant.now().minus(Duration.ofDays(14)));
+    lastReached("qits-zzz-service", Instant.now().minus(Duration.ofMinutes(5)));
+    store.markReofferOwed("qits-zzz-service", Instant.now());
+    // A cap of four with three active: one free.
+    Fixture.scriptCiQueue(peers, 3);
+
+    assertEquals(1, dispatcher.explain(Instant.now()).free());
+    assertEquals(
+        List.of("qits-zzz-service", "qits-aaa-service"),
+        dispatcher.assess().candidates().stream().map(BumpOrder.Candidate::repository).toList(),
+        "the marked one ahead of the one reached longest ago");
+    assertEquals(List.of("qits-zzz-service"), repositoriesOf(dispatcher.tick()));
+    assertEquals(0, asks("catalog-qits-aaa-service"), "it waits for the next tick");
+    assertNull(
+        store.repository("qits-zzz-service").orElseThrow().reofferOwedAt,
+        "the main-only request is the re-offer; the mark is cleared");
+  }
+
+  /** The mark only reorders: a marked repository with an open request is still held. */
+  @Test
+  void aRepositoryOwedAReofferIsStillHeldByAnOpenRequest() {
+    Fixture.scriptCiQueueEmpty(peers);
+    scriptListing(
+        Fixture.CATALOG_ID,
+        Fixture.REPOSITORY,
+        "[{\"id\":\"open-one\",\"state\":\"PENDING\",\"mergedSha\":null}]");
+    store.markReofferOwed(Fixture.REPOSITORY, Instant.now());
+
+    assertTrue(dispatcher.assess().candidates().getFirst().held());
+    assertTrue(dispatcher.tick().isEmpty());
+    assertNotNull(
+        store.repository(Fixture.REPOSITORY).orElseThrow().reofferOwedAt,
+        "nothing was opened, so the mark stays");
   }
 
   /** A legacy group row does not count as the dispatcher reaching a repository. */
