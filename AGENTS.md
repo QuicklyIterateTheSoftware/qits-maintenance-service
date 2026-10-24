@@ -373,7 +373,12 @@ unreadable answer holds. Gates in order: `bump.enabled`, `bump.internal.auto`, t
 switch; nothing owed; `bump.dispatch.quiet-hours`; qits-ci's free slots (`slots - active - our
 REQUESTED rows`, an unreadable snapshot is busy — qits-882); then `BumpOrder.nextUpTo`, bottom of the
 chain first and least-recently-dispatched first (`MaintenanceStore.lastDispatchedAt`, the newest
-MAIN_ONLY `opened_at`, so the alphabet is never the tiebreak). A pick is
+MAIN_ONLY `opened_at`, so the alphabet is never the tiebreak) — except that a repository owed a
+RE-OFFER (`mt_repository.reoffer_owed_at`, V28, qits-1578) sorts before every unmarked one. The mark
+is set when a `dependency-bump` row ends SUPERSEDED because its request CLOSED — asked again at
+dispatch, so a row that waited REQUESTED while its request released is never sent onto a fold
+branch that is gone, and asked at a red ending, since a closed request keeps its `mergedSha` — and
+cleared when the main-only request is opened. It only reorders: `held()` never reads it. A pick is
 `ReleaseRequestClient.requestMainOnly` — `POST …/release-requests` with `branch = main` and
 `priority = LOWEST` — recorded with `recordOpenedRequest(MAIN_ONLY, changes)`; a repository with no
 catalog id, or a refused ask, is set aside for `bump.dispatch.refusal-ttl` (in memory). No

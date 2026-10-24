@@ -143,7 +143,10 @@ import org.jboss.logging.Logger;
  * the newer fold still demands that every changed path is automation output, so a person's push is
  * never carried. <b>Only a RED run on a fold that moved on is SUPERSEDED</b>: the core's own "superseded
  * before start" refusal is red, and a red verdict about a fold nobody will release must not hold
- * the request.
+ * the request. <b>So is a red run, and a waiting row, whose request CLOSED</b> (qits-1578): a
+ * RELEASED, FINALIZED, WITHDRAWN or OBSOLETE request takes no commit, so the dispatch asks again
+ * before it sends a row and the ending asks before it fails one; a {@code dependency-bump} ended that
+ * way marks its repository owed a re-offer, which the dispatcher sends first against main.
  *
  * <p><b>The circuit breaker</b> is the third terminator, behind carry-over and the plans: a fourth
  * consecutive COMMITTED for one (request, kind) whose folds changed nothing but automation output is
@@ -1009,6 +1012,26 @@ public class AutomationService {
           row.id, BumpStatus.FAILED, null, "the repository left the inventory", Instant.now());
       return;
     }
+    // THE REQUEST, ASKED AGAIN BEFORE THE RUN (qits-1578). Whether it was open was asked when the
+    // row was opened, and a row may wait REQUESTED long after that — behind the cap, behind a run
+    // of its branch. A request that released meanwhile has no fold branch any more, and a run sent
+    // onto it fails on exactly that. Asked here, after every cheap wait, it costs no CI run. An
+    // answer that cannot be read sends the row as before.
+    ReleaseRequestClient.ReleaseState request = closedRequest(row, repository);
+    if (request != null) {
+      store.bumpFinished(
+          row.id,
+          BumpStatus.SUPERSEDED,
+          null,
+          "superseded: release request " + requestName(row) + " is " + request.state()
+              + " and takes no commit; nothing was run",
+          Instant.now());
+      owedAReoffer(row);
+      LOG.infof(
+          "The %s automation %s of %s was superseded before its run: release request %s is %s",
+          row.automationKind, row.id, row.repository, requestName(row), request.state());
+      return;
+    }
     if (target(row, kind) == Target.OWN_BRANCH) {
       dispatchOwnBranch(row, kind, repository.get());
     } else {
@@ -1292,16 +1315,13 @@ public class AutomationService {
     Instant now = Instant.now();
     String label = kind == null ? row.automationKind : kind.label();
 
-    String moved = passed ? null : movedFold(row, repository);
-    if (moved != null) {
-      store.bumpFinished(
-          row.id,
-          BumpStatus.SUPERSEDED,
-          ciRunStatus,
-          "superseded: release request " + requestName(row) + " moved on to fold "
-              + abbreviate(moved) + " before this run ended " + ciRunStatus,
-          now);
-      LOG.infof("The %s automation %s was superseded by fold %s", row.automationKind, row.id, moved);
+    Supersession superseded = passed ? null : superseded(row, repository, ciRunStatus);
+    if (superseded != null) {
+      store.bumpFinished(row.id, BumpStatus.SUPERSEDED, ciRunStatus, superseded.message(), now);
+      if (superseded.closed()) {
+        owedAReoffer(row);
+      }
+      LOG.infof("The %s automation %s was %s", row.automationKind, row.id, superseded.message());
     } else if (!passed) {
       store.bumpFailed(
           row.id,
@@ -1484,23 +1504,82 @@ public class AutomationService {
   }
 
   /**
-   * The fold the request has moved on to, or null when it has not — or when that cannot be said: a
-   * row with no request or no fold (the targeted door's), or a qits-projects that would not answer.
-   * Not being able to ask is not evidence the fold moved, and the ending carries on.
+   * Why a red run is SUPERSEDED rather than FAILED.
+   *
+   * @param message the row's sentence
+   * @param closed whether it is because the request closed (qits-1578) rather than re-folded
    */
-  private String movedFold(MtBump row, Optional<MtRepository> repository) {
+  private record Supersession(String message, boolean closed) {}
+
+  /**
+   * Why a red run's verdict is about a fold nobody will release, or null when it is not — or when
+   * that cannot be said: a row with no request or no fold (the targeted door's), or a qits-projects
+   * that would not answer. Not being able to ask is not evidence, and the ending carries on.
+   *
+   * <p>Two reasons, asked off one read. <b>The request CLOSED</b> (qits-1578): RELEASED, FINALIZED,
+   * WITHDRAWN or OBSOLETE takes no commit whatever its fold says — a closed request keeps its
+   * {@code mergedSha}, so the fold comparison alone read such a run as FAILED, and nothing re-offered
+   * the bump. <b>The fold moved on</b>: an open request re-folded before the run ended.
+   */
+  private Supersession superseded(
+      MtBump row, Optional<MtRepository> repository, String ciRunStatus) {
     if (row.releaseRequestId == null || row.foldSha == null) {
+      return null;
+    }
+    ReleaseRequestClient.ReleaseState state = requestState(row, repository);
+    if (state == null || !state.readable()) {
+      return null;
+    }
+    if (!state.open()) {
+      return new Supersession(
+          "superseded: release request " + requestName(row) + " is " + state.state()
+              + " and takes no commit; this run ended " + ciRunStatus,
+          true);
+    }
+    if (state.mergedSha() == null || state.mergedSha().equals(row.foldSha)) {
+      return null;
+    }
+    return new Supersession(
+        "superseded: release request " + requestName(row) + " moved on to fold "
+            + abbreviate(state.mergedSha()) + " before this run ended " + ciRunStatus,
+        false);
+  }
+
+  /**
+   * What qits-projects says about a row's request now, or null when the row names none or its
+   * repository has no catalog id to ask with. An unreadable answer comes back as itself.
+   */
+  private ReleaseRequestClient.ReleaseState requestState(
+      MtBump row, Optional<MtRepository> repository) {
+    if (row.releaseRequestId == null) {
       return null;
     }
     String repoId = repository.map(repo -> repo.catalogId).orElse(null);
     if (repoId == null || repoId.isBlank()) {
       return null;
     }
-    ReleaseRequestClient.ReleaseState state = releases.state(repoId, row.releaseRequestId);
-    if (!state.readable() || state.mergedSha() == null) {
-      return null;
+    return releases.state(repoId, row.releaseRequestId);
+  }
+
+  /**
+   * The row's request when it is readable and CLOSED — no longer taking a branch — else null: no
+   * request, no catalog id, an unreadable answer, or an open request.
+   */
+  private ReleaseRequestClient.ReleaseState closedRequest(
+      MtBump row, Optional<MtRepository> repository) {
+    ReleaseRequestClient.ReleaseState state = requestState(row, repository);
+    return state != null && state.readable() && !state.open() ? state : null;
+  }
+
+  /**
+   * A {@code dependency-bump} stranded on a closed request leaves its repository owed a prompt
+   * re-offer against main (qits-1578): the dispatcher sorts it first and clears the mark when it
+   * opens the main-only request. Nothing is ever committed onto the closed request.
+   */
+  private void owedAReoffer(MtBump row) {
+    if (DependencyBumpAutomation.KIND.equals(row.automationKind)) {
+      store.markReofferOwed(row.repository, Instant.now());
     }
-    return state.mergedSha().equals(row.foldSha) ? null : state.mergedSha();
   }
 
   /**

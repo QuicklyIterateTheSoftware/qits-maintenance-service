@@ -352,6 +352,31 @@ class AutomationEndingTest {
   }
 
   /**
+   * <b>Red on a request that RELEASED at the same fold is SUPERSEDED too</b> (qits-1578). A closed
+   * request keeps its {@code mergedSha}, so the fold comparison alone read this as FAILED — a red
+   * verdict holding a request that takes no commit any more. Only a dependency bump is owed a
+   * re-offer; this screenshot run is not.
+   */
+  @Test
+  void aRedRunOnARequestThatReleasedAtTheSameFoldIsSuperseded() {
+    UUID id = running();
+    AutomationFixture.scriptRequest(peers, REQUEST, "RELEASED", FOLD_A);
+
+    MtBump done = end(id, "FAILED");
+
+    assertEquals(BumpStatus.SUPERSEDED.name(), done.status, done.message);
+    assertTrue(
+        done.message.startsWith(
+            "superseded: release request " + REQUEST + " is RELEASED and takes no commit"),
+        done.message);
+    assertEquals(AutomationState.SUPERSEDED.name(), entry().state());
+    assertTrue(peers.bodiesFor(AutomationFixture.joinPath(REQUEST)).isEmpty(), "nothing joined");
+    assertNull(
+        store.repository(Fixture.REPOSITORY).orElseThrow().reofferOwedAt,
+        "only a dependency bump is owed a re-offer");
+  }
+
+  /**
    * Green and unchanged after the request re-folded is still FRESH for the fold it ran on: the core
    * refuses a fold that is no longer {@code foldSha} before it starts, so what it found is a fact
    * about that fold.

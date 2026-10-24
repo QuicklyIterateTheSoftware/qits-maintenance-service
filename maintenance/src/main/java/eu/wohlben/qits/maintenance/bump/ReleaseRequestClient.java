@@ -740,6 +740,15 @@ public class ReleaseRequestClient {
     }
 
     /**
+     * Whether the request still takes a branch — the same {@link #OPEN_STATES} {@link
+     * Listed#open()} reads. False on an unreadable answer, so a caller that acts on a CLOSED
+     * request asks {@code readable() && !open()}.
+     */
+    public boolean open() {
+      return state != null && OPEN_STATES.contains(state);
+    }
+
+    /**
      * <b>Whether the request is gone</b> — withdrawn, by a person or by qits-projects, which counts
      * as no request at all. Not stalled: a fresh request is asked for instead.
      */

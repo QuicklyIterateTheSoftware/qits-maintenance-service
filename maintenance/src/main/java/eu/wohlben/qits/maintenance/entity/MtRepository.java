@@ -95,6 +95,16 @@ public class MtRepository extends PanacheEntityBase {
   @Column(columnDefinition = "text")
   public String message;
 
+  /**
+   * When a {@code dependency-bump} of this repository ended SUPERSEDED because its release request
+   * closed before the bump could land (qits-1578, V28) — the repository is owed a prompt re-offer
+   * against main. The dispatcher sorts a marked repository ahead of every unmarked one and clears
+   * the mark when it opens a main-only request for it. Order only: it never decides whether the
+   * repository is held. Untouched by a scan. Null when nothing is owed.
+   */
+  @Column(name = "reoffer_owed_at")
+  public Instant reofferOwedAt;
+
   /** {@link #mainBranch}, or {@code main} for a row that carries none. */
   public String mainBranchOrDefault() {
     return mainBranch == null || mainBranch.isBlank() ? "main" : mainBranch;

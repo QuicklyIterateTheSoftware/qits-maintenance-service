@@ -3,6 +3,8 @@ package eu.wohlben.qits.maintenance.automation;
 import static eu.wohlben.qits.maintenance.automation.AutomationFixture.FOLD_A;
 import static eu.wohlben.qits.maintenance.automation.AutomationFixture.REQUEST;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.maintenance.api.Fixture;
@@ -11,6 +13,7 @@ import eu.wohlben.qits.maintenance.bump.CiClient;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto;
 import eu.wohlben.qits.maintenance.entity.MtBump;
 import eu.wohlben.qits.maintenance.model.BumpStatus;
+import eu.wohlben.qits.maintenance.model.BumpTrigger;
 import eu.wohlben.qits.maintenance.model.ScanScope;
 import eu.wohlben.qits.maintenance.peer.FakePeers;
 import eu.wohlben.qits.maintenance.peer.PeerTarget;
@@ -21,7 +24,9 @@ import eu.wohlben.qits.maintenance.work.WorkQueue;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -119,6 +124,83 @@ class AutomationDispatchRetryTest {
     assertEquals(BumpStatus.FAILED.name(), row.status, row.message);
     assertTrue(row.message.startsWith("qits-ci refused the trigger"), row.message);
     assertEquals(1, peers.bodiesFor(CiClient.TRIGGER_PATH).size());
+  }
+
+  /**
+   * <b>A waiting dependency bump whose request RELEASED is not sent</b> (qits-1578). The request
+   * was open when the row was opened; it released while the row waited, its fold branch went with
+   * it, and a run sent anyway fails on the missing branch. The row ends SUPERSEDED naming the
+   * request and its state, qits-ci is never asked, and the repository is owed a re-offer.
+   */
+  @Test
+  void aWaitingDependencyBumpWhoseRequestReleasedIsSupersededWithoutARun() {
+    UUID id =
+        store.openAutomation(
+            new MaintenanceStore.AutomationOpening(
+                Fixture.REPOSITORY,
+                DependencyBumpAutomation.KIND,
+                REQUEST,
+                FOLD_A,
+                null,
+                false,
+                AutomationFixture.branch(DependencyBumpAutomation.KIND, REQUEST),
+                null,
+                "test",
+                BumpTrigger.UPSTREAM,
+                List.of(),
+                Map.of(),
+                BumpStatus.REQUESTED,
+                null),
+            false,
+            Instant.now());
+    AutomationFixture.scriptRequest(peers, REQUEST, "RELEASED", FOLD_A);
+
+    MtBump row = sendAgain(store.bump(id).orElseThrow());
+
+    assertEquals(BumpStatus.SUPERSEDED.name(), row.status, row.message);
+    assertEquals(
+        "superseded: release request " + REQUEST + " is RELEASED and takes no commit;"
+            + " nothing was run",
+        row.message);
+    assertTrue(peers.bodiesFor(CiClient.TRIGGER_PATH).isEmpty(), "no run was asked for");
+    assertNotNull(
+        store.repository(Fixture.REPOSITORY).orElseThrow().reofferOwedAt,
+        "the repository is owed a re-offer against main");
+  }
+
+  /** An unreadable request decides nothing: the row is sent as before. */
+  @Test
+  void aRequestThatCannotBeReadSendsTheRowAsBefore() {
+    peers.answer(
+        PeerTarget.PROJECTS,
+        Fixture.RELEASE_REQUESTS_PATH + "/" + REQUEST,
+        FakePeers.Scripted.unreachable("connection refused"));
+    Fixture.scriptCiAccepts(peers, RUN);
+    UUID id =
+        store.openAutomation(
+            new MaintenanceStore.AutomationOpening(
+                Fixture.REPOSITORY,
+                ScreenshotBaselinesAutomation.KIND,
+                REQUEST,
+                FOLD_A,
+                null,
+                false,
+                AutomationFixture.branch(REQUEST),
+                null,
+                "test",
+                BumpTrigger.MANUAL,
+                List.of(),
+                Map.of(),
+                BumpStatus.REQUESTED,
+                null),
+            false,
+            Instant.now());
+
+    MtBump row = sendAgain(store.bump(id).orElseThrow());
+
+    assertEquals(BumpStatus.RUNNING.name(), row.status, row.message);
+    assertEquals(1, peers.bodiesFor(CiClient.TRIGGER_PATH).size());
+    assertNull(store.repository(Fixture.REPOSITORY).orElseThrow().reofferOwedAt);
   }
 
   private void ciAnswers(FakePeers.Scripted answer) {

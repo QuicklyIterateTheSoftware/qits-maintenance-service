@@ -210,6 +210,7 @@ erDiagram
     string main_branch "length 255"
     text message
     string project "length 255"
+    instant reoffer_owed_at
     string status "not null, length 32"
   }
   %% mt_sbom_check_run: eu.wohlben.qits.maintenance.entity.MtSbomCheckRun (maintenance)
