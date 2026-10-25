@@ -33,7 +33,9 @@ import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
  * against qits-idp) and {@code qits:agent} (a commissioned agent). There is no anonymous route
  * here. {@code qits:admin-agent} is admitted too (qits-628 follow-up): an
  * ADMIN workspace's coding agent carries it alongside {@code qits:agent}, and for now it may use
- * everything {@code qits:admin} may use.
+ * everything {@code qits:admin} may use. {@code qits:desk} (qits-1596) is admitted too: every route
+ * in this class is read-only and the inventory has no project concept to bind it to, so the desk is
+ * let in outright.
  */
 @Path("/repositories")
 @Produces(MediaType.APPLICATION_JSON)
@@ -56,7 +58,7 @@ public class RepositoryController {
       operationId = "listRepositories",
       summary = "Every repository in the inventory, with its groups and what is pending")
   @APIResponse(responseCode = "200", description = "The repositories")
-  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:desk", "qits:system", "qits:agent"})
   public List<RepositoryDto> repositories() {
     return inventory.repositories();
   }
@@ -72,7 +74,7 @@ public class RepositoryController {
   @Operation(operationId = "getRepository", summary = "One repository with every pin it holds")
   @APIResponse(responseCode = "200", description = "The repository")
   @APIResponse(responseCode = "404", description = "No such repository in the inventory")
-  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:desk", "qits:system", "qits:agent"})
   public RepositoryDetailDto repository(@PathParam("name") String name) {
     return inventory.repository(name);
   }
@@ -97,7 +99,7 @@ public class RepositoryController {
       operationId = "listRepositoryDependents",
       summary = "Who embeds the artifacts this repository publishes")
   @APIResponse(responseCode = "200", description = "The dependents, per published artifact")
-  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:desk", "qits:system", "qits:agent"})
   public RepositoryDependentsDto dependents(@PathParam("name") String name) {
     return graph.repositoryDependents(name);
   }
@@ -131,7 +133,7 @@ public class RepositoryController {
       operationId = "getRepositoryDownstream",
       summary = "Everything downstream of this repository, ordered upstream first")
   @APIResponse(responseCode = "200", description = "The closure, depth ascending then name")
-  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:desk", "qits:system", "qits:agent"})
   public DownstreamDto downstream(@PathParam("name") String name) {
     return adoption.downstream(name);
   }

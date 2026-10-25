@@ -165,4 +165,32 @@ class SbomCheckApiTest {
     as("qits:admin-agent").post(BASE + "/sbom-check/runs").then().statusCode(202);
     as("qits:agent").post(BASE + "/sbom-check/runs").then().statusCode(403);
   }
+
+  /**
+   * qits-1596: the delivery desk's credential, carrying {@code qits:desk} and NOT {@code
+   * qits:admin-agent} or {@code qits:admin}, is admitted everywhere the coordinator is — this door
+   * included, since it writes nothing to a git ref and has no project to bind the desk to.
+   */
+  @Test
+  void aDeskCallerStartsARunJustLikeTheCoordinator() {
+    UUID id =
+        store.upsertArtifact(
+            Ecosystem.MAVEN,
+            NAME,
+            "2026.1001.1",
+            Fixture.REPOSITORY,
+            Instant.now().minus(Duration.ofDays(2)),
+            new ReleaseOrigin("qits", "artifacts", null));
+    store.markArtifactMissing(id);
+    peers.answer(
+        PeerTarget.MAVEN_REGISTRY,
+        "/eu/wohlben/qits/qits-no-sbom/maven-metadata.xml",
+        FakePeers.Scripted.ok(
+            "<metadata><groupId>eu.wohlben.qits</groupId><artifactId>qits-no-sbom</artifactId>"
+                + "<versioning><versions><version>2026.1001.1</version></versions></versioning>"
+                + "</metadata>"));
+
+    as("qits:desk").post(BASE + "/sbom-check/runs").then().statusCode(202);
+    as("qits:desk").get(BASE + "/sbom-check").then().statusCode(200);
+  }
 }

@@ -54,7 +54,7 @@ public class PinsController {
           "The answer would not be complete: the inventory holds no repository at all, the"
               + " deployed versions could not be read, or a deployed or rollback release of a"
               + " repository this inventory holds is not in the release ledger")
-  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:desk", "qits:system", "qits:agent"})
   public PinSourceDto pins() {
     return inventory.pins();
   }

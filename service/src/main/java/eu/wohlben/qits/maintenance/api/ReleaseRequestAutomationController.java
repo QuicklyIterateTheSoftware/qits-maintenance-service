@@ -35,6 +35,14 @@ import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
  * owns, gated by the request's own CI and approval like any other commit on it. {@code
  * qits:admin-agent} is admitted too (qits-628 follow-up): an ADMIN workspace's coding agent carries
  * it alongside {@code qits:agent}, and for now it may use everything {@code qits:admin} may use.
+ *
+ * <p><b>{@code qits:desk} (qits-1596) is admitted only on the READ</b> ({@link
+ * #automations(String, String)}), not on the trigger or the re-run. Those two are this service's
+ * actual write surface: a {@code REQUESTED} kind dispatches a bump row through {@link
+ * eu.wohlben.qits.maintenance.bump.CiClient}, which is what pushes a branch into the repository on
+ * qits-ci's side. The desk is admitted everywhere the coordinator is admitted EXCEPT a door that
+ * ends in a ref being written, and this is that door — the coordinator's own {@code qits:admin-agent}
+ * stays, but {@code qits:desk} does not join it here.
  */
 @Path("/release-requests")
 @Produces(MediaType.APPLICATION_JSON)
@@ -154,7 +162,7 @@ public class ReleaseRequestAutomationController {
       summary = "A release request's automations at one fold")
   @APIResponse(responseCode = "200", description = "Every kind with a row at the fold")
   @APIResponse(responseCode = "400", description = "Not a request id, or not a sha")
-  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:desk", "qits:system", "qits:agent"})
   public ReleaseRequestAutomationsDto automations(
       @PathParam("requestId") String requestId, @QueryParam("foldSha") String foldSha) {
     return automations.automations(requestId == null ? null : requestId.trim(), foldSha);

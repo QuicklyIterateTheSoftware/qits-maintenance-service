@@ -37,7 +37,7 @@ public class AutomationKindsController {
       operationId = "listAutomationKinds",
       summary = "Every release-request automation kind this build offers")
   @APIResponse(responseCode = "200", description = "Every registered, switched-on kind, by id")
-  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:desk", "qits:system", "qits:agent"})
   public AutomationKindsDto kinds() {
     return automations.kindsDto();
   }

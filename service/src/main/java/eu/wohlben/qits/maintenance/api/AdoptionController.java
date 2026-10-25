@@ -30,7 +30,9 @@ import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
  * @RolesAllowed} REPLACES a class-level one and a mixture is how one route ends up open. Like every
  * read in this API, it also takes {@code qits:agent}. {@code qits:admin-agent} is admitted too
  * (qits-628 follow-up): an ADMIN workspace's coding agent carries it alongside {@code qits:agent},
- * and for now it may use everything {@code qits:admin} may use.
+ * and for now it may use everything {@code qits:admin} may use. {@code qits:desk} (qits-1596) is
+ * admitted too: this door is read-only and carries no project concept, so the delivery desk is let
+ * in outright, exactly where the coordinator is.
  */
 @Path("/adoption")
 @Produces(MediaType.APPLICATION_JSON)
@@ -62,7 +64,7 @@ public class AdoptionController {
       summary = "How far one released repository and version got")
   @APIResponse(responseCode = "200", description = "The journey")
   @APIResponse(responseCode = "400", description = "Both repository and version are required")
-  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:desk", "qits:system", "qits:agent"})
   public AdoptionJourneyDto byRelease(
       @QueryParam("repository") String repository, @QueryParam("version") String version) {
     String named = trimmed(repository);
