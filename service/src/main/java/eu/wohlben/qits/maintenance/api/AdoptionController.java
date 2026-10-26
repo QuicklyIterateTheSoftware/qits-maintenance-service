@@ -32,7 +32,8 @@ import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
  * (qits-628 follow-up): an ADMIN workspace's coding agent carries it alongside {@code qits:agent},
  * and for now it may use everything {@code qits:admin} may use. {@code qits:desk} (qits-1596) is
  * admitted too: this door is read-only and carries no project concept, so the delivery desk is let
- * in outright, exactly where the coordinator is.
+ * in outright, exactly where the coordinator is. {@code qits:desk-admin} (qits-1621) is admitted
+ * everywhere {@code qits:admin-agent} is, here included.
  */
 @Path("/adoption")
 @Produces(MediaType.APPLICATION_JSON)
@@ -64,7 +65,7 @@ public class AdoptionController {
       summary = "How far one released repository and version got")
   @APIResponse(responseCode = "200", description = "The journey")
   @APIResponse(responseCode = "400", description = "Both repository and version are required")
-  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:desk", "qits:system", "qits:agent"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:desk-admin", "qits:desk", "qits:system", "qits:agent"})
   public AdoptionJourneyDto byRelease(
       @QueryParam("repository") String repository, @QueryParam("version") String version) {
     String named = trimmed(repository);

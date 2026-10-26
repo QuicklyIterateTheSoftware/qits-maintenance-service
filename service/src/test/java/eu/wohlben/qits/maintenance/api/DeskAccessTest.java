@@ -22,6 +22,11 @@ import org.junit.jupiter.api.Test;
  * eu.wohlben.qits.maintenance.bump.CiClient}, which is what pushes a branch, and stay closed to the
  * desk exactly as they are closed to plain {@code qits:agent}.
  *
+ * <p>{@code qits:desk-admin} (epic qits-1621) is a different grant: it is a platform operator role,
+ * not the desk's own project-bound credential, and the epic's "Inventory" dossier page records no
+ * refusal for this service — so unlike {@code qits:desk}, it reaches the trigger and the re-run
+ * too, exactly where {@code qits:admin-agent} does.
+ *
  * <p>Each request names its identity in {@code X-Qits-User} / {@code X-Qits-Roles}, mirroring
  * {@link AgentReadAccessTest}.
  */
@@ -108,5 +113,27 @@ class DeskAccessTest {
         .post(BASE + "/release-requests/" + requestId + "/automations/screenshot-baselines/runs")
         .then()
         .statusCode(403);
+  }
+
+  /**
+   * {@code qits:desk-admin} is admitted everywhere {@code qits:admin-agent} is (epic qits-1621),
+   * the trigger and the re-run included — the one place {@code qits:desk} is refused above.
+   */
+  @Test
+  void aDeskAdminCallerTriggersAndReRunsJustLikeTheCoordinator() {
+    String requestId = UUID.randomUUID().toString();
+    allowed(
+        as("qits:desk-admin")
+            .contentType(ContentType.JSON)
+            .body(
+                "{\"repository\":\"qits-ci-service\",\"foldSha\":\"deadbeef\","
+                    + "\"previousFoldSha\":null,\"changedSincePrevious\":null,"
+                    + "\"sourceBranches\":[\"main\"],\"workItem\":null}")
+            .post(BASE + "/release-requests/" + requestId + "/automations"));
+    allowed(
+        as("qits:desk-admin")
+            .contentType(ContentType.JSON)
+            .body("{\"repository\":\"qits-ci-service\"}")
+            .post(BASE + "/release-requests/" + requestId + "/automations/screenshot-baselines/runs"));
   }
 }

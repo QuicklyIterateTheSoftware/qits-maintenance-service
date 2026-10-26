@@ -42,7 +42,10 @@ import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
  * eu.wohlben.qits.maintenance.bump.CiClient}, which is what pushes a branch into the repository on
  * qits-ci's side. The desk is admitted everywhere the coordinator is admitted EXCEPT a door that
  * ends in a ref being written, and this is that door — the coordinator's own {@code qits:admin-agent}
- * stays, but {@code qits:desk} does not join it here.
+ * stays, but {@code qits:desk} does not join it here. {@code qits:desk-admin} (qits-1621) is a
+ * platform operator rather than the desk's own binding and reaches every door
+ * {@code qits:admin-agent} does, the trigger and the re-run included — see the epic's "Inventory"
+ * dossier page, which lists no refusal for this service.
  */
 @Path("/release-requests")
 @Produces(MediaType.APPLICATION_JSON)
@@ -130,7 +133,7 @@ public class ReleaseRequestAutomationController {
   @APIResponse(
       responseCode = "404",
       description = "No such repository in the inventory yet; a scan of it is queued")
-  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:desk-admin", "qits:system", "qits:agent"})
   public ReleaseRequestAutomationsDto trigger(
       @PathParam("requestId") String requestId, TriggerRequest request) {
     if (request == null) {
@@ -162,7 +165,7 @@ public class ReleaseRequestAutomationController {
       summary = "A release request's automations at one fold")
   @APIResponse(responseCode = "200", description = "Every kind with a row at the fold")
   @APIResponse(responseCode = "400", description = "Not a request id, or not a sha")
-  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:desk", "qits:system", "qits:agent"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:desk-admin", "qits:desk", "qits:system", "qits:agent"})
   public ReleaseRequestAutomationsDto automations(
       @PathParam("requestId") String requestId, @QueryParam("foldSha") String foldSha) {
     return automations.automations(requestId == null ? null : requestId.trim(), foldSha);
@@ -186,7 +189,7 @@ public class ReleaseRequestAutomationController {
       description =
           "The request takes no branch or has no fold, one is already active for (request, kind),"
               + " or bumping is disabled")
-  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:system", "qits:agent"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:desk-admin", "qits:system", "qits:agent"})
   public Response run(
       @PathParam("requestId") String requestId,
       @PathParam("kind") String kind,

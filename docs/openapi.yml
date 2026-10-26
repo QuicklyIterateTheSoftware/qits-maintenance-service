@@ -654,6 +654,7 @@ paths:
       - SecurityScheme:
         - qits:admin
         - qits:admin-agent
+        - qits:desk-admin
         - qits:desk
         - qits:system
         - qits:agent
@@ -680,6 +681,7 @@ paths:
       - SecurityScheme:
         - qits:admin
         - qits:admin-agent
+        - qits:desk-admin
         - qits:desk
         - qits:system
         - qits:agent
@@ -708,6 +710,7 @@ paths:
       - SecurityScheme:
         - qits:admin
         - qits:admin-agent
+        - qits:desk-admin
         - qits:desk
         - qits:system
   /maintenance/api/automations/kinds:
@@ -731,6 +734,7 @@ paths:
       - SecurityScheme:
         - qits:admin
         - qits:admin-agent
+        - qits:desk-admin
         - qits:desk
         - qits:system
         - qits:agent
@@ -768,6 +772,7 @@ paths:
       - SecurityScheme:
         - qits:admin
         - qits:admin-agent
+        - qits:desk-admin
         - qits:desk
         - qits:system
         - qits:agent
@@ -799,6 +804,7 @@ paths:
       - SecurityScheme:
         - qits:admin
         - qits:admin-agent
+        - qits:desk-admin
         - qits:desk
         - qits:system
         - qits:agent
@@ -831,6 +837,7 @@ paths:
       - SecurityScheme:
         - qits:admin
         - qits:admin-agent
+        - qits:desk-admin
         - qits:desk
         - qits:system
         - qits:agent
@@ -869,6 +876,7 @@ paths:
       - SecurityScheme:
         - qits:admin
         - qits:admin-agent
+        - qits:desk-admin
         - qits:desk
         - qits:system
         - qits:agent
@@ -909,6 +917,7 @@ paths:
       - SecurityScheme:
         - qits:admin
         - qits:admin-agent
+        - qits:desk-admin
         - qits:desk
         - qits:system
         - qits:agent
@@ -937,6 +946,7 @@ paths:
       - SecurityScheme:
         - qits:admin
         - qits:admin-agent
+        - qits:desk-admin
         - qits:desk
         - qits:system
         - qits:agent
@@ -978,6 +988,7 @@ paths:
       - SecurityScheme:
         - qits:admin
         - qits:admin-agent
+        - qits:desk-admin
         - qits:system
         - qits:agent
     get:
@@ -1012,6 +1023,7 @@ paths:
       - SecurityScheme:
         - qits:admin
         - qits:admin-agent
+        - qits:desk-admin
         - qits:desk
         - qits:system
         - qits:agent
@@ -1056,6 +1068,7 @@ paths:
       - SecurityScheme:
         - qits:admin
         - qits:admin-agent
+        - qits:desk-admin
         - qits:system
         - qits:agent
   /maintenance/api/repositories:
@@ -1081,6 +1094,7 @@ paths:
       - SecurityScheme:
         - qits:admin
         - qits:admin-agent
+        - qits:desk-admin
         - qits:desk
         - qits:system
         - qits:agent
@@ -1113,6 +1127,7 @@ paths:
       - SecurityScheme:
         - qits:admin
         - qits:admin-agent
+        - qits:desk-admin
         - qits:desk
         - qits:system
         - qits:agent
@@ -1143,6 +1158,7 @@ paths:
       - SecurityScheme:
         - qits:admin
         - qits:admin-agent
+        - qits:desk-admin
         - qits:desk
         - qits:system
         - qits:agent
@@ -1173,6 +1189,7 @@ paths:
       - SecurityScheme:
         - qits:admin
         - qits:admin-agent
+        - qits:desk-admin
         - qits:desk
         - qits:system
         - qits:agent
@@ -1199,6 +1216,7 @@ paths:
       - SecurityScheme:
         - qits:admin
         - qits:admin-agent
+        - qits:desk-admin
         - qits:desk
         - qits:system
         - qits:agent
@@ -1221,6 +1239,7 @@ paths:
       - SecurityScheme:
         - qits:admin
         - qits:admin-agent
+        - qits:desk-admin
         - qits:desk
         - qits:system
   /maintenance/api/scans:
@@ -1248,6 +1267,7 @@ paths:
       - SecurityScheme:
         - qits:admin
         - qits:admin-agent
+        - qits:desk-admin
         - qits:desk
         - qits:system
   /maintenance/api/scans/{id}:
@@ -1279,6 +1299,7 @@ paths:
       - SecurityScheme:
         - qits:admin
         - qits:admin-agent
+        - qits:desk-admin
         - qits:desk
         - qits:system
         - qits:agent

@@ -43,7 +43,7 @@ public class BumpController {
       operationId = "listBumps",
       summary = "The newest bumps, of one repository or of all of them")
   @APIResponse(responseCode = "200", description = "The bumps")
-  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:desk", "qits:system", "qits:agent"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:desk-admin", "qits:desk", "qits:system", "qits:agent"})
   public List<BumpDto> bumps(
       @QueryParam("repository") String repository,
       @QueryParam("limit") @DefaultValue("" + DEFAULT_LIMIT) int limit) {
@@ -58,7 +58,7 @@ public class BumpController {
   @jakarta.ws.rs.Path("/pending")
   @Operation(operationId = "listPendingBumps", summary = "The newest bumps still on their way")
   @APIResponse(responseCode = "200", description = "The pending bumps")
-  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:desk", "qits:system", "qits:agent"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:desk-admin", "qits:desk", "qits:system", "qits:agent"})
   public PendingBumpsDto pendingBumps(
       @QueryParam("limit") @DefaultValue("" + DEFAULT_LIMIT) int limit) {
     return inventory.pendingBumps(Math.clamp(limit, 1, MAX_LIMIT));
@@ -75,7 +75,7 @@ public class BumpController {
   @Operation(operationId = "getBump", summary = "One bump with the changes it sent")
   @APIResponse(responseCode = "200", description = "The bump")
   @APIResponse(responseCode = "404", description = "No such bump")
-  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:desk", "qits:system", "qits:agent"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:desk-admin", "qits:desk", "qits:system", "qits:agent"})
   public BumpDto bump(@PathParam("id") String id) {
     UUID bumpId;
     try {

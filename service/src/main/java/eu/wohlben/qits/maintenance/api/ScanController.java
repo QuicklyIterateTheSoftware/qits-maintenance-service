@@ -63,7 +63,7 @@ public class ScanController {
       summary = "Re-scan the manifests and refresh the latest versions")
   @APIResponse(responseCode = "202", description = "Queued")
   @APIResponse(responseCode = "400", description = "Unknown scope")
-  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:desk", "qits:system"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:desk-admin", "qits:desk", "qits:system"})
   public Response scan(StartScanRequest request) {
     String requested = request == null ? null : request.scope();
     ScanScope scope =
@@ -96,7 +96,7 @@ public class ScanController {
   @Operation(operationId = "getScan", summary = "One scan and its status")
   @APIResponse(responseCode = "200", description = "The scan")
   @APIResponse(responseCode = "404", description = "No such scan")
-  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:desk", "qits:system", "qits:agent"})
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:desk-admin", "qits:desk", "qits:system", "qits:agent"})
   public ScanDto scan(@PathParam("id") String id) {
     UUID scanId;
     try {

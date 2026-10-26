@@ -773,6 +773,7 @@ An operator presses Bump in a browser; a machine may post the same request. Ther
 route here and there must never be one — the write surface pushes branches into every repository on
 the platform. `qits:admin-agent` is admitted too (qits-628 follow-up): an ADMIN workspace's coding
 agent carries it alongside `qits:agent`, and for now it may use everything `qits:admin` may use.
+`qits:desk-admin` (epic qits-1621) is admitted everywhere `qits:admin-agent` is, this door included.
 
 **Outbound, this service is a MACHINE and nothing else**: every call carries `X-Qits-Roles:
 qits:system`, and the idp client carries `qits:system` — the orchestrator's machine role.
