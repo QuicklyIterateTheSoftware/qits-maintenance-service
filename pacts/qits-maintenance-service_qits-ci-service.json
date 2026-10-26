@@ -8,6 +8,94 @@
         "references": {
           "qits-call": {
             "app": "qits-ci-service",
+            "operationId": "getRunQueue"
+          },
+          "qits-trigger": {
+            "app": "qits-maintenance-service",
+            "kind": "schedule",
+            "schedule": "BumpDispatcher.tick"
+          }
+        }
+      },
+      "description": "BumpDispatcher.tick: getRunQueue",
+      "key": "9d31b9c1",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a run queue with a run waiting",
+          "params": {
+            "leaseId": "00000000-0000-4000-8000-000000000001",
+            "queuedRunId": "00000000-0000-4000-8000-000000000002",
+            "repositoryId": "00000000-0000-4000-8000-000000000003",
+            "runningRunId": "00000000-0000-4000-8000-000000000004",
+            "targetId": "00000000-0000-4000-8000-000000000005"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "path": "/ci/api/runs/queue"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "queued": [
+              {}
+            ],
+            "running": [
+              {}
+            ]
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.queued": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 0
+                }
+              ]
+            },
+            "$.running": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 0
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json.*"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-ci-service",
             "operationId": "triggerEvent"
           },
           "qits-trigger": {
