@@ -62,17 +62,17 @@
              chase a release.
              First carries /work (qits-965/qits-974) at 2026.1007.25926; 2026.1007.35430 only adds
              getWork recordings. -->
-        <qits.projects-golden-masters.version>2026.1025.214027</qits.projects-golden-masters.version>
+        <qits.projects-golden-masters.version>2026.1027.194508</qits.projects-golden-masters.version>
         <!-- THE OTHER PROVIDERS' GOLDEN MASTERS (ticket qits-1149), test scope, read off the classpath
              by qits-pact-consumer for this repository's consumer pacts against each of them
              (maintenance/src/test/.../contracts/*Contract, PeerConsumerPactTest). Each moves like
              every internal pin: a qits-maintenance bump on its property, gated here. Do not
              hand-edit one to chase a release. -->
-        <qits.ci-golden-masters.version>2026.1026.93256</qits.ci-golden-masters.version>
+        <qits.ci-golden-masters.version>2026.1026.163551</qits.ci-golden-masters.version>
         <qits.deployments-golden-masters.version>2026.1010.145913</qits.deployments-golden-masters.version>
-        <qits.artifacts-golden-masters.version>2026.1019.62657</qits.artifacts-golden-masters.version>
+        <qits.artifacts-golden-masters.version>2026.1027.103538</qits.artifacts-golden-masters.version>
         <qits.githost-golden-masters.version>2026.1020.204038</qits.githost-golden-masters.version>
-        <qits.idp-golden-masters.version>2026.1022.183304</qits.idp-golden-masters.version>
+        <qits.idp-golden-masters.version>2026.1027.165632</qits.idp-golden-masters.version>
         <qits.mirror-golden-masters.version>2026.1018.160931</qits.mirror-golden-masters.version>
         <!-- The shared JVM consumer helper (qits-integrations-quarkus-javalib): golden-master reader,
              row builder, pact-file compare. Test scope. -->
@@ -138,7 +138,7 @@
              lineage and the durable-consumer tables — so joining it added
              `postgresql:eventstream:qits_platform_maintenance_eventstream` to
              .config/qits/deployments.yml. See service/pom.xml. -->
-        <qits.eventstream.version>2026.1019.123026</qits.eventstream.version>
+        <qits.eventstream.version>2026.1027.101950</qits.eventstream.version>
         <qits.maven.repository.url>https://registry.qits.wohlben.eu/artifacts/maven/maven</qits.maven.repository.url>
         <maven.compiler.release>25</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
