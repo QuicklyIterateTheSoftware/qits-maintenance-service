@@ -175,6 +175,13 @@ public class ReleaseRequestAutomationController {
    * <b>The manual re-run.</b> Runs one kind on the request's CURRENT fold now, skipping carry-over
    * and applicability — so a repository's first screenshot references come from here — and does not
    * wait. {@code GET /bumps/{id}} follows it.
+   *
+   * <p><b>Answered before the plan is read</b> (qits-1687): qits-projects gives this door ten
+   * seconds, and a kind's plan can be whole-repository scans on the git host. Everything the door
+   * answers itself — 400, 404, the 409s, the request read from qits-projects — is decided here; the
+   * 202 names the one row it opened, and the worker plans that row before it is sent. A plan that
+   * finds nothing to write or cannot be read ends the row (NOTHING_TO_DO, FAILED) rather than the
+   * request.
    */
   @POST
   @Path("/{requestId}/automations/{kind}/runs")

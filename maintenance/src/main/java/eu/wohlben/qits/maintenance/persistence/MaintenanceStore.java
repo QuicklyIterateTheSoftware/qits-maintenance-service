@@ -1714,7 +1714,9 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
    * @param workItem the commit subject's scope, or null
    * @param environment which environment's ci runs it
    * @param trigger FOLD, MANUAL — or SCHEDULED, which nothing here writes
-   * @param changes a MaintenanceBump run's changes, frozen here as a bump's are; empty otherwise
+   * @param changes a MaintenanceBump run's changes, frozen here as a bump's are; empty otherwise —
+   *     and null for a re-run row whose plan the worker has not read yet (qits-1687), which {@link
+   *     #automationPlanned} then fills
    * @param extras the kind's own payload fields, or empty
    * @param status REQUESTED to queue a run; NOTHING_TO_DO or FAILED to record an outcome no run is
    *     needed for (a FRESH plan, a carry-over, a breaker that is still tripped)
@@ -1853,7 +1855,8 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
           row.environment = opening.environment();
           row.trigger = opening.trigger().name();
           row.status = opening.status().name();
-          row.changes = writeJson(opening.changes());
+          // Null stays null (qits-1687): it is how a re-run row says it has not been planned yet.
+          row.changes = opening.changes() == null ? null : writeJson(opening.changes());
           row.automationExtras =
               opening.extras() == null || opening.extras().isEmpty()
                   ? null
@@ -1871,6 +1874,37 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
           row.persist();
           getEntityManager().flush();
           return row.id;
+        });
+  }
+
+  /**
+   * <b>Writes a re-run row's plan onto it</b> (qits-1687): the branch the plan's first run writes,
+   * its changes and its extras, and clears the "planning" sentence. Only onto a row that is still
+   * REQUESTED and still unplanned — a fold that moved on may have superseded it while the worker
+   * read the plan, and that ending stands.
+   *
+   * @return whether the plan was written
+   */
+  @ActivateRequestContext
+  public boolean automationPlanned(
+      UUID id, String branch, List<?> changes, Map<String, Object> extras) {
+    return DbRetry.inNewTx(
+        "record the plan of automation " + id,
+        () -> {
+          MtBump row = MtBump.findById(id);
+          if (row == null
+              || !BumpStatus.REQUESTED.name().equals(row.status)
+              || row.changes != null) {
+            return false;
+          }
+          if (branch != null) {
+            row.branch = branch;
+          }
+          row.changes = writeJson(changes);
+          row.automationExtras = extras == null || extras.isEmpty() ? null : writeJson(extras);
+          row.message = null;
+          getEntityManager().flush();
+          return true;
         });
   }
 

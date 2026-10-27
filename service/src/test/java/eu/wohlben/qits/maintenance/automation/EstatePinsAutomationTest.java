@@ -701,6 +701,69 @@ class EstatePinsAutomationTest {
   }
 
   /**
+   * <b>That FRESH is the worker's now</b> (qits-1687): the door answers with a REQUESTED row before
+   * a single read of the fold, and the plan the worker reads ends it NOTHING_TO_DO with the same
+   * "fresh:" sentence the door used to record.
+   */
+  @Test
+  void aReRunIsPlannedOnTheWorkerAndItsFreshPlanEndsTheRowThere() throws Exception {
+    currentFold(FOLD);
+    request(FOLD);
+    java.util.concurrent.CountDownLatch held = new java.util.concurrent.CountDownLatch(1);
+    queue.submit("hold the worker", () -> {
+      try {
+        held.await(30, java.util.concurrent.TimeUnit.SECONDS);
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+      }
+    });
+    UUID id;
+    try {
+      id = automations.run(WRAPPER, REQUEST, EstatePinsAutomation.KIND, null, BumpTrigger.MANUAL);
+
+      MtBump opened = store.bump(id).orElseThrow();
+      assertEquals(BumpStatus.REQUESTED.name(), opened.status, opened.message);
+      assertEquals(AutomationService.PLANNING, opened.message);
+      assertNull(opened.changes, "unplanned");
+      assertTrue(wrapperReads().isEmpty(), "the door read nothing of the fold: " + wrapperReads());
+    } finally {
+      held.countDown();
+    }
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    MtBump row = store.bump(id).orElseThrow();
+    assertEquals(BumpStatus.NOTHING_TO_DO.name(), row.status, row.message);
+    assertTrue(row.message.startsWith("fresh: "), row.message);
+    assertTrue(row.message.contains("already name what the members released"), row.message);
+    assertEquals(OWN_BRANCH, row.branch);
+    assertEquals(1, calls(TREE + FOLD + GitHostReader.RECURSIVE_QUERY), "planned once, by the worker");
+    assertTrue(peers.bodiesFor(CiClient.TRIGGER_PATH).isEmpty());
+  }
+
+  /**
+   * A re-run whose plan cannot be read ends FAILED with the sentence the door's 409 used to carry
+   * (qits-1687): the door has answered long before the plan is read, so the row is where it goes.
+   */
+  @Test
+  void aReRunWhosePlanCannotBeReadEndsFailed() {
+    fold(FOLD, STALE_PIN, null, true);
+    peers.answer(
+        PeerTarget.GITHOST,
+        TREE + FOLD + GitHostReader.RECURSIVE_QUERY,
+        FakePeers.Scripted.unreachable("refused"));
+    request(FOLD);
+
+    UUID id = automations.run(WRAPPER, REQUEST, EstatePinsAutomation.KIND, null, BumpTrigger.MANUAL);
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    MtBump row = store.bump(id).orElseThrow();
+    assertEquals(BumpStatus.FAILED.name(), row.status, row.message);
+    assertTrue(row.message.startsWith("Estate pins could not be planned: "), row.message);
+    assertTrue(row.message.contains("tree of the fold"), row.message);
+    assertTrue(peers.bodiesFor(CiClient.TRIGGER_PATH).isEmpty());
+  }
+
+  /**
    * <b>A ROW OPENED BEFORE qits-1258 ON A SOURCE BRANCH</b> still goes out and ends as the
    * source-branch row it is: the bump pipeline under the {@code targeted} sentinel, its run's verdict
    * rather than a head comparison, no join — though the kind now writes its own branch.

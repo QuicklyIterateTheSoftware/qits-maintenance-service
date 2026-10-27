@@ -183,6 +183,12 @@ public class AutomationService {
    */
   public static final String HEAD_UNREADABLE = "the head of the automation's branch could not be read";
 
+  /**
+   * What a re-run row says until the worker has read its plan (qits-1687); the plan's write clears
+   * it.
+   */
+  public static final String PLANNING = "planning: the plan is read before the run is sent";
+
   /** A release request id as qits-projects mints it. */
   private static final Pattern REQUEST_ID =
       Pattern.compile("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$");
@@ -804,8 +810,21 @@ public class AutomationService {
    * test:browser} fails the run with a sentence. A kind that writes the request's own branches is
    * still planned, because its plan IS its change list.
    *
+   * <p><b>The plan runs on the worker, not here</b> (qits-1687). qits-projects gives this door ten
+   * seconds, and a plan can be whole-repository scans on the git host — a golden-recordings plan is
+   * two — which took the door to fourteen and eighteen seconds on a slow git host: qits-projects
+   * answered its user 503 while the run had in fact been opened. So the door answers only what it
+   * can from its own reads — the switch, the ids, the kind, the repository, the request (one read
+   * of qits-projects, which the not-open 409 needs) — and then opens ONE row REQUESTED, exclusively,
+   * which is the "one is already active" 409 and the 202's id. That row carries no change list yet
+   * ({@code changes} null, see {@link #planPending}); its dispatch plans first, and fills it from
+   * the plan or ends it ({@link #planned}). What the plan says therefore no longer reaches the
+   * caller: a kind whose plan is its change list ends its row NOTHING_TO_DO on a FRESH plan and
+   * FAILED on an undecided one, where the second used to be a 409.
+   *
    * @param repository the repository, or null: it is then the one this request's automations were
    *     last asked about
+   * @return the id of the one row opened here, which the plan fills or ends on the worker
    * @throws BadRequestException not a request id, or not a work item — a 400
    * @throws NoSuchAutomationException no such kind — a 404
    * @throws NoSuchRepositoryException no such repository, or none known for the request — a 404
@@ -813,7 +832,7 @@ public class AutomationService {
    * @throws eu.wohlben.qits.maintenance.error.BumpAlreadyActiveException one is active for (request,
    *     kind) — a 409
    * @throws BumpDisabledException {@code qits.maintenance.bump.enabled} is false — a 409
-   * @throws AutomationNotRunnableException no fold yet, or a plan that could not be decided — a 409
+   * @throws AutomationNotRunnableException no fold yet — a 409
    */
   public UUID run(
       String repository, String requestId, String kindName, String workItem, BumpTrigger trigger) {
@@ -838,6 +857,12 @@ public class AutomationService {
     return start(repository, requestId, kindName, item, trigger, true);
   }
 
+  /**
+   * Both doors' synchronous half: the switch, the ids, the kind, the repository and the request,
+   * each with its own answer. Then they part (qits-1687): the re-run door ({@code honourPlan}
+   * false) opens one unplanned row and leaves its plan to the worker ({@link #planned}); the
+   * upstream re-plan reads its plan here, because its answer is the plan's.
+   */
   private UUID start(
       String repository,
       String requestId,
@@ -884,49 +909,38 @@ public class AutomationService {
             row, requestId, state.mergedSha(), state.branches(), item,
             foldRef(requestId, state.backingBranch()), state.qualifiedId());
 
+    if (!honourPlan) {
+      // THE RE-RUN DOOR STOPS HERE (qits-1687): one row, REQUESTED and unplanned, opened exclusively
+      // — two quick presses still meet the 409 — and its plan read on the worker by its dispatch.
+      UUID id = store.openAutomation(unplanned(kind, subject, trigger), true, Instant.now());
+      queueDispatch(id);
+      LOG.infof(
+          "Opened the %s re-run %s of %s for %s of %s at %s; it is planned on the worker",
+          trigger, id, kind.kind(), requestId, name, state.mergedSha());
+      return id;
+    }
+
+    // The upstream hook's re-plan (qits-1133) keeps its plan here: what it answers — null for a
+    // FRESH plan, a 409 for an undecided or clashing one — IS the plan.
     Plan plan = plan(kind, subject);
-    List<Plan.Run> runs;
-    if (honourPlan) {
-      switch (plan.kind()) {
-        case FRESH -> {
-          LOG.infof(
-              "Re-planned %s for %s of %s at %s on %s: fresh, nothing opened (%s)",
-              kind.kind(), requestId, name, state.mergedSha(), trigger, plan.reason());
-          return null;
-        }
-        case UNKNOWN ->
-            throw new AutomationNotRunnableException(
-                kind.label() + " could not be planned: " + plan.reason());
-        default -> {}
+    switch (plan.kind()) {
+      case FRESH -> {
+        LOG.infof(
+            "Re-planned %s for %s of %s at %s on %s: fresh, nothing opened (%s)",
+            kind.kind(), requestId, name, state.mergedSha(), trigger, plan.reason());
+        return null;
       }
-      String clash = clash(kind, plan, applicablePaths(subject));
-      if (clash != null) {
-        throw new AutomationNotRunnableException(clash);
-      }
-      runs = plan.runs();
-    } else if (kind.planIsTheChangeList()) {
-      // A kind whose plan IS its change list (estate pins, and any SOURCE_BRANCHES kind): FRESH is
-      // recorded rather than run, because a run with nothing to change writes nothing.
-      switch (plan.kind()) {
-        case FRESH -> {
-          return openOutcome(kind, subject, trigger, BumpStatus.NOTHING_TO_DO,
-              "fresh: " + plan.reason());
-        }
-        case UNKNOWN ->
-            throw new AutomationNotRunnableException(
-                kind.label() + " could not be planned: " + plan.reason());
-        default -> runs = plan.runs();
-      }
-    } else {
-      // A re-run is asked for because somebody wants it RUN: a FRESH or undecided plan does not
-      // talk an own-branch kind out of it, and only a RUN plan's own payload fields are kept.
-      runs =
-          plan.kind() == Plan.Kind.RUN
-              ? plan.runs()
-              : List.of(new Plan.Run(null, List.of(), Map.of()));
+      case UNKNOWN ->
+          throw new AutomationNotRunnableException(
+              kind.label() + " could not be planned: " + plan.reason());
+      default -> {}
+    }
+    String clash = clash(kind, plan, applicablePaths(subject));
+    if (clash != null) {
+      throw new AutomationNotRunnableException(clash);
     }
     UUID first = null;
-    for (Plan.Run run : runs) {
+    for (Plan.Run run : plan.runs()) {
       // EXCLUSIVE FOR THE FIRST RUN ONLY: that is the "one is already active" 409. A plan of two
       // branches opens its second beside its first, which would otherwise refuse it.
       UUID id = open(kind, subject, null, null, run, trigger, first == null);
@@ -937,6 +951,96 @@ public class AutomationService {
         "Opened the %s re-run of %s for %s of %s at %s",
         trigger, kind.kind(), requestId, name, state.mergedSha());
     return first;
+  }
+
+  /**
+   * <b>A re-run row's plan, read on the worker</b> (qits-1687) — the part of the re-run door that
+   * used to keep its caller waiting on the git host. The row was opened exclusively and unplanned
+   * by {@link #run}; this is the tail that door had, in the same words:
+   *
+   * <ul>
+   *   <li>a kind whose plan IS its change list (estate pins, and any SOURCE_BRANCHES kind) ends the
+   *       row NOTHING_TO_DO on a FRESH plan, because a run with nothing to change writes nothing,
+   *       and FAILED on an undecided one — the sentence the door's 409 used to carry, now on the row
+   *       where qits-projects' gate and a person read it;
+   *   <li>any other kind is run whatever its plan says, because somebody asked for it to be RUN: a
+   *       FRESH or undecided plan does not talk an own-branch kind out of it, and only a RUN plan's
+   *       own payload fields are kept;
+   *   <li>a RUN plan's FIRST run is written onto this row — branch, changes, extras — and every
+   *       further run is opened beside it non-exclusively, as the door opened them, since the
+   *       exclusive open is the one this row already passed.
+   * </ul>
+   *
+   * <p>The subject is rebuilt from the row with no source branches — no kind's plan reads them, and
+   * the dispatch builds its subject the same way. The request is not asked again here: the door
+   * just did, and the dispatch that follows asks on every later offer.
+   *
+   * @return the row, planned and still REQUESTED, for the dispatch to carry on with; empty when the
+   *     plan ended it, or when it was superseded or ended while the plan was being read
+   */
+  private Optional<MtBump> planned(MtBump row, ReleaseRequestAutomation kind) {
+    Optional<MtRepository> repository = store.repository(row.repository);
+    if (repository.isEmpty()) {
+      // Nothing to plan from: the dispatch fails it, "the repository left the inventory".
+      return Optional.of(row);
+    }
+    AutomationSubject subject =
+        subject(
+            repository.get(), row.releaseRequestId, row.foldSha, List.of(), row.workItem,
+            foldRef(row.releaseRequestId, row.foldRef), row.releaseRequestQualifiedId);
+    Plan plan = plan(kind, subject);
+    List<Plan.Run> runs;
+    if (kind.planIsTheChangeList()) {
+      switch (plan.kind()) {
+        case FRESH -> {
+          store.bumpFinished(
+              row.id, BumpStatus.NOTHING_TO_DO, null, "fresh: " + plan.reason(), Instant.now());
+          LOG.infof("The %s re-run %s of %s is fresh, nothing run: %s", kind.kind(), row.id,
+              row.repository, plan.reason());
+          return Optional.empty();
+        }
+        case UNKNOWN -> {
+          fail(row, kind.label() + " could not be planned: " + plan.reason());
+          LOG.warnf("The %s re-run %s of %s could not be planned: %s", kind.kind(), row.id,
+              row.repository, plan.reason());
+          return Optional.empty();
+        }
+        default -> runs = plan.runs();
+      }
+    } else {
+      runs =
+          plan.kind() == Plan.Kind.RUN
+              ? plan.runs()
+              : List.of(new Plan.Run(null, List.of(), Map.of()));
+    }
+    Plan.Run first = runs.getFirst();
+    String branch =
+        first.branch() != null ? first.branch() : kind.branchPrefix() + row.releaseRequestId;
+    if (!store.automationPlanned(row.id, branch, first.changes(), first.extras())) {
+      LOG.infof("The %s re-run %s of %s ended while it was planned; nothing more is opened",
+          kind.kind(), row.id, row.repository);
+      return Optional.empty();
+    }
+    BumpTrigger trigger = BumpTrigger.valueOf(row.trigger);
+    for (Plan.Run run : runs.subList(1, runs.size())) {
+      queueDispatch(open(kind, subject, null, null, run, trigger, false));
+    }
+    LOG.infof("Planned the %s re-run %s of %s: %d run(s)", kind.kind(), row.id, row.repository,
+        runs.size());
+    return store.bump(row.id);
+  }
+
+  /**
+   * Whether a row is a re-run the worker has not planned yet (qits-1687): an automation row of a
+   * request's fold, opened by a door rather than a fold, with no change list at all. Every other
+   * opening writes one — an empty array when its plan named none — so a null column means exactly
+   * "not planned", and it survives a restart: the sweep that offers the row again plans it then.
+   */
+  static boolean planPending(MtBump row) {
+    return row.changes == null
+        && row.releaseRequestId != null
+        && row.foldSha != null
+        && !BumpTrigger.FOLD.name().equals(row.trigger);
   }
 
   // --- dispatch -----------------------------------------------------------------------------------
@@ -991,6 +1095,18 @@ public class AutomationService {
       return;
     }
     ReleaseRequestAutomation kind = kind(row.automationKind).orElse(null);
+
+    // A RE-RUN IS PLANNED HERE, before anything else is asked (qits-1687): the door opened it with
+    // no plan so as to answer inside qits-projects' budget, and a FRESH plan of a kind whose plan is
+    // its change list must end it rather than wait behind the cap. Every dispatch runs on the one
+    // worker, so the sweep and this row's own queued dispatch never plan it twice at once.
+    if (kind != null && planPending(row)) {
+      Optional<MtBump> planned = planned(row, kind);
+      if (planned.isEmpty()) {
+        return;
+      }
+      row = planned.get();
+    }
 
     // CARRY-OVER, ASKED AGAIN. The trigger asked it too, but the fold this one was opened behind may
     // have had no outcome yet: an own-branch run joins and only then records COMMITTED, and the
@@ -1924,15 +2040,20 @@ public class AutomationService {
         Instant.now());
   }
 
-  /** Records an outcome no run is needed for, on the re-run door, refusing while one is active. */
-  private UUID openOutcome(
-      ReleaseRequestAutomation kind,
-      AutomationSubject subject,
-      BumpTrigger trigger,
-      BumpStatus status,
-      String message) {
-    return store.openAutomation(
-        opening(kind, subject, null, null, trigger, status, message), true, Instant.now());
+  /**
+   * The re-run door's one row (qits-1687): REQUESTED, with no change list — which is what {@link
+   * #planPending} reads — on the branch an outcome with no run would name, which the plan replaces
+   * when it asks for a run.
+   */
+  private AutomationOpening unplanned(
+      ReleaseRequestAutomation kind, AutomationSubject subject, BumpTrigger trigger) {
+    AutomationOpening outcome =
+        opening(kind, subject, null, null, trigger, BumpStatus.REQUESTED, PLANNING);
+    return new AutomationOpening(
+        outcome.repository(), outcome.kind(), outcome.requestId(), outcome.foldSha(),
+        outcome.previousFoldSha(), outcome.automationOnly(), outcome.branch(), outcome.workItem(),
+        outcome.environment(), outcome.trigger(), null, Map.of(), outcome.status(),
+        outcome.message(), outcome.foldRef(), outcome.qualifiedId());
   }
 
   private AutomationOpening opening(
