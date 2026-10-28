@@ -2132,6 +2132,27 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
   }
 
   /**
+   * Every automation row of one request still REQUESTED or RUNNING, on any fold, oldest first —
+   * what a fold's settle reads for the re-runs a door opened on an earlier fold (qits-1726).
+   */
+  @ActivateRequestContext
+  public List<MtBump> activeAutomations(String requestId) {
+    if (requestId == null) {
+      return List.of();
+    }
+    return DbRetry.inNewTx(
+        "read the active automations of one request",
+        () ->
+            MtBump.<MtBump>find(
+                    "mode = ?1 and releaseRequestId = ?2 and status in ?3",
+                    Sort.by("startedAt"),
+                    BumpMode.AUTOMATION.name(),
+                    requestId,
+                    ACTIVE)
+                .list());
+  }
+
+  /**
    * Supersedes every WAITING row of one (request, kind) whose fold is not {@code exceptFold}: only
    * the newest waiting fold is kept. A RUNNING row is not touched — see {@link #openAutomation}.
    *

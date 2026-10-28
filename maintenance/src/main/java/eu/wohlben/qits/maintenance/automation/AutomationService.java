@@ -19,6 +19,7 @@ import eu.wohlben.qits.maintenance.entity.MtRepository;
 import eu.wohlben.qits.maintenance.error.AutomationNotRunnableException;
 import eu.wohlben.qits.maintenance.error.BadRequestException;
 import eu.wohlben.qits.maintenance.error.BumpDisabledException;
+import eu.wohlben.qits.maintenance.error.MaintenanceException;
 import eu.wohlben.qits.maintenance.error.NoSuchAutomationException;
 import eu.wohlben.qits.maintenance.error.NoSuchRepositoryException;
 import eu.wohlben.qits.maintenance.error.ReleaseRequestNotOpenException;
@@ -147,6 +148,13 @@ import org.jboss.logging.Logger;
  * RELEASED, FINALIZED, WITHDRAWN or OBSOLETE request takes no commit, so the dispatch asks again
  * before it sends a row and the ending asks before it fails one; a {@code dependency-bump} ended that
  * way marks its repository owed a re-offer, which the dispatcher sends first against main.
+ *
+ * <p><b>A door's re-run follows the request's fold</b> (qits-1726). Nothing but the door asks for
+ * it again — a kind QA checks is only DEFERRED at the next fold — so one superseded by a re-fold is
+ * opened again on the current fold, one still waiting on a fold the request left is moved there
+ * before it is sent, and one of a DERIVED kind is not sent while a SOURCE kind's run at its fold is
+ * in flight or has COMMITTED there. While it is on its way, the fold it is headed for answers the
+ * kind WAITING, not DEFERRED.
  *
  * <p><b>The circuit breaker</b> is the third terminator, behind carry-over and the plans: a fourth
  * consecutive COMMITTED for one (request, kind) whose folds changed nothing but automation output is
@@ -465,12 +473,23 @@ public class AutomationService {
                             && !stored.contains(kind.kind())
                             && decided.get(kind.kind()).applied());
     Set<String> qaChecked = deferrable ? qaChecks.kinds(subject) : Set.of();
+    // A RE-RUN A DOOR OPENED ON AN EARLIER FOLD (qits-1726) is still this request's ask for that
+    // kind: it is moved onto this fold before it runs, or opened again here if it ends red on the
+    // one it left. Until then a deferred kind must not read as settled at this fold.
+    List<MtBump> active = store.activeAutomations(requestId);
+    Map<String, MtBump> rerunsElsewhere = new LinkedHashMap<>();
+    for (MtBump candidate : active) {
+      if (door(candidate) && !foldSha.equals(candidate.foldSha)) {
+        rerunsElsewhere.putIfAbsent(candidate.automationKind, candidate);
+      }
+    }
     // SOURCE FIRST, then DERIVED behind it: what the first stage writes is what the second is built
     // from, so the second is not asked until the first is FRESH at this fold.
     for (ReleaseRequestAutomation kind : kinds) {
       if (kind.stage() != Stage.DERIVED) {
         decide(kind, subject, previous, fold.changedSincePrevious(), stored, decided, paths, union,
-            derivedUnion, unknown, notApplicable, null, waiting, deferred, qaChecked);
+            derivedUnion, unknown, notApplicable, null, waiting, deferred, qaChecked,
+            rerunsElsewhere);
       }
     }
     String hold = sourcesNotFresh(kinds, decided, requestId, foldSha);
@@ -480,9 +499,11 @@ public class AutomationService {
     for (ReleaseRequestAutomation kind : kinds) {
       if (kind.stage() == Stage.DERIVED) {
         decide(kind, subject, previous, fold.changedSincePrevious(), stored, decided, paths, union,
-            derivedUnion, unknown, notApplicable, hold, waiting, deferred, qaChecked);
+            derivedUnion, unknown, notApplicable, hold, waiting, deferred, qaChecked,
+            rerunsElsewhere);
       }
     }
+    reofferHeldReruns(requestId, active, foldSha, hold);
     return answer(
         requestId, foldSha, unknown, waiting, notApplicable,
         deferred == null ? Map.of() : deferred, accepts);
@@ -531,6 +552,8 @@ public class AutomationService {
    * @param deferred where a kind QA checks is put instead of being run (qits-1180), or null when
    *     this fold defers nothing
    * @param qaChecked the kinds the repository's QA checks at this fold (qits-1178)
+   * @param rerunsElsewhere per kind, a door's re-run still active on another fold of this request
+   *     (qits-1726)
    */
   private void decide(
       ReleaseRequestAutomation kind,
@@ -547,7 +570,8 @@ public class AutomationService {
       String hold,
       Map<String, String> waiting,
       Map<String, String> deferred,
-      Set<String> qaChecked) {
+      Set<String> qaChecked,
+      Map<String, MtBump> rerunsElsewhere) {
     if (stored.contains(kind.kind())) {
       return;
     }
@@ -557,6 +581,21 @@ public class AutomationService {
       case UNKNOWN -> unknown.put(kind.kind(), applicability.reason());
       case APPLIES -> {
         if (deferred != null && kind.checkedByQa() && qaChecked.contains(kind.kind())) {
+          MtBump rerun = rerunsElsewhere.get(kind.kind());
+          if (rerun != null) {
+            // NOT DEFERRED WHILE SOMEBODY'S RE-RUN IS ON ITS WAY HERE (qits-1726): qits-projects
+            // counts DEFERRED as fresh, and a pre-run that reads as done sends the fold to a QA that
+            // finds the stale output the press was asking to regenerate. WAITING is answered and
+            // never stored, so the ask after the re-run lands on this fold is answered from its row.
+            waiting.put(
+                kind.kind(),
+                "a re-run of " + kind.label().toLowerCase(java.util.Locale.ROOT) + " is "
+                    + rerun.status + " on fold " + abbreviate(rerun.foldSha)
+                    + (BumpStatus.RUNNING.name().equals(rerun.status)
+                        ? "; this fold waits for its ending"
+                        : "; it is moved onto this fold before it runs"));
+            return;
+          }
           defer(kind, subject, previous, changed, union, derivedUnion, hold, deferred);
           return;
         }
@@ -1043,6 +1082,101 @@ public class AutomationService {
         && !BumpTrigger.FOLD.name().equals(row.trigger);
   }
 
+  /**
+   * Whether a row is a door's re-run of a request's fold (qits-1726) — the re-run door's MANUAL or
+   * the upstream hook's UPSTREAM — rather than a row a fold's settle opened. Only a fold's settle
+   * asks for a FOLD row again; nothing asks for a door's but the door.
+   */
+  static boolean door(MtBump row) {
+    return row.releaseRequestId != null
+        && row.foldSha != null
+        && (BumpTrigger.MANUAL.name().equals(row.trigger)
+            || BumpTrigger.UPSTREAM.name().equals(row.trigger));
+  }
+
+  /**
+   * <b>A door's re-run, carried onto the request's current fold</b> (qits-1726), once its own row
+   * was superseded because the request moved on: the same door, with the same trigger — the re-run
+   * door's unplanned row for MANUAL, the upstream re-plan, which honours its plan, for UPSTREAM —
+   * so the new row is REQUESTED at the current fold and dispatched from there like any press.
+   *
+   * <p>It cannot loop: the door opens exclusively, so an active row of the kind — the fold's own,
+   * or a second press — is the 409 it always was, and a request that closed, a kind switched off
+   * or unregistered, or a switched-off engine each answer as they do to a press. Every such answer
+   * opens nothing and is logged; the ending that asked carries on.
+   */
+  private void rerunOnTheCurrentFold(MtBump row, String why) {
+    BumpTrigger trigger = BumpTrigger.valueOf(row.trigger);
+    if (kind(row.automationKind).isEmpty()) {
+      LOG.infof("The %s re-run %s of %s is not opened again (%s): the kind is not offered any more",
+          row.automationKind, row.id, row.repository, why);
+      return;
+    }
+    try {
+      UUID id =
+          start(
+              row.repository, row.releaseRequestId, row.automationKind, row.workItem, trigger,
+              trigger == BumpTrigger.UPSTREAM);
+      LOG.infof("The %s re-run %s of %s was superseded (%s); opened it again as %s",
+          row.automationKind, row.id, row.repository, why, id);
+    } catch (MaintenanceException e) {
+      LOG.infof("The %s re-run %s of %s was superseded (%s) and is not opened again: %s",
+          row.automationKind, row.id, row.repository, why, e.getMessage());
+    }
+  }
+
+  /**
+   * Why a door's re-run of a DERIVED kind waits at its fold (qits-1726), or null when it may go: a
+   * SOURCE kind's run there is still REQUESTED or RUNNING, or it COMMITTED there — its commit is the
+   * next fold, and what is built from this one is built without it.
+   *
+   * <p>Narrower than the settle's gate ({@link #sourcesNotFresh(List, Map, String, String)}) on
+   * purpose: a SOURCE kind with no row at the fold — a fold no settle has stored yet, or one whose
+   * plan was undecided — does not hold a press, which somebody made on the fold the door just read.
+   * Only a SOURCE run in flight does, and that is read off the rows alone, without the git host.
+   */
+  private String sourcesInFlight(MtBump row) {
+    List<String> behind = new ArrayList<>();
+    for (ReleaseRequestAutomation kind : kinds()) {
+      if (kind.stage() == Stage.DERIVED) {
+        continue;
+      }
+      AutomationState state = foldState(row.releaseRequestId, kind.kind(), row.foldSha);
+      if (state == AutomationState.REQUESTED
+          || state == AutomationState.RUNNING
+          || state == AutomationState.COMMITTED) {
+        behind.add(kind.label().toLowerCase(java.util.Locale.ROOT) + " " + state);
+      }
+    }
+    return behind.isEmpty()
+        ? null
+        : "waiting for the source automations to be fresh at this fold: " + String.join(", ", behind);
+  }
+
+  /**
+   * <b>A fold's settle offers the request's held re-runs again</b> (qits-1726): every door row still
+   * REQUESTED, when the SOURCE kinds are FRESH at this fold or the row waits on another fold. A
+   * SOURCE commit's re-fold ends no run here — its bump is carried or planned FRESH by the settle
+   * itself — so without this a re-run held behind it would wait for the next sweep. Queued on the
+   * worker, where every dispatch runs, after the settle's own; each row is read again there.
+   *
+   * @param active the request's REQUESTED and RUNNING rows, as the settle read them
+   */
+  private void reofferHeldReruns(
+      String requestId, List<MtBump> active, String foldSha, String hold) {
+    List<UUID> held =
+        active.stream()
+            .filter(row -> door(row) && BumpStatus.REQUESTED.name().equals(row.status))
+            .filter(row -> hold == null || !foldSha.equals(row.foldSha))
+            .map(row -> row.id)
+            .toList();
+    if (!held.isEmpty()) {
+      queue.submit(
+          "re-offer the held re-runs of " + requestId,
+          () -> held.forEach(id -> store.bump(id).ifPresent(this::dispatch)));
+    }
+  }
+
   // --- dispatch -----------------------------------------------------------------------------------
 
   /**
@@ -1096,6 +1230,45 @@ public class AutomationService {
     }
     ReleaseRequestAutomation kind = kind(row.automationKind).orElse(null);
 
+    // A DOOR'S RE-RUN RUNS ON THE REQUEST'S CURRENT FOLD, AND IN STAGE ORDER (qits-1726). Both asked
+    // before its plan is read, since a plan read on a fold the run will not be sent on is wasted.
+    ReleaseRequestClient.ReleaseState asked = null;
+    if (kind != null && door(row)) {
+      if (!justOpened) {
+        asked = requestState(row, store.repository(row.repository));
+        if (asked != null
+            && asked.readable()
+            && asked.open()
+            && asked.mergedSha() != null
+            && !asked.mergedSha().equals(row.foldSha)) {
+          // A fold nobody will release: the core would refuse it red before it started. The row is
+          // superseded and the door's own route opens it again on the fold the request is at.
+          store.bumpFinished(
+              row.id,
+              BumpStatus.SUPERSEDED,
+              null,
+              "superseded before it ran: release request " + requestName(row) + " moved on to fold "
+                  + abbreviate(asked.mergedSha()) + "; the re-run is opened there",
+              Instant.now());
+          rerunOnTheCurrentFold(row, "it waited on fold " + abbreviate(row.foldSha));
+          return;
+        }
+      }
+      if (kind.stage() == Stage.DERIVED) {
+        String behind = sourcesInFlight(row);
+        if (behind != null) {
+          // Opened at once — the press answers its id, a second press meets the 409 — but not sent
+          // while what it is built from is still being written. The ending of that SOURCE run, and
+          // the settle of the fold it makes, offer it again (dispatchWaiting, reofferHeldReruns).
+          if (!behind.equals(row.message)) {
+            store.bumpFinished(row.id, BumpStatus.REQUESTED, null, behind, Instant.now());
+          }
+          LOG.debugf("The %s re-run %s waits: %s", row.automationKind, row.id, behind);
+          return;
+        }
+      }
+    }
+
     // A RE-RUN IS PLANNED HERE, before anything else is asked (qits-1687): the door opened it with
     // no plan so as to answer inside qits-projects' budget, and a FRESH plan of a kind whose plan is
     // its change list must end it rather than wait behind the cap. Every dispatch runs on the one
@@ -1146,7 +1319,11 @@ public class AutomationService {
     // more, so a run sent onto it fails on exactly that. Every later offer re-asks, and costs no CI
     // run for it. An answer that cannot be read sends the row as before.
     if (!justOpened) {
-      ReleaseRequestClient.ReleaseState request = closedRequest(row, repository);
+      // A door's re-run already asked above (qits-1726); one read serves both questions.
+      ReleaseRequestClient.ReleaseState request =
+          asked != null
+              ? (asked.readable() && !asked.open() ? asked : null)
+              : closedRequest(row, repository);
       if (request != null) {
         store.bumpFinished(
             row.id,
@@ -1452,6 +1629,14 @@ public class AutomationService {
         owedAReoffer(row);
       }
       LOG.infof("The %s automation %s was %s", row.automationKind, row.id, superseded.message());
+      if (!superseded.closed() && door(row)) {
+        // SOMEBODY ASKED FOR THIS RUN, and the fold it ran on is gone (qits-1726). A FOLD row is
+        // asked for again by the next fold's settle; a door's is not — a kind QA checks is only
+        // DEFERRED there, which qits-projects counts as fresh — so the ask is carried onto the fold
+        // the request is at now, through the door's own route. A closed request takes none.
+        rerunOnTheCurrentFold(row, "its run on fold " + abbreviate(row.foldSha) + " ended "
+            + ciRunStatus);
+      }
     } else if (!passed) {
       store.bumpFailed(
           row.id,

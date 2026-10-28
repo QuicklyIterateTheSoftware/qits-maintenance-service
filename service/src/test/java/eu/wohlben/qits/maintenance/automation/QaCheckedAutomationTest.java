@@ -1,8 +1,10 @@
 package eu.wohlben.qits.maintenance.automation;
 
+import static eu.wohlben.qits.maintenance.automation.AutomationFixture.CURRENT_POM;
 import static eu.wohlben.qits.maintenance.automation.AutomationFixture.FOLD_A;
 import static eu.wohlben.qits.maintenance.automation.AutomationFixture.FOLD_B;
 import static eu.wohlben.qits.maintenance.automation.AutomationFixture.REQUEST;
+import static eu.wohlben.qits.maintenance.automation.AutomationFixture.STALE_POM;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -229,6 +231,186 @@ class QaCheckedAutomationTest {
     MtBump row = store.bump(UUID.fromString(carried.bumpId())).orElseThrow();
     assertEquals(BumpStatus.NOTHING_TO_DO.name(), row.status);
     assertEquals(1, triggers(), "and no second run");
+  }
+
+  // --- a door's re-run follows the request's fold (qits-1726) ----------------------------------
+
+  private static final String BUMP_BRANCH =
+      AutomationFixture.branch(DependencyBumpAutomation.KIND, REQUEST);
+
+  /** Presses the screenshot door on the request's current fold and lets the worker take it. */
+  private UUID pressScreenshots() {
+    UUID id =
+        automations.run(
+            Fixture.REPOSITORY, REQUEST, ScreenshotBaselinesAutomation.KIND, null,
+            BumpTrigger.MANUAL);
+    queue.awaitIdle(Duration.ofSeconds(30));
+    assertNotNull(id);
+    return id;
+  }
+
+  /**
+   * Fold A with a stale internal pin, so the dependency bump is planned and RUNNING there — the
+   * SOURCE run a DERIVED re-run is pressed behind.
+   */
+  private MtBump bumpRunningAtFoldA() {
+    Fixture.seedProducers(store);
+    Fixture.scriptChangelogs(peers, "qits-eventstream", "2026.821.3", "2026.811.1");
+    AutomationFixture.scriptManifests(peers, FOLD_A, STALE_POM, null);
+    Fixture.scriptForeignBranchAt(peers, BUMP_BRANCH, AutomationFixture.BEFORE);
+    ReleaseRequestAutomationsDto answer = trigger(FOLD_A, null, null, WITH_DEFERRED);
+    assertEquals(
+        AutomationState.DEFERRED.name(), state(answer, ScreenshotBaselinesAutomation.KIND));
+    MtBump bump =
+        store
+            .bump(
+                UUID.fromString(
+                    AutomationFixture.entry(answer, DependencyBumpAutomation.KIND).bumpId()))
+            .orElseThrow();
+    assertEquals(BumpStatus.RUNNING.name(), bump.status, bump.message);
+    assertEquals(1, triggers(), "the bump, and nothing beside it");
+    return bump;
+  }
+
+  /** Ends a row's run with this CI status, its branch standing at {@code head}. */
+  private MtBump end(UUID id, String branch, String head, String status) {
+    Fixture.scriptForeignBranchAt(peers, branch, head);
+    Fixture.scriptRun(peers, RUN, status);
+    bumps.poll(id);
+    queue.awaitIdle(Duration.ofSeconds(30));
+    return store.bump(id).orElseThrow();
+  }
+
+  /**
+   * <b>THE LIVE CASE</b> (qits-1726, qits-landing-app-rr-133): a re-run pressed on fold A goes red
+   * after the request re-folded onto B, and is SUPERSEDED. Nothing at fold B asks for the kind again
+   * — QA checks it, so B only DEFERS it — and the request went to QA with the stale output the press
+   * was for. The ending now opens the re-run again on B, through the door, and sends it.
+   */
+  @Test
+  void aDoorRunSupersededByAFoldMoveRerunsOnTheNewFold() {
+    trigger(FOLD_A, null, null, WITH_DEFERRED);
+    UUID id = pressScreenshots();
+    assertEquals(1, triggers(), "the re-run was dispatched on fold A");
+
+    AutomationFixture.scriptRequest(peers, REQUEST, "PENDING", FOLD_B);
+    Fixture.scriptRun(peers, RUN, "FAILED");
+    bumps.poll(id);
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    ReleaseRequestAutomationsDto answer =
+        trigger(FOLD_B, FOLD_A, List.of("package.json", "package-lock.json"), WITH_DEFERRED);
+
+    MtBump old = store.bump(id).orElseThrow();
+    assertEquals(BumpStatus.SUPERSEDED.name(), old.status, old.message);
+    List<MtBump> again = rows(FOLD_B, ScreenshotBaselinesAutomation.KIND);
+    assertEquals(1, again.size(), "the re-run, opened again on the fold the request is at");
+    MtBump rerun = again.getFirst();
+    assertEquals(BumpTrigger.MANUAL.name(), rerun.trigger);
+    assertTrue(
+        Set.of(BumpStatus.REQUESTED.name(), BumpStatus.RUNNING.name()).contains(rerun.status),
+        rerun.status + ": " + rerun.message);
+    AutomationDto entry = AutomationFixture.entry(answer, ScreenshotBaselinesAutomation.KIND);
+    assertEquals(rerun.id.toString(), entry.bumpId(), "fold B is answered from it, not DEFERRED");
+    assertEquals(2, triggers(), "and it was sent");
+  }
+
+  /**
+   * A request that CLOSED under a red re-run takes no commit (qits-1578): SUPERSEDED, and opened
+   * again nowhere (qits-1726).
+   */
+  @Test
+  void aDoorRunWhoseRequestClosedIsNotRunAgain() {
+    trigger(FOLD_A, null, null, WITH_DEFERRED);
+    UUID id = pressScreenshots();
+
+    AutomationFixture.scriptRequest(peers, REQUEST, "RELEASED", FOLD_B);
+    Fixture.scriptRun(peers, RUN, "FAILED");
+    bumps.poll(id);
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    MtBump old = store.bump(id).orElseThrow();
+    assertEquals(BumpStatus.SUPERSEDED.name(), old.status, old.message);
+    assertTrue(old.message.contains("is RELEASED and takes no commit"), old.message);
+    assertTrue(rows(FOLD_B, ScreenshotBaselinesAutomation.KIND).isEmpty(), "nothing opened");
+    assertTrue(store.activeAutomations(REQUEST).isEmpty(), "nothing left to run");
+    assertEquals(1, triggers());
+  }
+
+  /**
+   * <b>Stage order holds for a press too</b> (qits-1726): a screenshot re-run pressed while the
+   * dependency bump runs on the same fold is opened at once but not sent — not by its own dispatch,
+   * not by another offer. The bump ending FRESH sends exactly one screenshot run, on that fold.
+   */
+  @Test
+  void aDerivedDoorRunWaitsForTheDependencyBump() {
+    MtBump bump = bumpRunningAtFoldA();
+
+    UUID id = pressScreenshots();
+    MtBump held = store.bump(id).orElseThrow();
+    assertEquals(BumpStatus.REQUESTED.name(), held.status, held.message);
+    assertTrue(held.message.contains("dependency bump RUNNING"), held.message);
+    assertEquals(1, triggers(), "nothing sent behind the bump");
+
+    automations.dispatch(id);
+    queue.awaitIdle(Duration.ofSeconds(30));
+    assertEquals(BumpStatus.REQUESTED.name(), store.bump(id).orElseThrow().status);
+    assertEquals(1, triggers(), "an offer while the bump runs sends nothing either");
+
+    MtBump fresh = end(bump.id, BUMP_BRANCH, AutomationFixture.BEFORE, "SUCCESS");
+    assertEquals(BumpStatus.NOTHING_TO_DO.name(), fresh.status, fresh.message);
+
+    MtBump sent = store.bump(id).orElseThrow();
+    assertEquals(BumpStatus.RUNNING.name(), sent.status, sent.message);
+    assertEquals(FOLD_A, sent.foldSha, "on the fold where the bump is FRESH");
+    assertEquals(2, triggers(), "exactly one screenshot run");
+  }
+
+  /**
+   * THE LIVE ORDER (qits-1726): the bump COMMITS behind a pressed screenshot re-run, so fold A is
+   * dead. The re-run is still held — what A builds lacks the bump — and the re-fold onto B answers
+   * it WAITING rather than DEFERRED, moves it onto B and sends it there once the bump is FRESH at B.
+   */
+  @Test
+  void aDerivedDoorRunHeldBehindABumpCommitRunsOnTheReFold() {
+    MtBump bump = bumpRunningAtFoldA();
+    UUID id = pressScreenshots();
+
+    MtBump committed = end(bump.id, BUMP_BRANCH, AutomationFixture.PUSHED, "SUCCESS");
+    assertEquals(BumpStatus.SUCCEEDED.name(), committed.status, committed.message);
+    MtBump held = store.bump(id).orElseThrow();
+    assertEquals(BumpStatus.REQUESTED.name(), held.status, held.message);
+    assertTrue(held.message.contains("dependency bump COMMITTED"), held.message);
+    assertEquals(1, triggers(), "not sent on the fold the bump's commit leaves behind");
+
+    AutomationFixture.scriptRequest(peers, REQUEST, "PENDING", FOLD_B);
+    AutomationFixture.scriptManifests(peers, FOLD_B, CURRENT_POM, null);
+    ReleaseRequestAutomationsDto answer =
+        trigger(FOLD_B, FOLD_A, List.of("pom.xml"), WITH_DEFERRED);
+
+    assertEquals(
+        AutomationState.FRESH.name(), state(answer, DependencyBumpAutomation.KIND));
+    AutomationDto waiting = AutomationFixture.entry(answer, ScreenshotBaselinesAutomation.KIND);
+    assertEquals(AutomationState.WAITING.name(), waiting.state(), waiting.detail());
+    assertTrue(waiting.reason().contains("re-run"), waiting.reason());
+    // The settle's re-offer moves the row and queues the moved row's dispatch behind the barrier
+    // the trigger waited on: one more barrier waits that out.
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    MtBump old = store.bump(id).orElseThrow();
+    assertEquals(BumpStatus.SUPERSEDED.name(), old.status, old.message);
+    List<MtBump> moved = rows(FOLD_B, ScreenshotBaselinesAutomation.KIND);
+    assertEquals(1, moved.size());
+    assertEquals(BumpTrigger.MANUAL.name(), moved.getFirst().trigger);
+    assertEquals(BumpStatus.RUNNING.name(), moved.getFirst().status, moved.getFirst().message);
+    assertEquals(2, triggers(), "exactly one screenshot run, on fold B");
+
+    AutomationDto running =
+        AutomationFixture.entry(
+            trigger(FOLD_B, FOLD_A, List.of("pom.xml"), WITH_DEFERRED),
+            ScreenshotBaselinesAutomation.KIND);
+    assertEquals(moved.getFirst().id.toString(), running.bumpId(), "answered from its row");
+    assertEquals(AutomationState.RUNNING.name(), running.state(), running.detail());
   }
 
   /** The answer's state for one kind. */
