@@ -60,14 +60,8 @@ import java.util.function.Supplier;
  * the object qits-projects answers, only when {@code detail} is null; no recorded state answers a
  * conflict without a {@code detail}, so no row reaches that read.
  *
- * <p><b>One field is pending</b> ({@link #PENDING}): the catalog read's {@value #DECLARED}
- * (qits-1695). The state {@value #A_PROJECT_WITH_3_REPOSITORIES} is recorded, but the pinned
- * qits-projects golden masters do not hold the field yet, and binding a path the recorded body does
- * not hold fails the whole table. So the catalog row in {@link #CASES} binds {@link #CATALOG} as
- * before, and the pending row names {@link #CATALOG_WITH_DECLARED}; once the golden masters that
- * record it are pinned, the row in {@link #CASES} takes {@link #CATALOG_WITH_DECLARED} and the
- * pending row goes. The history read of a release whose request went obsolete mid-publish, the
- * row that waited before it, binds qits-projects' recorded state
+ * <p><b>No call is pending</b> ({@link #PENDING} is empty): the history read of a release whose
+ * request went obsolete mid-publish, the last row that waited, binds qits-projects' recorded state
  * {@value #A_REPOSITORY_WITH_A_TAGGED_RELEASE_WHOSE_REQUEST_WENT_OBSOLETE_MID_PUBLISH}.
  */
 final class ProjectsContract {
@@ -163,13 +157,13 @@ final class ProjectsContract {
           "repositories[].archetype");
 
   /**
-   * <b>The field the catalog read waits for</b> (qits-1695): whether the row's project still
-   * declares it. {@link CatalogReader#entry} reads a missing {@code declared} as true, so the read
-   * works against the provider as recorded today; the binding waits in {@link #PENDING}.
+   * <b>The field the catalog read binds</b> (qits-1695): whether the row's project still declares
+   * it. {@link CatalogReader#entry} reads a missing {@code declared} as true, so the read still
+   * works against an older provider that does not send it.
    */
   static final String DECLARED = "repositories[].declared";
 
-  /** {@link #CATALOG} plus {@link #DECLARED} — what the catalog row binds once it is recorded. */
+  /** {@link #CATALOG} plus {@link #DECLARED} — what the catalog row binds. */
   static final List<String> CATALOG_WITH_DECLARED =
       java.util.stream.Stream.concat(CATALOG.stream(), java.util.stream.Stream.of(DECLARED))
           .toList();
@@ -502,7 +496,7 @@ final class ProjectsContract {
               A_PROJECT_WITH_3_REPOSITORIES,
               LIST_REPOSITORIES,
               null,
-              CATALOG,
+              CATALOG_WITH_DECLARED,
               CATALOG_READ),
           new Case(
               Trigger.schedule("BumpService.sweep"),
@@ -549,14 +543,7 @@ final class ProjectsContract {
     }
   }
 
-  static final List<Pending> PENDING =
-      List.of(
-          new Pending(
-              Trigger.schedule("ScanService.run"),
-              A_PROJECT_WITH_3_REPOSITORIES,
-              LIST_REPOSITORIES,
-              CATALOG_WITH_DECLARED,
-              DECLARED));
+  static final List<Pending> PENDING = List.of();
 
   private ProjectsContract() {}
 

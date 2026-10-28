@@ -1666,6 +1666,7 @@
             "repositories": [
               {
                 "archetype": "PROJECT",
+                "declared": true,
                 "id": "00000000-0000-4000-8000-000000000002",
                 "mainBranch": "main",
                 "name": "contract-00000001-contract-00000001",
@@ -1673,6 +1674,7 @@
               },
               {
                 "archetype": "PROJECT",
+                "declared": true,
                 "id": "00000000-0000-4000-8000-000000000002",
                 "mainBranch": "main",
                 "name": "contract-00000001-contract-00000001",
@@ -1680,6 +1682,7 @@
               },
               {
                 "archetype": "PROJECT",
+                "declared": true,
                 "id": "00000000-0000-4000-8000-000000000002",
                 "mainBranch": "main",
                 "name": "contract-00000001-contract-00000001",
@@ -1687,6 +1690,7 @@
               },
               {
                 "archetype": "PROJECT",
+                "declared": true,
                 "id": "00000000-0000-4000-8000-000000000002",
                 "mainBranch": "main",
                 "name": "contract-00000001-contract-00000001",
@@ -1714,6 +1718,14 @@
               ]
             },
             "$.repositories[*].archetype": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.repositories[*].declared": {
               "combine": "AND",
               "matchers": [
                 {
