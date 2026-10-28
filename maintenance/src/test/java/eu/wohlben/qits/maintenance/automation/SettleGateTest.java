@@ -21,6 +21,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -29,7 +30,8 @@ import org.junit.jupiter.api.Test;
  * latches — no peer, no database, no sleep deciding an outcome: one settle per (request, fold) however
  * many ask; an answer within the budget, UNKNOWN "settling" when the settle outlasts it, the real
  * one once it is done; one request's stuck settle never delays another's; and a refusal inside the
- * budget reaches the caller as the exception it was.
+ * budget reaches the caller as the exception it was. And (qits-1697) an answer nobody waited out is
+ * kept for the next ask of its fold, once, within its bound, with a fresh settle started behind it.
  */
 class SettleGateTest {
 
@@ -76,7 +78,7 @@ class SettleGateTest {
 
     @Override
     public ReleaseRequestAutomationsDto settle(String requestId, AutomationService.Fold fold) {
-      calls.incrementAndGet();
+      int call = calls.incrementAndGet();
       asked.add(requestId + "@" + fold.foldSha());
       entered(requestId, fold.foldSha()).countDown();
       try {
@@ -88,7 +90,7 @@ class SettleGateTest {
         throw new IllegalStateException(e);
       }
       finished(requestId, fold.foldSha()).countDown();
-      return answer(requestId, fold.foldSha(), "FRESH", "decided");
+      return answer(requestId, fold.foldSha(), "FRESH", "decided by settle " + call);
     }
   }
 
@@ -123,6 +125,25 @@ class SettleGateTest {
     if (gate != null) {
       gate.shutdown();
     }
+  }
+
+  /** Waits — bounded — until no settle of that request is in flight any more. */
+  private static void idle(SettleGate gate, String requestId) {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+    while (gate.inFlight(requestId)) {
+      if (System.nanoTime() > deadline) {
+        throw new AssertionError("the settle never ended");
+      }
+      Thread.onSpinWait();
+    }
+  }
+
+  /** The gate's clock, moved by hand. */
+  private final AtomicLong now = new AtomicLong();
+
+  private SettleGate keeping(SettleGate.Settler settler, Duration budget) {
+    return new SettleGate(
+        settler, SettleGateTest::interim, budget, 4, Duration.ofMinutes(2), now::get);
   }
 
   /** Waits — bounded — until a caller thread is parked waiting on a settle. */
@@ -298,5 +319,138 @@ class SettleGateTest {
     assertEquals("FRESH", settled.automations().getFirst().state());
     assertEquals(FOLD_2, settled.foldSha());
     assertEquals(List.of(REQUEST_A + "@" + FOLD_1, REQUEST_A + "@" + FOLD_2), held.asked);
+  }
+
+  /**
+   * (qits-1697, the reproduction) A settle that outlasts the budget used to hand its answer to a
+   * future nobody waited on any more; a kind trigger stores no row for was then decided afresh, and
+   * answered settling, on every ask for ever. Now the ask after it ends is given that answer.
+   */
+  @Test
+  void aSettleNobodyWaitedOutIsServedToTheNextAskOfItsFold() throws Exception {
+    Held held = new Held();
+    gate = keeping(held, SHORT);
+
+    ReleaseRequestAutomationsDto early = gate.settle(REQUEST_A, fold(FOLD_1));
+    assertEquals(SettleGate.SETTLING, early.automations().getFirst().detail());
+
+    held.open(REQUEST_A, FOLD_1);
+    idle(gate, REQUEST_A);
+    ReleaseRequestAutomationsDto later = gate.settle(REQUEST_A, fold(FOLD_1));
+
+    assertEquals("FRESH", later.automations().getFirst().state(), later.toString());
+    assertEquals("decided by settle 1", later.automations().getFirst().detail());
+  }
+
+  /** Serving a kept answer starts a fresh settle, so the ask after it sees rows stored since. */
+  @Test
+  void servingAKeptAnswerStartsAFreshSettle() throws Exception {
+    Held held = new Held();
+    gate = keeping(held, SHORT);
+
+    gate.settle(REQUEST_A, fold(FOLD_1));
+    held.open(REQUEST_A, FOLD_1);
+    idle(gate, REQUEST_A);
+    assertEquals(1, held.calls.get());
+
+    assertEquals(
+        "decided by settle 1",
+        gate.settle(REQUEST_A, fold(FOLD_1)).automations().getFirst().detail());
+    idle(gate, REQUEST_A);
+    assertEquals(2, held.calls.get(), "the serve started a settle behind it");
+
+    // Nobody waited for that one either: it is what the next ask is given, and it starts another.
+    assertEquals(
+        "decided by settle 2",
+        gate.settle(REQUEST_A, fold(FOLD_1)).automations().getFirst().detail());
+    idle(gate, REQUEST_A);
+    assertEquals(3, held.calls.get());
+  }
+
+  /** A kept answer is about its fold: an ask of another fold is never given it. */
+  @Test
+  void aKeptAnswerIsNotServedToAnotherFold() throws Exception {
+    Held held = new Held();
+    gate = keeping(held, SHORT);
+    held.open(REQUEST_A, FOLD_2);
+
+    gate.settle(REQUEST_A, fold(FOLD_1));
+    held.open(REQUEST_A, FOLD_1);
+    idle(gate, REQUEST_A);
+
+    ReleaseRequestAutomationsDto newer = gate.settle(REQUEST_A, fold(FOLD_2));
+    assertEquals(FOLD_2, newer.foldSha());
+    assertEquals("decided by settle 2", newer.automations().getFirst().detail());
+    // …and the older fold's answer was dropped, not kept for later: this ask settles afresh.
+    ReleaseRequestAutomationsDto older = gate.settle(REQUEST_A, fold(FOLD_1));
+    assertEquals("decided by settle 3", older.automations().getFirst().detail());
+    assertEquals(
+        List.of(REQUEST_A + "@" + FOLD_1, REQUEST_A + "@" + FOLD_2, REQUEST_A + "@" + FOLD_1),
+        held.asked);
+  }
+
+  /** A kept answer older than the bound is dropped, never served. */
+  @Test
+  void aKeptAnswerPastItsBoundIsNotServed() throws Exception {
+    Held held = new Held();
+    gate = keeping(held, SHORT);
+
+    gate.settle(REQUEST_A, fold(FOLD_1));
+    held.open(REQUEST_A, FOLD_1);
+    idle(gate, REQUEST_A);
+    now.addAndGet(Duration.ofMinutes(2).plusMillis(1).toNanos());
+
+    ReleaseRequestAutomationsDto later = gate.settle(REQUEST_A, fold(FOLD_1));
+    assertEquals("decided by settle 2", later.automations().getFirst().detail());
+    assertEquals(2, held.calls.get());
+  }
+
+  /** An answer a waiter received within its budget is not kept: the next ask settles afresh. */
+  @Test
+  void anAnswerGivenDirectlyIsNotKept() throws Exception {
+    Held held = new Held();
+    gate = keeping(held, LONG);
+    held.open(REQUEST_A, FOLD_1);
+
+    assertEquals(
+        "decided by settle 1",
+        gate.settle(REQUEST_A, fold(FOLD_1)).automations().getFirst().detail());
+    idle(gate, REQUEST_A);
+    assertEquals(
+        "decided by settle 2",
+        gate.settle(REQUEST_A, fold(FOLD_1)).automations().getFirst().detail());
+    idle(gate, REQUEST_A);
+    assertEquals(2, held.calls.get(), "no background settle was started for a kept copy");
+  }
+
+  /** A settle that fails past the budget keeps nothing: the next ask settles afresh. */
+  @Test
+  void aFailedSettleIsNotKept() throws Exception {
+    CountDownLatch release = new CountDownLatch(1);
+    AtomicInteger calls = new AtomicInteger();
+    gate =
+        keeping(
+            (requestId, fold) -> {
+              int call = calls.incrementAndGet();
+              if (call == 1) {
+                try {
+                  release.await(30, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                  Thread.currentThread().interrupt();
+                }
+                throw new IllegalStateException("the git host fell over");
+              }
+              return answer(requestId, fold.foldSha(), "FRESH", "decided by settle " + call);
+            },
+            SHORT);
+
+    assertEquals(
+        SettleGate.SETTLING, gate.settle(REQUEST_A, fold(FOLD_1)).automations().getFirst().detail());
+    release.countDown();
+    idle(gate, REQUEST_A);
+
+    ReleaseRequestAutomationsDto later = gate.settle(REQUEST_A, fold(FOLD_1));
+    assertEquals("decided by settle 2", later.automations().getFirst().detail());
+    assertEquals(2, calls.get());
   }
 }
