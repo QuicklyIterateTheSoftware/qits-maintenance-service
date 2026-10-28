@@ -117,7 +117,7 @@
                - 2026.829.201516 is where NetworkTaps.restAssured lives, which replaced the
                  hand-copied StoryNetworkFilter this repository used to carry beside its IT.
              Do not go back below it — the catalogue will not compile. -->
-        <qits.userflows.version>2026.1002.72731</qits.userflows.version>
+        <qits.userflows.version>2026.1028.231715</qits.userflows.version>
         <!-- The recording service mocks the story catalogue boots against (the generic MockService
              plus idp.MockIdp), published by qits-integrations-quarkus beside qits-auth-core and
              qits-arch-rules. -->
