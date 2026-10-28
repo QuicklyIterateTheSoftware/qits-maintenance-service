@@ -37,6 +37,9 @@ public class MaintenanceConfig {
   @ConfigProperty(name = "qits.maintenance.bump.dispatch.refusal-ttl", defaultValue = "6h")
   Duration bumpRefusalTtl;
 
+  @ConfigProperty(name = "qits.maintenance.bump.dispatch.nothing-found-hold", defaultValue = "6h")
+  Duration bumpNothingFoundHold;
+
   /** {@link #bumpCiActiveCap()}. */
   @ConfigProperty(name = "qits.maintenance.bump.ci-active-cap", defaultValue = "4")
   int bumpCiActiveCap;
@@ -169,6 +172,20 @@ public class MaintenanceConfig {
     return bumpRefusalTtl == null || bumpRefusalTtl.isNegative()
         ? Duration.ofHours(6)
         : bumpRefusalTtl;
+  }
+
+  /**
+   * How long a withdrawal that found nothing to bump holds its repository on the same pending set
+   * (qits-1696) — see {@code BumpDispatcher#held}. Once a withdrawal this old, the same set is
+   * offered once more rather than held for good: a step that silently fails to write a bump looks,
+   * from here, exactly like a pending set with nothing in it, and only time — a fix landing, or
+   * genuinely nothing to do — tells the two apart. A zero duration means never held on this ground
+   * at all. Never negative.
+   */
+  public Duration bumpNothingFoundHold() {
+    return bumpNothingFoundHold == null || bumpNothingFoundHold.isNegative()
+        ? Duration.ofHours(6)
+        : bumpNothingFoundHold;
   }
 
   /**

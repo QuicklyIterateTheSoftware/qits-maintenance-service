@@ -365,6 +365,38 @@ class BumpDispatchTest {
   }
 
   /**
+   * The same, short of {@code qits.maintenance.bump.dispatch.nothing-found-hold}'s shipped 6h: the
+   * withdrawal is still within the hold, so it holds exactly as above (qits-1696).
+   */
+  @Test
+  void aWithdrawalYoungerThanTheNothingFoundHoldStillHolds() {
+    Fixture.scriptCiQueueEmpty(peers);
+    UUID id = only(dispatcher.tick());
+    store.requestWithdrawn(id.toString(), "nothing to bump", Instant.now().minus(Duration.ofHours(5)));
+
+    assertTrue(dispatcher.tick().isEmpty());
+    assertEquals(1, asks(Fixture.CATALOG_ID));
+  }
+
+  /**
+   * <b>Past the hold, the same pending set is offered once more</b> (qits-1696). Until qits-1696's
+   * own CI fix, the dependency-bump step silently failed to commit gitlink moves, so a main-only
+   * request it withdrew as "nothing to bump" was not proof the set was ever really empty — holding
+   * on that report forever would strand the repository on it for good. Past {@code
+   * nothing-found-hold} the withdrawal no longer holds, whatever the pending set turns out to hold
+   * this time.
+   */
+  @Test
+  void aWithdrawalOlderThanTheNothingFoundHoldNoLongerHolds() {
+    Fixture.scriptCiQueueEmpty(peers);
+    UUID id = only(dispatcher.tick());
+    store.requestWithdrawn(id.toString(), "nothing to bump", Instant.now().minus(Duration.ofHours(7)));
+
+    assertEquals(1, dispatcher.tick().size(), "an aged-out withdrawal is asked for again");
+    assertEquals(2, asks(Fixture.CATALOG_ID));
+  }
+
+  /**
    * <b>A withdrawal that carried a bump does not hold the repository</b> (qits-1173). The
    * dependency-bump history here is exactly what the qits-1226 bug left behind: a SUCCEEDED row
    * from an earlier fold, then a NOTHING_TO_DO row the pre-run's last fold ended on, which is what

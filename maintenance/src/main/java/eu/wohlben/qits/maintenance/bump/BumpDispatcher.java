@@ -81,8 +81,10 @@ import org.jboss.logging.Logger;
  *   <li><b>Is anything owed</b> that is not HELD: a repository with an open release request of any
  *       kind is held (its own pre-run carries the bump), and so is one whose newest main-only
  *       request was opened for exactly the pending set it has now and is on its way, shipped, or was
- *       withdrawn by its pre-run — the same set would only find nothing again. A person's withdrawal
- *       frees it. An unreadable answer holds, as every read here does.
+ *       withdrawn by its pre-run — the same set would only find nothing again — for as long as that
+ *       withdrawal is younger than {@link MaintenanceConfig#bumpNothingFoundHold()}: a withdrawal
+ *       judged by a step that was itself broken must not hold forever (qits-1696). A person's
+ *       withdrawal frees it. An unreadable answer holds, as every read here does.
  *   <li><b>Is this a quiet hour</b> ({@link MaintenanceConfig#bumpQuietHours()}). Empty by default.
  *   <li><b>How much of the configured cap is free</b> — {@link CiClient#queue()}, one read of {@code
  *       GET /ci/api/runs/queue}, and an unreadable snapshot counts as BUSY. {@code free = cap -
@@ -523,10 +525,20 @@ public class BumpDispatcher {
    * (qits-1251: {@code RELEASED}, its publish and deployment not yet FAILED — see {@link
    * ReleaseRequestClient.Listed#inFlight()}) — or the main-only request this service last opened for
    * the same pending set is on its way, shipped, or was withdrawn with no bump anywhere in its
-   * history. A withdrawal that DID write one does not hold (qits-1173): before qits-1226 a request
-   * was withdrawn as "nothing to bump" by the re-fold onto its own bump commit, and that memo held
-   * the repository on the same pending set for good. A person's withdrawal frees it; an unreadable
-   * answer holds.
+   * history AND that withdrawal is still younger than {@link
+   * MaintenanceConfig#bumpNothingFoundHold()}. A withdrawal that DID write one does not hold
+   * (qits-1173): before qits-1226 a request was withdrawn as "nothing to bump" by the re-fold onto
+   * its own bump commit, and that memo held the repository on the same pending set for good.
+   *
+   * <p><b>A withdrawal with no bump does not hold forever either</b> (qits-1696). "Found nothing to
+   * write" is only as trustworthy as the step that reported it, and the step can itself be broken —
+   * until this ticket's own CI fix, the dependency-bump step silently failed to commit gitlink moves,
+   * so every main-only request it withdrew "found nothing" in the meantime stranded its repository on
+   * that pending set for good. Once such a withdrawal is older than {@code bumpNothingFoundHold}, it
+   * no longer holds: the dispatcher offers the same set once more, which writes a fresh newest memo
+   * and starts the hold over, so a set that really is empty costs one cheap pre-run per hold period
+   * rather than being held forever on a report nobody can re-check. A person's withdrawal frees it
+   * outright, with no hold at all; an unreadable answer holds.
    *
    * <p><b>A release in flight holds so a main-only request never overtakes it</b> (qits-1251). A
    * {@code RELEASED} request is past {@link ReleaseRequestClient.Listed#open()} — the tag is already
@@ -552,8 +564,19 @@ public class BumpDispatcher {
     }
     String requestId = newest.get().requestId;
     if (newest.get().withdrawnAt != null) {
-      return !MaintenanceStore.wroteABump(
-          store.automationHistory(requestId, DependencyBumpAutomation.KIND));
+      if (MaintenanceStore.wroteABump(
+          store.automationHistory(requestId, DependencyBumpAutomation.KIND))) {
+        return false;
+      }
+      // qits-1696: "found nothing to write" is a report from the dependency-bump step, and the step
+      // can itself be the thing that is broken — it silently failed to commit gitlink moves until
+      // this ticket's own fix, so every withdrawal it produced in the meantime read as proof of an
+      // empty set that was not actually empty. Holding on that report for good would strand such a
+      // repository forever, so the hold expires: once the withdrawal is older than {@link
+      // MaintenanceConfig#bumpNothingFoundHold()} it no longer holds, and the dispatcher offers the
+      // same pending set once more. Opening a new request writes a new newest memo, so a set that
+      // really is empty costs one cheap pre-run per hold period rather than being held forever.
+      return newest.get().withdrawnAt.plus(config.bumpNothingFoundHold()).isAfter(Instant.now());
     }
     Instant now = Instant.now();
     Seen seen = releaseStates.get(requestId);
