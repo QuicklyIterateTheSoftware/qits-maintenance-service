@@ -16,7 +16,7 @@ import java.util.List;
  *     the vocabulary is another service's and grows there.
  * @param lastScanAt when the last scan finished, null when it has never been scanned
  * @param headSha the commit the pins were read at
- * @param status OK, ABSENT, UNREACHABLE or CONFIG_ERROR
+ * @param status OK, ABSENT, UNREACHABLE, CONFIG_ERROR or UNDECLARED
  * @param message why the status is not OK
  * @param pending how many changes are pending across every group
  * @param groups the groups, in declaration order

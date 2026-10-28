@@ -42,7 +42,7 @@ public record PinSourceDto(
    * when the inventory was last read and whether the read succeeded, and both are here.
    *
    * @param name the catalog name
-   * @param status OK, ABSENT, UNREACHABLE or CONFIG_ERROR
+   * @param status OK, ABSENT, UNREACHABLE, CONFIG_ERROR or UNDECLARED
    * @param lastScanAt when the last scan of it finished, null when it has never been scanned
    * @param headSha the commit its pins were read at
    */

@@ -23,6 +23,16 @@ package eu.wohlben.qits.maintenance.catalog;
  *     RepositoryArchetype.of}, and it happens where a decision is taken — the train layer — not
  *     here. Null when the listing carried none, which is a repository worth scanning like any
  *     other.
+ * @param declared whether a wrapper entry names the repository — qits-projects' {@code declared}
+ *     field (qits-1695). A row that is listed but not declared is a retired repository its project
+ *     no longer carries: it is marked {@code UNDECLARED} by a full scan and never scanned, bumped or
+ *     planned. A listing that carried no such key, or no boolean under it, reads as declared, so an
+ *     older qits-projects keeps every row maintained.
  */
 public record CatalogEntry(
-    String project, String name, String mainBranch, String catalogId, String archetype) {}
+    String project,
+    String name,
+    String mainBranch,
+    String catalogId,
+    String archetype,
+    boolean declared) {}

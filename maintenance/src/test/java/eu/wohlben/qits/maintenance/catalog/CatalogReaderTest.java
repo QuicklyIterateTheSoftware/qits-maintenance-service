@@ -1,6 +1,7 @@
 package eu.wohlben.qits.maintenance.catalog;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -119,6 +120,47 @@ class CatalogReaderTest {
     assertEquals(
         Optional.of(RepositoryArchetype.APP), RepositoryArchetype.of(entry.archetype()));
     assertEquals("APP", RepositoryArchetype.APP.wireName());
+  }
+
+  /**
+   * <b>Only an explicit {@code false} undeclares a row</b> (qits-1695). It is a repository its
+   * project no longer carries, and it is still READ — a full scan marks it rather than forgetting
+   * it, which is the difference between UNDECLARED and ABSENT.
+   */
+  @Test
+  void aRowDeclaredFalseIsReadAsUndeclared() {
+    CatalogEntry entry =
+        parse(
+            "{\"id\":\"r1\",\"projectId\":\"qits\",\"name\":\"qits-ci-runner-daemon\","
+                + "\"declared\":false}");
+    assertFalse(entry.declared());
+    assertEquals("qits-ci-runner-daemon", entry.name(), "and the row is kept");
+    assertTrue(
+        parse("{\"projectId\":\"qits\",\"name\":\"qits-ci-service\",\"declared\":true}")
+            .declared());
+  }
+
+  /**
+   * <b>A provider older than the field answers no key at all</b>, and that must keep every row
+   * maintained: reading it as false would undeclare the whole estate the day this shipped first.
+   */
+  @Test
+  void aRowWithNoDeclaredKeyIsDeclared() {
+    assertTrue(parse("{\"projectId\":\"qits\",\"name\":\"qits-ci-service\"}").declared());
+  }
+
+  /** Null, and a value that is not a boolean, read the same way as an absent key. */
+  @Test
+  void aNullOrNonBooleanDeclaredIsDeclared() {
+    assertTrue(
+        parse("{\"projectId\":\"qits\",\"name\":\"qits-ci-service\",\"declared\":null}")
+            .declared());
+    assertTrue(
+        parse(
+                "{\"projectId\":\"qits\",\"name\":\"qits-ci-service\","
+                    + "\"declared\":\"false\"}")
+            .declared(),
+        "a string is not the boolean the contract pins");
   }
 
   /** A row with no addressable name is still skipped, archetype or no archetype. */

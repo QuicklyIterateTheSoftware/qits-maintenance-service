@@ -471,6 +471,79 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
   }
 
   /**
+   * One repository the catalog lists but its project no longer declares (qits-1695), as {@link
+   * #undeclare} takes it.
+   *
+   * @param name the repository
+   * @param project its project id
+   * @param catalogId its catalog row id, or null
+   * @param archetype its archetype, verbatim, or null
+   */
+  public record Undeclared(String name, String project, String catalogId, String archetype) {}
+
+  /**
+   * <b>Every listed row its project no longer declares is marked {@link RepositoryStatus#UNDECLARED}
+   * and loses its pins and its groups</b> — {@link #reconcileCatalog}'s treatment, for a row that is
+   * listed rather than gone (qits-1695).
+   *
+   * <p>A row the store has never held is CREATED with that status, so the name still answers with
+   * the reason rather than a 404. What is deleted is exactly what {@code reconcileCatalog} deletes,
+   * and for the same reason: the pins and the groups are the cache, {@code mt_branch} and the logs
+   * are history. A row that comes back declared needs nothing from here — the next full scan reads
+   * it and {@link #replaceInventory} writes over it.
+   *
+   * @param rows the undeclared rows of a full catalog read
+   * @param message the sentence the rows carry
+   * @return the names newly undeclared, which is what is worth a log line
+   */
+  @ActivateRequestContext
+  public List<String> undeclare(List<Undeclared> rows, String message, Instant now) {
+    if (rows == null || rows.isEmpty()) {
+      return List.of();
+    }
+    List<Undeclared> copy = List.copyOf(rows);
+    return DbRetry.inNewTx(
+        "mark the undeclared repositories",
+        () -> {
+          List<String> newly = new ArrayList<>();
+          List<String> names = new ArrayList<>();
+          for (Undeclared undeclared : copy) {
+            MtRepository row = findById(undeclared.name());
+            boolean fresh = row == null;
+            if (fresh) {
+              row = new MtRepository();
+              row.name = undeclared.name();
+            }
+            if (fresh
+                || !RepositoryStatus.UNDECLARED.name().equals(row.status)
+                || !java.util.Objects.equals(message, row.message)) {
+              newly.add(undeclared.name());
+            }
+            if (undeclared.project() != null) {
+              row.project = undeclared.project();
+            }
+            if (undeclared.catalogId() != null && !undeclared.catalogId().isBlank()) {
+              row.catalogId = undeclared.catalogId();
+            }
+            row.archetype = undeclared.archetype();
+            row.status = RepositoryStatus.UNDECLARED.name();
+            row.message = message;
+            row.lastScanAt = now;
+            if (fresh) {
+              persist(row);
+            }
+            names.add(undeclared.name());
+          }
+          MtPin.delete("repository in ?1", names);
+          MtGroup.delete("repository in ?1", names);
+          MtGitlinkPin.delete("repository in ?1", names);
+          MtMainPin.delete("repository in ?1", names);
+          getEntityManager().flush();
+          return List.copyOf(newly);
+        });
+  }
+
+  /**
    * One dependency's latest, written whether the lookup succeeded or failed.
    *
    * @return whether the column ADVANCED: a known version replaced by a strictly newer one, in that
