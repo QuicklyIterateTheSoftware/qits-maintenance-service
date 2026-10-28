@@ -73,6 +73,13 @@ public class ScanService {
    */
   public static final String DROPPED_FROM_THE_CATALOG = "dropped from the catalog";
 
+  /**
+   * What a row says once the catalog lists it as no longer declared by its project (qits-1695) — a
+   * retired repository whose wrapper entry went while its catalog row stayed.
+   */
+  public static final String NOT_DECLARED_BY_ITS_PROJECT =
+      "not declared by its project, so not maintained";
+
   @Inject CatalogReader catalog;
 
   @Inject eu.wohlben.qits.maintenance.automation.UpstreamReplan upstream;
@@ -99,6 +106,9 @@ public class ScanService {
    * read at all.
    */
   @Inject MainHeadLatest mainHead;
+
+  /** The main-only requests this service opened on an UNDECLARED row, withdrawn (qits-1695). */
+  @Inject eu.wohlben.qits.maintenance.automation.UndeclaredRequestWithdrawal undeclaredRequests;
 
   /**
    * Opens a scan row, queues the work and answers at once.
@@ -191,20 +201,60 @@ public class ScanService {
     for (CatalogEntry entry : read.entries()) {
       catalogByName.putIfAbsent(entry.name(), entry);
     }
+    int scanned = 0;
     for (CatalogEntry entry : entries) {
+      if (!maintained(entry, repository, what)) {
+        continue;
+      }
       scanOne(entry, catalogByName, revision, now);
+      scanned++;
     }
     // BEFORE the registry half, so no ghost's pins are looked up: a dropped repository's rows are
     // gone by the time refreshLatest reads the inventory back out of the store.
     reconcile(read, repository, what, now);
     refreshLatest(scope, repository);
 
-    LOG.infof("%s finished over %d repositories", what, entries.size());
+    LOG.infof("%s finished over %d repositories", what, scanned);
     store.scanStatus(
         id,
         ScanStatus.SUCCEEDED,
-        entries.size() + " repositories read at " + scope + " scope",
+        scanned + " repositories read at " + scope + " scope"
+            + (scanned == entries.size()
+                ? ""
+                : ", " + (entries.size() - scanned) + " not maintained"),
         Instant.now());
+  }
+
+  /**
+   * <b>Whether this scan reads the repository at all</b> (qits-1695) — false for a row its project
+   * no longer declares.
+   *
+   * <ul>
+   *   <li><b>The catalog says {@code declared:false}</b>: never read, by any scan. A full scan marks
+   *       it UNDECLARED in {@link #reconcile}; a single-repository scan only skips it, because
+   *       catalogue membership is the full scan's to apply.
+   *   <li><b>The store already holds it UNDECLARED and this is a scan of ONE repository</b> — a
+   *       push's, a release tag's, an automation's or a person's: skipped too, whatever the catalog
+   *       says now. Otherwise the next push to a retired repository would write OK and fresh pins
+   *       over the row, and the dispatcher would bump it again. The full scan that finds it declared
+   *       is the only way back, and it reads it like any other row.
+   * </ul>
+   */
+  private boolean maintained(CatalogEntry entry, String repository, String what) {
+    if (!entry.declared()) {
+      LOG.debugf("%s skips %s: %s", what, entry.name(), NOT_DECLARED_BY_ITS_PROJECT);
+      return false;
+    }
+    if (repository != null
+        && store
+            .repository(entry.name())
+            .map(row -> RepositoryStatus.UNDECLARED.name().equals(row.status))
+            .orElse(false)) {
+      LOG.infof(
+          "%s skips %s: it is UNDECLARED until a full scan finds it declared", what, entry.name());
+      return false;
+    }
+    return true;
   }
 
   /**
@@ -380,6 +430,11 @@ public class ScanService {
    *       the failure mode is the whole store in one transaction.
    * </ul>
    *
+   * <p><b>A listed row its project no longer declares is marked UNDECLARED here too</b>
+   * (qits-1695), with the ABSENT treatment — pins and groups gone — and the main-only requests this
+   * service opened on it are withdrawn. Same guards: only a full scan of a catalog read that
+   * succeeded and listed something.
+   *
    * <p><b>The names are the WHOLE listing</b>, taken off the catalog read rather than off the
    * filtered loop above — which is the same list here by construction, and would silently stop being
    * one the day a scope learns to narrow the repositories rather than the lookups.
@@ -395,6 +450,31 @@ public class ScanService {
     if (!dropped.isEmpty()) {
       LOG.infof(
           "%s dropped %d repositories the catalog no longer lists: %s", what, dropped.size(), dropped);
+    }
+    // LISTED BUT NOT DECLARED (qits-1695): kept off the ABSENT sweep above by being listed, and
+    // given the same treatment under their own status here.
+    List<MaintenanceStore.Undeclared> undeclared =
+        read.entries().stream()
+            .filter(entry -> !entry.declared())
+            .map(
+                entry ->
+                    new MaintenanceStore.Undeclared(
+                        entry.name(), entry.project(), entry.catalogId(), entry.archetype()))
+            .toList();
+    List<String> newly = store.undeclare(undeclared, NOT_DECLARED_BY_ITS_PROJECT, now);
+    if (!newly.isEmpty()) {
+      LOG.infof(
+          "%s marked %d repositories their project no longer declares: %s",
+          what, newly.size(), newly);
+    }
+    // Every UNDECLARED row, not only the newly marked: a request opened before the mark, or a
+    // withdrawal qits-projects did not take, is caught by the next full scan. It never fails this
+    // one — the sweep logs and swallows its own failures, and this is the belt to that brace.
+    try {
+      undeclaredRequests.sweep();
+    } catch (RuntimeException e) {
+      LOG.warnf("%s could not withdraw the requests of undeclared repositories: %s", what,
+          e.toString());
     }
   }
 

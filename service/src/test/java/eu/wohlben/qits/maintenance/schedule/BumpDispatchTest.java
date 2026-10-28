@@ -460,6 +460,29 @@ class BumpDispatchTest {
     assertEquals(List.of(repository), after.refused());
   }
 
+  /**
+   * <b>An UNDECLARED repository is never dispatched</b> (qits-1695), even with pins a release has
+   * moved past and a free queue. A full scan drops such a row's pins anyway; this pins the second
+   * guard, the dispatcher's own status gate, against a row that still carries some.
+   */
+  @Test
+  void anUndeclaredRepositoryIsNeverDispatched() {
+    inventory.clear();
+    String repository = "qits-retired-daemon";
+    scanned(
+        repository,
+        "catalog-" + repository,
+        internalPin("eu.wohlben.qits:qits-retired"),
+        RepositoryStatus.UNDECLARED);
+    store.recordLatestIfNewer(
+        Ecosystem.MAVEN, "eu.wohlben.qits:qits-retired", "2026.913.1", "test", Instant.now());
+    Fixture.scriptCiQueueEmpty(peers);
+
+    assertTrue(dispatcher.assess().candidates().isEmpty(), "not a candidate");
+    assertTrue(dispatcher.tick().isEmpty());
+    assertEquals(0, asks("catalog-" + repository), "no release ask was posted");
+  }
+
   // --- the capacity gate (epic qits-1481: a CONFIGURED cap, qits-ci reports no slots) ----------
 
   /**
@@ -824,13 +847,19 @@ class BumpDispatchTest {
   }
 
   private void scanned(String repository, String catalogId, ParsedPin pin) {
+    scanned(repository, catalogId, pin, RepositoryStatus.OK);
+  }
+
+  /** The same row under a status other than OK — what the dispatcher's status gate reads. */
+  private void scanned(
+      String repository, String catalogId, ParsedPin pin, RepositoryStatus status) {
     store.replaceInventory(
         repository,
         Fixture.PROJECT,
         catalogId,
         null,
         "main",
-        RepositoryStatus.OK,
+        status,
         "sha-" + repository,
         null,
         List.of(pin),

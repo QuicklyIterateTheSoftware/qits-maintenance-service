@@ -45,6 +45,8 @@ class MaintenanceStoreTest {
    * whatever its caller hands it, so the tests here supply their own. */
   private static final String DROPPED = "dropped from the catalog";
 
+  private static final String UNDECLARED = "not declared by its project, so not maintained";
+
   private static ParsedPin pin(String name, String version, String location) {
     return ParsedPin.of(Ecosystem.MAVEN, "pom.xml", name, version, null, location);
   }
@@ -342,6 +344,66 @@ class MaintenanceStoreTest {
     MtRepository row = store.repository(repository).orElseThrow();
     assertEquals(RepositoryStatus.OK.name(), row.status);
     assertNull(row.message, "and the drop's sentence goes with the status");
+    assertEquals(List.of("2.0.0"), store.pins(repository).stream().map(p -> p.version).toList());
+    assertEquals(1, store.groups(repository).size(), "with its groups back");
+  }
+
+  /**
+   * <b>A LISTED ROW ITS PROJECT NO LONGER DECLARES</b> (qits-1695) gets the ABSENT treatment under
+   * its own status: the row and its {@code catalog_id} stay, the pins and the groups go, and the
+   * report is of the NEWLY undeclared only. A name the store never held is created with it.
+   */
+  @Test
+  void anUndeclaredRepositoryLosesItsPinsAndGroupsAndIsReportedOnce() {
+    String retired = "retired-" + UUID.randomUUID();
+    String unseen = "unseen-" + UUID.randomUUID();
+    String catalogId = UUID.randomUUID().toString();
+    scanned(retired, catalogId, "1.0.0");
+
+    List<MaintenanceStore.Undeclared> rows =
+        List.of(
+            new MaintenanceStore.Undeclared(retired, "qits", null, "DAEMON"),
+            new MaintenanceStore.Undeclared(unseen, "qits", "c-" + unseen, null));
+    List<String> newly = store.undeclare(rows, UNDECLARED, Instant.now());
+
+    assertEquals(List.of(retired, unseen), newly);
+    MtRepository row = store.repository(retired).orElseThrow();
+    assertEquals(RepositoryStatus.UNDECLARED.name(), row.status);
+    assertEquals(UNDECLARED, row.message);
+    assertEquals(catalogId, row.catalogId, "the catalog_id survives");
+    assertEquals("DAEMON", row.archetype);
+    assertTrue(store.pins(retired).isEmpty(), "an undeclared repository pins nothing");
+    assertTrue(store.groups(retired).isEmpty(), "and offers the clock no group to bump");
+    assertEquals(
+        RepositoryStatus.UNDECLARED.name(), store.repository(unseen).orElseThrow().status,
+        "a name never scanned answers with the reason too");
+
+    assertTrue(
+        store.undeclare(rows, UNDECLARED, Instant.now()).isEmpty(),
+        "a row already undeclared for this reason is not reported again");
+    assertTrue(store.undeclare(List.of(), UNDECLARED, Instant.now()).isEmpty());
+  }
+
+  /**
+   * A row that comes back DECLARED is scanned like any other: the ordinary upsert writes OK with
+   * fresh pins and groups over the UNDECLARED row, exactly as it does over an ABSENT one.
+   */
+  @Test
+  void aRepositoryDeclaredAgainIsScannedBackToOk() {
+    String repository = "redeclared-" + UUID.randomUUID();
+    scanned(repository, null, "1.0.0");
+    store.undeclare(
+        List.of(new MaintenanceStore.Undeclared(repository, "qits", null, null)),
+        UNDECLARED,
+        Instant.now());
+    assertEquals(
+        RepositoryStatus.UNDECLARED.name(), store.repository(repository).orElseThrow().status);
+
+    scanned(repository, null, "2.0.0");
+
+    MtRepository row = store.repository(repository).orElseThrow();
+    assertEquals(RepositoryStatus.OK.name(), row.status);
+    assertNull(row.message);
     assertEquals(List.of("2.0.0"), store.pins(repository).stream().map(p -> p.version).toList());
     assertEquals(1, store.groups(repository).size(), "with its groups back");
   }

@@ -193,7 +193,7 @@ class SbomCheckServiceTest {
     }
 
     void lists(String project, String name, String catalogId) {
-      entries.add(new CatalogEntry(project, name, "main", catalogId, "LIBRARY"));
+      entries.add(new CatalogEntry(project, name, "main", catalogId, "LIBRARY", true));
     }
   }
 

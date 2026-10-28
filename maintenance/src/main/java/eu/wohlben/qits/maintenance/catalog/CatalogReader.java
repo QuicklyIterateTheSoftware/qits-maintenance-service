@@ -23,6 +23,10 @@ import org.jboss.logging.Logger;
  * where it belongs instead — a read that FAILED and a read that listed NOTHING both reconcile
  * nothing at all, so only a listing this service actually believes is ever acted on.
  *
+ * <p><b>A row its project no longer declares is still read</b> (qits-1695): it is a repository
+ * qits-projects lists but no wrapper entry names, and a full scan marks it UNDECLARED rather than
+ * ABSENT — listed, so not gone, but not maintained either. See {@link CatalogEntry#declared}.
+ *
  * <p><b>A row with no name is skipped.</b> qits-projects lists rows whose alias is not set, and
  * every read this service makes is name-addressed — there is no address for such a row, so it is
  * dropped with a debug line rather than turned into a repository whose every scan fails.
@@ -83,9 +87,19 @@ public class CatalogReader {
     // string is carried through to the store as it arrived and only the train layer decides
     // whether it means anything. See CatalogEntry.archetype and model/RepositoryArchetype.
     String archetype = text(row, "archetype");
+    // WHETHER ITS PROJECT STILL CARRIES IT (qits-1695). Only an explicit false undeclares a row: a
+    // provider older than the field answers no key at all, and treating that as false would stop
+    // maintaining the whole estate the day this reader shipped first.
+    JsonNode declared = row.get("declared");
+    boolean isDeclared = declared == null || !declared.isBoolean() || declared.booleanValue();
     return Optional.of(
         new CatalogEntry(
-            project, name, mainBranch == null ? "main" : mainBranch, catalogId, archetype));
+            project,
+            name,
+            mainBranch == null ? "main" : mainBranch,
+            catalogId,
+            archetype,
+            isDeclared));
   }
 
   private static String text(JsonNode row, String field) {

@@ -32,5 +32,20 @@ public enum RepositoryStatus {
 
   /** {@code .config/qits/maintenance.yml} does not parse. Nothing is bumped for this repository
    * until it does: a broken grouping would put changes on a branch nobody asked for. */
-  CONFIG_ERROR
+  CONFIG_ERROR,
+
+  /**
+   * qits-projects lists the row, but no wrapper entry names it (its {@code declared} is false), so
+   * it is not part of its project and is not maintained (qits-1695). A retired repository —
+   * {@code qits-ci-runner-daemon} and its kind — stays a catalog row after its project dropped the
+   * submodule, and maintaining it opened {@code bump(dependencies)} requests that went red for
+   * ever.
+   *
+   * <p>Only a FULL scan writes it, and it is handled like {@link #ABSENT}: the row is kept, its pins
+   * and its groups are gone, and its repository is never read. A single-repository scan — an event's
+   * or a person's — skips such a row rather than rescanning it back to {@link #OK}; the full scan that
+   * next finds it declared is the only way back. While it stays UNDECLARED, every full scan also
+   * withdraws the main-only requests this service opened on it.
+   */
+  UNDECLARED
 }

@@ -87,7 +87,7 @@ public class MtRepository extends PanacheEntityBase {
   @Column(name = "head_sha", length = 64)
   public String headSha;
 
-  /** {@code RepositoryStatus}'s names: OK, ABSENT, UNREACHABLE or CONFIG_ERROR. */
+  /** {@code RepositoryStatus}'s names: OK, ABSENT, UNREACHABLE, CONFIG_ERROR or UNDECLARED. */
   @Column(nullable = false, length = 32)
   public String status;
 

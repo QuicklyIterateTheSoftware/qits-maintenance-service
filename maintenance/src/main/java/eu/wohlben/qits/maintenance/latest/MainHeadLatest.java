@@ -162,8 +162,9 @@ public class MainHeadLatest {
    * per repository, overwriting. What heals the rows the cut-tag rule wrote, and catches a finalize
    * merge whose frame this service never saw.
    *
-   * <p>A repository the catalog dropped ({@link RepositoryStatus#ABSENT}) or that has no project to
-   * address is skipped. A head that cannot be read costs that repository and is retried by the next
+   * <p>A repository the catalog dropped ({@link RepositoryStatus#ABSENT}), one its project no longer
+   * declares ({@link RepositoryStatus#UNDECLARED}) or one that has no project to address is
+   * skipped. A head that cannot be read costs that repository and is retried by the next
    * scan at {@code main}; nothing here throws.
    *
    * @return how many rows were written
@@ -173,7 +174,8 @@ public class MainHeadLatest {
     for (MtRepository repository : store.repositories()) {
       if (repository.project == null
           || repository.project.isBlank()
-          || RepositoryStatus.ABSENT.name().equals(repository.status)) {
+          || RepositoryStatus.ABSENT.name().equals(repository.status)
+          || RepositoryStatus.UNDECLARED.name().equals(repository.status)) {
         continue;
       }
       try {

@@ -60,8 +60,14 @@ import java.util.function.Supplier;
  * the object qits-projects answers, only when {@code detail} is null; no recorded state answers a
  * conflict without a {@code detail}, so no row reaches that read.
  *
- * <p><b>No call is pending</b> ({@link #PENDING} is empty): the history read of a release whose
- * request went obsolete mid-publish, the last row that waited, binds qits-projects' recorded state
+ * <p><b>One field is pending</b> ({@link #PENDING}): the catalog read's {@value #DECLARED}
+ * (qits-1695). The state {@value #A_PROJECT_WITH_3_REPOSITORIES} is recorded, but the pinned
+ * qits-projects golden masters do not hold the field yet, and binding a path the recorded body does
+ * not hold fails the whole table. So the catalog row in {@link #CASES} binds {@link #CATALOG} as
+ * before, and the pending row names {@link #CATALOG_WITH_DECLARED}; once the golden masters that
+ * record it are pinned, the row in {@link #CASES} takes {@link #CATALOG_WITH_DECLARED} and the
+ * pending row goes. The history read of a release whose request went obsolete mid-publish, the
+ * row that waited before it, binds qits-projects' recorded state
  * {@value #A_REPOSITORY_WITH_A_TAGGED_RELEASE_WHOSE_REQUEST_WENT_OBSOLETE_MID_PUBLISH}.
  */
 final class ProjectsContract {
@@ -155,6 +161,18 @@ final class ProjectsContract {
           "repositories[].name",
           "repositories[].mainBranch",
           "repositories[].archetype");
+
+  /**
+   * <b>The field the catalog read waits for</b> (qits-1695): whether the row's project still
+   * declares it. {@link CatalogReader#entry} reads a missing {@code declared} as true, so the read
+   * works against the provider as recorded today; the binding waits in {@link #PENDING}.
+   */
+  static final String DECLARED = "repositories[].declared";
+
+  /** {@link #CATALOG} plus {@link #DECLARED} — what the catalog row binds once it is recorded. */
+  static final List<String> CATALOG_WITH_DECLARED =
+      java.util.stream.Stream.concat(CATALOG.stream(), java.util.stream.Stream.of(DECLARED))
+          .toList();
 
   /** {@link ReleaseRequestClient#requestRelease}: the new request's id and state. */
   static final List<String> OPENED = List.of("request.id", "request.state");
@@ -519,15 +537,26 @@ final class ProjectsContract {
    * The rows waiting for a qits-projects state, each with the sentence {@code
    * ProjectsConsumerPactTest} reports it skipped with. They are in no pact file until the state is
    * recorded; then they move into {@link #CASES}.
+   *
+   * @param waitsFor the consumed path the recorded state does not hold yet, or null when the state
+   *     itself is what is missing
    */
-  record Pending(Trigger trigger, String state, String operationId, List<String> consumes) {
+  record Pending(
+      Trigger trigger, String state, String operationId, List<String> consumes, String waitsFor) {
     String reason() {
       return "needs provider state '" + state + "' for " + operationId + " in "
-          + GoldenMasters.PROVIDER;
+          + GoldenMasters.PROVIDER + (waitsFor == null ? "" : " recording " + waitsFor);
     }
   }
 
-  static final List<Pending> PENDING = List.of();
+  static final List<Pending> PENDING =
+      List.of(
+          new Pending(
+              Trigger.schedule("ScanService.run"),
+              A_PROJECT_WITH_3_REPOSITORIES,
+              LIST_REPOSITORIES,
+              CATALOG_WITH_DECLARED,
+              DECLARED));
 
   private ProjectsContract() {}
 
