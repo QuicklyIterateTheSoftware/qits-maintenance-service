@@ -4,6 +4,7 @@ import eu.wohlben.qits.maintenance.dto.AdoptionJourneyDto;
 import eu.wohlben.qits.maintenance.dto.ArtifactDto;
 import eu.wohlben.qits.maintenance.dto.AutomationKindsDto;
 import eu.wohlben.qits.maintenance.dto.BumpDto;
+import eu.wohlben.qits.maintenance.dto.BumpStandingDto;
 import eu.wohlben.qits.maintenance.dto.PendingBumpsDto;
 import eu.wohlben.qits.maintenance.dto.DependencyDto;
 import eu.wohlben.qits.maintenance.dto.DownstreamDto;
@@ -82,6 +83,11 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
       // BumpDto grew `releaseRequestId` with the release door, and the bump detail page reads it.
       BumpDto.class,
       PendingBumpsDto.class,
+      // The dispatcher's standing (qits-1696).
+      BumpStandingDto.class,
+      BumpStandingDto.StandingPickDto.class,
+      BumpStandingDto.StandingEntryDto.class,
+      BumpStandingDto.StandingChangeDto.class,
       ScanDto.class,
       Change.class,
       // The ad-hoc downstream closure and the adoption journey, which replaced the release trains'

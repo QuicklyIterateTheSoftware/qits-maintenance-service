@@ -7,9 +7,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import eu.wohlben.qits.maintenance.control.ArtifactGraph;
 import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.pending.Change;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -282,6 +284,228 @@ class BumpOrderTest {
     assertEquals(
         List.of(BumpOrder.next(candidates, PRODUCERS).orElseThrow()),
         BumpOrder.nextUpTo(candidates, PRODUCERS, 1));
+  }
+
+  // --- qits-1696: a knot is broken beside READY work, and only a real knot is ----------------------
+
+  private static final String SYSTEM_SERVICE = "qits-system-service";
+  private static final String SYSTEM_FRONTEND = "qits-system-frontend";
+
+  /**
+   * The live graph of 2026-10-28, plus the coordinate the frontend waited on: the service publishes
+   * {@code @qits/system-golden-masters}, and the service's gitlink edge to the frontend needs no
+   * artifact at all.
+   */
+  private static final Map<String, String> SYSTEM_PRODUCERS =
+      Map.of(
+          ArtifactGraph.producerKey("npm", "@qits/system-golden-masters"), SYSTEM_SERVICE,
+          ArtifactGraph.producerKey("maven", "eu.wohlben.qits:qits-eventstream"), LIB);
+
+  /** A free two-node knot: each owes a bump to what the other publishes. */
+  private static List<BumpOrder.Candidate> systemKnot() {
+    return List.of(
+        candidate(SYSTEM_SERVICE, on(Ecosystem.GITLINK.wireName(), SYSTEM_FRONTEND)),
+        candidate(SYSTEM_FRONTEND, on("npm", "@qits/system-golden-masters")));
+  }
+
+  /** {@code count} repositories owed something nobody on the list publishes — READY, every one. */
+  private static List<BumpOrder.Candidate> ready(int count) {
+    List<BumpOrder.Candidate> ready = new ArrayList<>();
+    for (int index = 0; index < count; index++) {
+      ready.add(candidate("qits-ready-" + index, on("maven", "io.quarkus.platform:quarkus-bom")));
+    }
+    return ready;
+  }
+
+  @SafeVarargs
+  private static List<BumpOrder.Candidate> concat(List<BumpOrder.Candidate>... parts) {
+    List<BumpOrder.Candidate> all = new ArrayList<>();
+    for (List<BumpOrder.Candidate> part : parts) {
+      all.addAll(part);
+    }
+    return all;
+  }
+
+  /**
+   * <b>THE STARVATION, STATED AS AN ORDERING FACT (qits-1696).</b> Thirty READY repositories were
+   * never none, so the knot between {@code qits-system-service} and {@code qits-system-frontend}
+   * waited for hours behind work it had nothing to do with. With room to spare, the READY ones all
+   * go AND exactly one member of the knot does, after them.
+   */
+  @Test
+  void aKnotIsBrokenBesideReadyWorkWhenThereIsRoomLeft() {
+    List<BumpOrder.Candidate> candidates = concat(systemKnot(), ready(3));
+
+    List<BumpOrder.Pick> picks = BumpOrder.nextUpTo(candidates, SYSTEM_PRODUCERS, 8);
+
+    assertEquals(4, picks.size(), "three READY and one break: " + names(picks));
+    assertEquals(
+        List.of("qits-ready-0", "qits-ready-1", "qits-ready-2"),
+        names(picks.subList(0, 3)),
+        "the certainties first, in the caller's order");
+    assertTrue(picks.subList(0, 3).stream().noneMatch(BumpOrder.Pick::cycleBroken));
+    BumpOrder.Pick broken = picks.get(3);
+    assertTrue(broken.cycleBroken());
+    assertEquals(SYSTEM_SERVICE, broken.candidate().repository(), "a tie goes to listing order");
+    assertEquals(Set.of(SYSTEM_FRONTEND), broken.blockedBy(), "and the log says what it waited on");
+  }
+
+  /** The certainties fill the room exactly: no space is left for a guess, so none is made. */
+  @Test
+  void readyWorkThatFillsTheRoomLeavesNoBreak() {
+    List<BumpOrder.Candidate> candidates = concat(systemKnot(), ready(3));
+
+    List<BumpOrder.Pick> picks = BumpOrder.nextUpTo(candidates, SYSTEM_PRODUCERS, 3);
+
+    assertEquals(List.of("qits-ready-0", "qits-ready-1", "qits-ready-2"), names(picks));
+    assertTrue(picks.stream().noneMatch(BumpOrder.Pick::cycleBroken));
+  }
+
+  /**
+   * With room for one, READY still wins over a break — {@link BumpOrder#next} is a certainty first —
+   * and a knot alone is still broken by it.
+   */
+  @Test
+  void oneSlotPrefersReadyWorkAndStillBreaksAKnotAlone() {
+    assertEquals(
+        "qits-ready-0",
+        BumpOrder.next(concat(systemKnot(), ready(2)), SYSTEM_PRODUCERS)
+            .orElseThrow()
+            .candidate()
+            .repository());
+    assertTrue(BumpOrder.next(systemKnot(), SYSTEM_PRODUCERS).orElseThrow().cycleBroken());
+  }
+
+  /**
+   * <b>Blocked only by a held candidate is waiting on a release, never a knot</b> — beside READY
+   * work, beside a real knot, and with all the room in the world. Only the knot is broken.
+   */
+  @Test
+  void aCandidateWaitingOnlyOnAHeldOneIsNeverPicked() {
+    List<BumpOrder.Candidate> candidates =
+        concat(
+            List.of(
+                candidate(SERVICE, on("maven", "eu.wohlben.qits:qits-eventstream")),
+                held(LIB, on("maven", "io.quarkus.platform:quarkus-bom"))),
+            systemKnot(),
+            ready(2));
+
+    List<BumpOrder.Pick> picks = BumpOrder.nextUpTo(candidates, SYSTEM_PRODUCERS, 8);
+
+    assertFalse(
+        names(picks).contains(SERVICE), "its upstream's release is in flight: " + names(picks));
+    assertFalse(names(picks).contains(LIB), "and the held one is never sent again");
+    assertEquals(1, picks.stream().filter(BumpOrder.Pick::cycleBroken).count());
+  }
+
+  /**
+   * <b>The veto that would have starved it again is gone.</b> A free candidate somewhere waiting on a
+   * release in flight used to forbid every break; during a fan-out there always is one, so the knot
+   * would have waited for a quiet estate that never comes.
+   */
+  @Test
+  void aReleaseInFlightElsewhereDoesNotForbidBreakingAKnot() {
+    List<BumpOrder.Candidate> candidates =
+        concat(
+            List.of(
+                candidate(SERVICE, on("maven", "eu.wohlben.qits:qits-eventstream")),
+                held(LIB, on("maven", "io.quarkus.platform:quarkus-bom"))),
+            systemKnot());
+
+    BumpOrder.Pick pick = BumpOrder.next(candidates, SYSTEM_PRODUCERS).orElseThrow();
+
+    assertEquals(SYSTEM_SERVICE, pick.candidate().repository());
+    assertTrue(pick.cycleBroken());
+  }
+
+  /**
+   * <b>Blocked by a free upstream that is not in a knot is not a break</b>: that upstream goes first.
+   * The consumer of a knot member is listed first and waits on exactly as few as the members do, so
+   * fewest-upstreams-then-listing-order alone would have chosen it — and built it against the pin the
+   * knot is about to replace.
+   */
+  @Test
+  void theConsumerOfAKnotIsNotABreak() {
+    List<BumpOrder.Candidate> candidates =
+        concat(
+            List.of(candidate(WRAPPER, on(Ecosystem.GITLINK.wireName(), SYSTEM_FRONTEND))),
+            systemKnot());
+
+    List<BumpOrder.Pick> picks = BumpOrder.nextUpTo(candidates, SYSTEM_PRODUCERS, 8);
+
+    assertEquals(List.of(SYSTEM_SERVICE), names(picks), "a member of the knot, not its consumer");
+    assertTrue(picks.get(0).cycleBroken());
+  }
+
+  /** And the consumer of a READY repository waits for it with no break at all. */
+  @Test
+  void theConsumerOfAReadyRepositoryIsNotABreak() {
+    List<BumpOrder.Candidate> candidates =
+        List.of(
+            candidate(SERVICE, on("maven", "eu.wohlben.qits:qits-eventstream")),
+            candidate(LIB, on("maven", "io.quarkus.platform:quarkus-bom")));
+
+    List<BumpOrder.Pick> picks = BumpOrder.nextUpTo(candidates, PRODUCERS, 8);
+
+    assertEquals(List.of(LIB), names(picks));
+    assertTrue(picks.stream().noneMatch(BumpOrder.Pick::cycleBroken));
+  }
+
+  /**
+   * A knot member that also waits on a held candidate is not the break — its partner, whose whole
+   * wait lies inside the knot, is.
+   */
+  @Test
+  void aKnotMemberAlsoWaitingOnAReleaseLeavesTheBreakToItsPartner() {
+    List<BumpOrder.Candidate> candidates =
+        List.of(
+            candidate(
+                SYSTEM_SERVICE,
+                on(Ecosystem.GITLINK.wireName(), SYSTEM_FRONTEND),
+                on("maven", "eu.wohlben.qits:qits-eventstream")),
+            candidate(SYSTEM_FRONTEND, on("npm", "@qits/system-golden-masters")),
+            held(LIB, on("maven", "io.quarkus.platform:quarkus-bom")));
+
+    BumpOrder.Pick pick = BumpOrder.next(candidates, SYSTEM_PRODUCERS).orElseThrow();
+
+    assertEquals(SYSTEM_FRONTEND, pick.candidate().repository());
+    assertTrue(pick.cycleBroken());
+  }
+
+  /** A three-node ring is as much a knot as a two-node one: the wait comes back round. */
+  @Test
+  void aLongerRingIsAKnotToo() {
+    List<BumpOrder.Candidate> candidates =
+        List.of(
+            candidate("qits-x", on(Ecosystem.GITLINK.wireName(), "qits-y")),
+            candidate("qits-y", on(Ecosystem.GITLINK.wireName(), "qits-z")),
+            candidate("qits-z", on(Ecosystem.GITLINK.wireName(), "qits-x")));
+
+    List<BumpOrder.Pick> picks = BumpOrder.nextUpTo(candidates, PRODUCERS, 8);
+
+    assertEquals(List.of("qits-x"), names(picks));
+    assertTrue(picks.get(0).cycleBroken());
+  }
+
+  /** <b>Two knots, one guess.</b> The second waits for the next tick whatever the room. */
+  @Test
+  void twoKnotsAreBrokenOneAtATime() {
+    List<BumpOrder.Candidate> candidates =
+        concat(
+            systemKnot(),
+            List.of(
+                candidate("qits-p", on(Ecosystem.GITLINK.wireName(), "qits-q")),
+                candidate("qits-q", on(Ecosystem.GITLINK.wireName(), "qits-p"))),
+            ready(1));
+
+    List<BumpOrder.Pick> picks = BumpOrder.nextUpTo(candidates, SYSTEM_PRODUCERS, 8);
+
+    assertEquals(List.of("qits-ready-0", SYSTEM_SERVICE), names(picks));
+    assertEquals(1, picks.stream().filter(BumpOrder.Pick::cycleBroken).count());
+    assertEquals(
+        1,
+        BumpOrder.nextUpTo(candidates.subList(0, 4), SYSTEM_PRODUCERS, 8).size(),
+        "and without READY work, still one");
   }
 
   private static List<String> names(List<BumpOrder.Pick> picks) {

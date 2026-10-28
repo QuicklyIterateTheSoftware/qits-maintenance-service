@@ -187,6 +187,40 @@ components:
             $ref: "#/components/schemas/Change"
         failure:
           $ref: "#/components/schemas/FailureDto"
+    BumpStandingDto:
+      type: object
+      properties:
+        outcome:
+          type: string
+        summary:
+          type: string
+        cap:
+          type: integer
+          format: int32
+        free:
+          type: integer
+          format: int32
+        ciActive:
+          type: integer
+          format: int32
+        owed:
+          type: integer
+          format: int32
+        held:
+          type: integer
+          format: int32
+        picks:
+          type: array
+          items:
+            $ref: "#/components/schemas/StandingPickDto"
+        standing:
+          type: array
+          items:
+            $ref: "#/components/schemas/StandingEntryDto"
+        refused:
+          type: array
+          items:
+            type: string
     Change:
       type: object
       properties:
@@ -550,6 +584,43 @@ components:
           $ref: "#/components/schemas/Instant"
         message:
           type: string
+    StandingChangeDto:
+      type: object
+      properties:
+        ecosystem:
+          type: string
+        name:
+          type: string
+        from:
+          type: string
+        to:
+          type: string
+    StandingEntryDto:
+      type: object
+      properties:
+        repository:
+          type: string
+        reason:
+          type: string
+        blockedBy:
+          type: array
+          items:
+            type: string
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/StandingChangeDto"
+    StandingPickDto:
+      type: object
+      properties:
+        repository:
+          type: string
+        cycleBroken:
+          type: boolean
+        blockedBy:
+          type: array
+          items:
+            type: string
     StartScanRequest:
       type: object
       properties:
@@ -794,6 +865,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PendingBumpsDto"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      tags:
+      - Bump Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+        - qits:admin-agent
+        - qits:desk-admin
+        - qits:desk
+        - qits:system
+        - qits:agent
+  /maintenance/api/bumps/standing:
+    get:
+      summary: "Where every owed bump stands, and what the dispatcher would send now"
+      operationId: getBumpStanding
+      responses:
+        "200":
+          description: The dispatcher's decision and the owed set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BumpStandingDto"
         "401":
           description: Not Authorized
         "403":

@@ -1,5 +1,9 @@
 package eu.wohlben.qits.maintenance.schedule;
 
+import static io.restassured.RestAssured.given;
+import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.empty;
+import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -34,6 +38,7 @@ import eu.wohlben.qits.maintenance.scan.ScanService;
 import eu.wohlben.qits.maintenance.scan.ScanTrigger;
 import eu.wohlben.qits.maintenance.work.WorkQueue;
 import io.quarkus.test.junit.QuarkusTest;
+import io.restassured.response.ValidatableResponse;
 import jakarta.inject.Inject;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -640,6 +645,86 @@ class BumpDispatchTest {
         "the starved one IS first in the order handed to BumpOrder");
     assertEquals(List.of("qits-zzz-lib"), repositoriesOf(dispatcher.tick()));
     assertEquals(0, asks("catalog-qits-aaa-consumer"), "it waits on the upstream's release");
+  }
+
+  // --- qits-1696: a knot beside READY work, and the door that shows it ---------------------------
+
+  /**
+   * Two repositories that each carry the other as a submodule — a knot — and one READY repository
+   * beside them: the shape of 2026-10-28, where thirty READY bumps kept a cycle from ever being
+   * broken.
+   */
+  private void aKnotBesideReadyWork() {
+    inventory.clear();
+    owesItsSubmodule("qits-knot-a", "qits-knot-b");
+    owesItsSubmodule("qits-knot-b", "qits-knot-a");
+    owes("qits-ready-c", "eu.wohlben.qits:qits-c");
+    Fixture.scriptCiQueueEmpty(peers);
+  }
+
+  /**
+   * <b>THE KNOT IS BROKEN IN THE SAME TICK AS THE READY WORK (qits-1696)</b> — after it, once, and
+   * only because the cap left room.
+   */
+  @Test
+  void aKnotIsBrokenInTheSameTickAsReadyWork() {
+    aKnotBesideReadyWork();
+
+    BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
+    assertEquals("DISPATCH", decision.outcome());
+    assertEquals(
+        "the next 2 bumps are qits-ready-c, qits-knot-a (breaking a cycle, it waits on"
+            + " qits-knot-b) (4 of 4 free)",
+        decision.summary());
+
+    assertEquals(List.of("qits-ready-c", "qits-knot-a"), repositoriesOf(dispatcher.tick()));
+    assertEquals(0, asks("catalog-qits-knot-b"), "one break per tick");
+  }
+
+  /**
+   * <b>{@code GET /bumps/standing} SHOWS THE DECISION AND THE WHOLE OWED SET, AND SENDS NOTHING</b>
+   * (qits-1696). Read as {@code qits:agent}, the role an agent investigating a stuck bump holds; the
+   * tick after the read still opens exactly what the read said it would.
+   */
+  @Test
+  void theStandingDoorShowsTheDecisionAndTheOwedSetAndSendsNothing() {
+    aKnotBesideReadyWork();
+
+    ValidatableResponse standing =
+        given()
+            .header("X-Qits-User", "dyn-workspace-agent")
+            .header("X-Qits-Roles", "qits:agent")
+            .get("/maintenance/api/bumps/standing")
+            .then()
+            .statusCode(200);
+
+    standing
+        .body("outcome", is("DISPATCH"))
+        .body("cap", is(4))
+        .body("free", is(4))
+        .body("ciActive", is(0))
+        .body("owed", is(3))
+        .body("held", is(0))
+        .body("picks.repository", contains("qits-ready-c", "qits-knot-a"))
+        .body("picks.cycleBroken", contains(false, true))
+        .body("picks[1].blockedBy", contains("qits-knot-b"))
+        .body(
+            "standing.repository",
+            contains("qits-ready-c", "qits-knot-a", "qits-knot-b"))
+        .body("standing.reason", contains("READY", "BLOCKED", "BLOCKED"))
+        .body("standing[1].blockedBy", contains("qits-knot-b"))
+        .body("standing[0].changes[0].ecosystem", is("maven"))
+        .body("standing[0].changes[0].name", is("eu.wohlben.qits:qits-c"))
+        .body("standing[0].changes[0].from", is("2026.901.1"))
+        .body("standing[0].changes[0].to", is("2026.913.1"))
+        .body("standing[1].changes[0].ecosystem", is("gitlink"))
+        .body("standing[1].changes[0].name", is("qits-knot-b"))
+        .body("refused", empty());
+
+    assertEquals(0, asks("catalog-qits-ready-c"), "a read opens nothing");
+    assertEquals(0, asks("catalog-qits-knot-a"));
+    assertEquals(0, asks("catalog-qits-knot-b"));
+    assertEquals(List.of("qits-ready-c", "qits-knot-a"), repositoriesOf(dispatcher.tick()));
   }
 
   /**

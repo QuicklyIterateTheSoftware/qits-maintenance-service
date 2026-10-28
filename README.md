@@ -241,7 +241,12 @@ holds. A repository whose ask cannot be made — no catalog id, a 4xx — is set
 read off the **changes**: a candidate waits only while one of its own pending changes names
 something another candidate publishes — matched through `ArtifactGraph#producers()` for a maven,
 npm or docker coordinate, and by name for a GITLINK, whose `name` IS its repository. A cycle
-degrades to a pick with a WARN, never to a stall. **Among equally ready candidates the tiebreak is
+degrades to a pick with a WARN, never to a stall: after the READY picks, if the cap left room, ONE
+member of a knot of free candidates goes, marked `cycleBroken` — at most one per tick, and only a
+candidate whose every owed upstream is free and waits back on it (qits-1696: the break used to wait
+for a tick with nothing READY at all, which an estate of thirty owed repositories never had).
+`GET /maintenance/api/bumps/standing` answers the dispatcher's decision and the whole owed set
+(READY / BLOCKED / HELD, with `blockedBy` and the changes) without dispatching anything. **Among equally ready candidates the tiebreak is
 least recently dispatched** (`MaintenanceStore.lastDispatchedAt`, the newest main-only request per
 repository; never reached counts as oldest), because it used to be the alphabet, and the alphabet
 starved the same repositories every night (measured 2026-09-13).

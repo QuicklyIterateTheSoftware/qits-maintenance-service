@@ -3,8 +3,12 @@ package eu.wohlben.qits.maintenance.bump;
 import eu.wohlben.qits.maintenance.control.ArtifactGraph;
 import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.pending.Change;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.Deque;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -34,10 +38,31 @@ import java.util.Set;
  * repository cannot invent an edge.
  *
  * <p><b>A cycle degrades to a pick, never to a stall.</b> {@code ArtifactGraph} says plainly that
- * cycles occur and that the graph is not guaranteed acyclic, so "every candidate is blocked" is a
- * state this has to have an answer for: the least-blocked candidate goes, the caller says so in the
- * log, and the next tick asks again against a graph one release smaller. The alternative — waiting
- * for an unblocked candidate that cannot exist — is a night in which nothing is bumped at all.
+ * cycles occur and that the graph is not guaranteed acyclic, so "these candidates wait on each
+ * other" is a state this has to have an answer for: the least-blocked member of the knot goes, the
+ * caller says so in the log, and the next tick asks again against a graph one release smaller. The
+ * alternative — waiting for an unblocked candidate that cannot exist — is a knot that is never
+ * bumped at all.
+ *
+ * <p><b>And a knot is broken beside READY work, not only when there is none (qits-1696).</b> The
+ * break used to be the fallback for a tick in which NOT ONE free candidate was READY, which read as
+ * "a cycle is an estate-wide stall" and was true only of a small estate. On 2026-10-28 {@code
+ * qits-system-service} owed a gitlink bump of {@code qits-system-frontend}, which owed {@code
+ * @qits/system-golden-masters}, which {@code qits-system-service} publishes — a two-node knot —
+ * while some thirty unrelated repositories were owed and READY. Thirty READY candidates are never
+ * none, so the fallback never fired and the knot sat untouched for hours behind work it had nothing
+ * to do with. A knot is a fact about its own members, not about how busy the rest of the estate is:
+ * so a tick now takes its READY candidates first and then, if room is left, at most ONE cycle
+ * break.
+ *
+ * <p><b>"In a cycle" is meant exactly.</b> A candidate is a break only when everything it waits on
+ * is FREE and waits, in turn, back on it — its whole wait set lies inside its own knot, so nothing
+ * outside the knot is going to move it. A candidate that also waits on something outside — a held
+ * candidate whose release is in flight, a READY one going this very tick, or the member of some
+ * other knot — is not a break: that upstream goes first by the ordinary rule, and dispatching the
+ * consumer now is precisely the build against the stale pin the ordering is for. A knot whose every
+ * member waits on something outside it is therefore left alone until that something lands, which it
+ * does by itself; a knot nothing outside reaches always has a member to break.
  *
  * <h2>Held candidates: owed, blocking, and not the pick</h2>
  *
@@ -50,17 +75,25 @@ import java.util.Set;
  * nothing to do) and that its consumers are free to go (they were, and they built against the old
  * pin — the two nights for one hop this class exists to collapse).
  *
- * <p>So held is a third state and it is spelled out here rather than at the caller: {@link #next}
- * counts held candidates in {@code owed}, so they keep blocking, and never picks one, so they never
- * re-dispatch. <b>When every candidate is held the answer is no pick at all</b> — the ordinary
+ * <p>So held is a third state and it is spelled out here rather than at the caller: {@link
+ * #nextUpTo} counts held candidates in {@code owed}, so they keep blocking, and never picks one, so
+ * they never re-dispatch. <b>When every candidate is held the answer is no pick at all</b> — the ordinary
  * waiting state of a night whose releases are in flight, not a failure and not a reason for the
  * caller to close its window.
  *
  * <p><b>And a cycle is judged among the free candidates only.</b> A free candidate blocked solely by
  * held ones is not in a cycle: the thing it waits for is a release already on its way, and the
  * moment it lands the next tick sees an unblocked candidate. Breaking that "cycle" would dispatch
- * precisely the build against the stale pin the ordering is for. Only when every free candidate
- * waits on another <i>free</i> candidate is there a knot nothing but a pick can undo.
+ * precisely the build against the stale pin the ordering is for. Only a ring of <i>free</i>
+ * candidates waiting on one another is a knot nothing but a pick can undo.
+ *
+ * <p><b>That judgement is per knot now, not estate-wide (qits-1696).</b> Before, one free candidate
+ * anywhere that waited on a release in flight vetoed every break, on the reasoning that a release
+ * landing would hand the next tick something unblocked. Once READY work and a break share a tick
+ * that veto is the starvation all over again in a new form: during a fan-out the consumers of last
+ * tick's picks are always waiting on a release, so an unrelated knot would wait for a quiet estate
+ * that never comes. A release in flight unblocks its own consumers; it cannot untie a knot it is not
+ * part of.
  *
  * <h2>What this orders, and what it does not</h2>
  *
@@ -126,13 +159,21 @@ public final class BumpOrder {
    *
    * @param candidate the pick
    * @param blockedBy the owed upstreams it still has, empty on an ordinary pick
-   * @param cycleBroken whether it was picked despite being blocked, because everything was
+   * @param cycleBroken whether it was picked despite being blocked, because it and everything it
+   *     waits on wait on each other — a knot of free candidates nothing outside will untie
    */
   public record Pick(Candidate candidate, Set<String> blockedBy, boolean cycleBroken) {}
 
   /**
    * The next viable bump: the first free candidate nothing else owed sits below, in the order the
-   * caller listed them — which is least-recently-bumped first, for the reason the class doc gives.
+   * caller listed them — which is least-recently-bumped first, for the reason the class doc gives —
+   * and when there is none, the one cycle break {@link #nextUpTo} would make.
+   *
+   * <p><b>Exactly the head of {@code nextUpTo(candidates, producers, 1)}</b>, and written as that
+   * rather than beside it. The two used to be separate loops that agreed by construction, which
+   * was true right up to the day {@link #nextUpTo} learned to break a knot beside READY work
+   * (qits-1696): two copies of "what is a cycle" is one copy that drifts. With room for one, a READY
+   * candidate always wins over a break — a guess is never taken over a certainty.
    *
    * <p><b>{@code owed} is built from ALL the candidates and the pick is taken from the free ones.</b>
    * The two sets are deliberately different — that is how a repository waiting on a release it has
@@ -142,53 +183,16 @@ public final class BumpOrder {
    *     — the caller's, and the tiebreak among equally ready candidates: see the class doc
    * @param producers {@link ArtifactGraph#producers()} — coordinate to publishing repository
    * @return the bump to send, or empty when there is none to send right now — no candidates at all,
-   *     or every free one still waiting on a release in flight
+   *     or every free one still waiting, directly or through another, on a release in flight
    */
   public static Optional<Pick> next(List<Candidate> candidates, Map<String, String> producers) {
-    if (candidates == null || candidates.isEmpty()) {
-      return Optional.empty();
-    }
-    Set<String> owed = new LinkedHashSet<>();
-    Set<String> free = new LinkedHashSet<>();
-    for (Candidate candidate : candidates) {
-      owed.add(candidate.repository());
-      if (!candidate.held()) {
-        free.add(candidate.repository());
-      }
-    }
-
-    Candidate leastBlocked = null;
-    Set<String> leastBlockedBy = null;
-    boolean waitingOnARelease = false;
-    for (Candidate candidate : candidates) {
-      if (candidate.held()) {
-        continue;
-      }
-      Set<String> upstreams = owedUpstreams(candidate, producers, owed);
-      if (upstreams.isEmpty()) {
-        return Optional.of(new Pick(candidate, Set.of(), false));
-      }
-      if (upstreams.stream().noneMatch(free::contains)) {
-        // Blocked only by held candidates: a release already in flight is what it waits for, and
-        // that wait ends by itself. Counting this as a cycle would dispatch the stale build.
-        waitingOnARelease = true;
-        continue;
-      }
-      if (leastBlockedBy == null || upstreams.size() < leastBlockedBy.size()) {
-        leastBlocked = candidate;
-        leastBlockedBy = upstreams;
-      }
-    }
-    if (leastBlocked == null || waitingOnARelease) {
-      return Optional.empty();
-    }
-    // Every free one waits on another free one: a cycle, and somebody has to move first.
-    return Optional.of(new Pick(leastBlocked, Set.copyOf(leastBlockedBy), true));
+    return nextUpTo(candidates, producers, 1).stream().findFirst();
   }
 
   /**
    * UP TO {@code n} BUMPS TO SEND NOW — every free candidate nothing else owed sits below, in the
-   * caller's order, as many as qits-ci has room for.
+   * caller's order, as many as qits-ci has room for, and with room left over at most one cycle
+   * break.
    *
    * <p><b>Two READY candidates can always go together</b>: neither has an owed upstream, so neither
    * is waiting on the other, and sending both in one tick costs nothing the ordering exists to
@@ -198,18 +202,24 @@ public final class BumpOrder {
    * qits-1481: qits-ci stopped reporting a slot count of its own to read {@code n} off, so it is
    * configured — {@code qits.maintenance.bump.ci-active-cap} — rather than read).
    *
-   * <p><b>The cycle rule is unchanged and never multiplied.</b> Only when NOT ONE free candidate is
-   * READY does this fall back to {@link #next} — a single least-blocked pick marked {@code
-   * cycleBroken}, or nothing when everything waits on a release in flight. A cycle break is a
-   * guess, and one guess per tick against a graph one release smaller is the most this should ever
-   * make, however much room is free.
+   * <p><b>The cycle rule is never multiplied, and since qits-1696 it is never starved either.</b>
+   * The READY candidates are taken first, up to {@code n}. If that leaves room, ONE more pick may
+   * follow: the least-blocked free candidate whose whole wait set lies inside its own knot (see the
+   * class doc for exactly what that means), marked {@code cycleBroken} and carrying its {@code
+   * blockedBy}, ties going to the caller's order. It used to be that a break was made only when NOT
+   * ONE free candidate was READY — and an estate always has something READY, so a two-node knot
+   * between {@code qits-system-service} and {@code qits-system-frontend} waited for hours behind
+   * thirty unrelated bumps on 2026-10-28. A break is still a guess, so one per tick against a graph
+   * one release smaller remains the most this ever makes, however much room is free and however
+   * many knots there are; READY work is never displaced for it, because the guess only ever takes
+   * room the certainties left.
    *
    * @param candidates every repository owed a bump this tick, held ones included, in a stable order
    * @param producers {@link ArtifactGraph#producers()} — coordinate to publishing repository
    * @param n how many may go — the room free under the configured cap; zero or less is an empty
    *     answer
-   * @return the picks in dispatch order: up to {@code n} READY ones, else at most one cycle break,
-   *     else none. For {@code n == 1} the head is exactly what {@link #next} returns
+   * @return the picks in dispatch order: up to {@code n} READY ones, then at most one cycle break
+   *     when they left room. For {@code n == 1} the head is exactly what {@link #next} returns
    */
   public static List<Pick> nextUpTo(
       List<Candidate> candidates, Map<String, String> producers, int n) {
@@ -220,22 +230,93 @@ public final class BumpOrder {
     for (Candidate candidate : candidates) {
       owed.add(candidate.repository());
     }
-    List<Pick> ready = new ArrayList<>();
+    List<Pick> picks = new ArrayList<>();
     for (Candidate candidate : candidates) {
       if (candidate.held()) {
         continue;
       }
       if (owedUpstreams(candidate, producers, owed).isEmpty()) {
-        ready.add(new Pick(candidate, Set.of(), false));
-        if (ready.size() == n) {
-          break;
+        picks.add(new Pick(candidate, Set.of(), false));
+        if (picks.size() == n) {
+          return List.copyOf(picks);
         }
       }
     }
-    if (!ready.isEmpty()) {
-      return List.copyOf(ready);
+    cycleBreak(candidates, producers, owed).ifPresent(picks::add);
+    return List.copyOf(picks);
+  }
+
+  /**
+   * The one knot member worth guessing on, if there is a knot at all: among the free candidates
+   * whose every owed upstream is free AND waits back on them, the one with the fewest owed upstreams,
+   * the caller's order breaking ties.
+   *
+   * <p><b>"Waits back on it" is reachability over the free candidates' edges</b>, not a direct
+   * back-edge: a three-node ring is as much a knot as a two-node one. Held candidates contribute no
+   * edges — a held upstream disqualifies its consumer outright, because that wait ends with a
+   * release already in flight — and a READY candidate has none to contribute, so it can neither be a
+   * break nor lie on a ring.
+   */
+  private static Optional<Pick> cycleBreak(
+      List<Candidate> candidates, Map<String, String> producers, Set<String> owed) {
+    Set<String> free = new LinkedHashSet<>();
+    for (Candidate candidate : candidates) {
+      if (!candidate.held()) {
+        free.add(candidate.repository());
+      }
     }
-    return next(candidates, producers).map(List::of).orElse(List.of());
+    Map<String, Set<String>> waitsOn = new LinkedHashMap<>();
+    for (Candidate candidate : candidates) {
+      if (!candidate.held()) {
+        waitsOn.put(candidate.repository(), owedUpstreams(candidate, producers, owed));
+      }
+    }
+    Candidate leastBlocked = null;
+    Set<String> leastBlockedBy = null;
+    for (Candidate candidate : candidates) {
+      if (candidate.held()) {
+        continue;
+      }
+      Set<String> upstreams = waitsOn.get(candidate.repository());
+      if (upstreams.isEmpty() || !free.containsAll(upstreams)) {
+        // READY (it was a pick, or there was no room for it), or waiting on a release in flight:
+        // neither is a knot, and the second would be the stale build on purpose.
+        continue;
+      }
+      boolean knotted = true;
+      for (String upstream : upstreams) {
+        if (!reaches(upstream, candidate.repository(), waitsOn)) {
+          // An upstream outside its own knot goes first by the ordinary rule; wait for it.
+          knotted = false;
+          break;
+        }
+      }
+      if (knotted && (leastBlockedBy == null || upstreams.size() < leastBlockedBy.size())) {
+        leastBlocked = candidate;
+        leastBlockedBy = upstreams;
+      }
+    }
+    if (leastBlocked == null) {
+      return Optional.empty();
+    }
+    return Optional.of(new Pick(leastBlocked, Set.copyOf(leastBlockedBy), true));
+  }
+
+  /** Whether {@code from} waits, through any chain of free candidates, on {@code to}. */
+  private static boolean reaches(String from, String to, Map<String, Set<String>> waitsOn) {
+    Set<String> seen = new HashSet<>();
+    Deque<String> frontier = new ArrayDeque<>();
+    frontier.push(from);
+    while (!frontier.isEmpty()) {
+      String at = frontier.pop();
+      if (at.equals(to)) {
+        return true;
+      }
+      if (seen.add(at)) {
+        frontier.addAll(waitsOn.getOrDefault(at, Set.of()));
+      }
+    }
+    return false;
   }
 
   /**
@@ -252,17 +333,18 @@ public final class BumpOrder {
   /**
    * THE WHOLE OWED SET IN THE ORDER IT WILL BE HANDED OUT, each entry saying why it is where it is.
    *
-   * <p>{@link #next} answers one question — what goes now — and that was the only thing anybody
+   * <p>{@link #nextUpTo} answers one question — what goes now — and that was the only thing anybody
    * could ask. "Fifteen repositories are owed and nothing has been sent" and "the scheduler is
    * dead" were therefore the same picture from every surface, which is what let this class's
    * arming bug sit unnoticed for a day. This is the same reasoning laid out for a reader rather
    * than collapsed to a pick: READY first in the caller's listing order — least-recently-bumped
-   * first, so the head of this list IS what {@link #next} returns and a reader can see why a
-   * repository is where it is rather than reading an alphabet — then BLOCKED by fewest owed
-   * upstreams, then HELD.
+   * first, so the head of this list IS what {@link #next} returns whenever anything is READY, and a
+   * reader can see why a repository is where it is rather than reading an alphabet — then BLOCKED
+   * by fewest owed upstreams, then HELD.
    *
    * <p>It decides nothing. A caller that dispatched the head of this list instead of calling {@link
-   * #next} would skip the cycle rule, which is the one place the two differ.
+   * #nextUpTo} would skip the cycle rule, which is the one place the two differ: a knot's members
+   * are all BLOCKED here, and which of them is broken is {@link #nextUpTo}'s guess alone.
    */
   public static List<Standing> standing(List<Candidate> candidates, Map<String, String> producers) {
     if (candidates == null || candidates.isEmpty()) {

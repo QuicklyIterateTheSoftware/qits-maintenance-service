@@ -64,6 +64,7 @@ class DeskAccessTest {
     desk().get(BASE + "/automations/kinds").then().statusCode(200);
     desk().get(BASE + "/bumps").then().statusCode(200);
     desk().get(BASE + "/bumps/pending").then().statusCode(200);
+    desk().get(BASE + "/bumps/standing").then().statusCode(200);
     allowed(desk().get(BASE + "/bumps/" + UUID.randomUUID()));
     allowed(desk().get(BASE + "/release-requests/" + UUID.randomUUID() + "/automations"));
   }

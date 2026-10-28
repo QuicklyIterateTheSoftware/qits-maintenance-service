@@ -383,7 +383,11 @@ cleared when the main-only request is opened. It only reorders: `held()` never r
 `priority = LOWEST` — recorded with `recordOpenedRequest(MAIN_ONLY, changes)`; a repository with no
 catalog id, or a refused ask, is set aside for `bump.dispatch.refusal-ttl` (in memory). No
 `mt_bump` row is written for it: the bump is the pre-run's `dependency-bump` row. `explain()` is the
-same reasoning with nothing done, for tests; there is no door for it since the window door went.
+same reasoning with nothing done, and `standing()` serves it with the whole owed set at `GET
+/bumps/standing` (qits-1696, the read roles); a read shares only `held()`'s TTL caches and the
+forgiving of aged refusals with the next tick, never adds a refusal and never opens a request.
+**A cycle break rides beside READY picks** (qits-1696): at most one per tick, with room the READY
+ones left, and only for a free candidate whose every owed upstream is free and waits back on it.
 A scan never asks for a bump: a scan is a READ whose schedule is set by how fast facts go stale.
 
 **The event id IS the bump row id**, and qits-ci dedupes on (event id, repository, config path). A

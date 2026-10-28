@@ -4,6 +4,7 @@ import eu.wohlben.qits.maintenance.automation.DependencyBumpAutomation;
 import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
 import eu.wohlben.qits.maintenance.config.QuietHours;
 import eu.wohlben.qits.maintenance.control.ArtifactGraph;
+import eu.wohlben.qits.maintenance.dto.BumpStandingDto;
 import eu.wohlben.qits.maintenance.entity.MtBump;
 import eu.wohlben.qits.maintenance.entity.MtGroup;
 import eu.wohlben.qits.maintenance.entity.MtLatest;
@@ -28,8 +29,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 import org.jboss.logging.Logger;
 
 /**
@@ -87,8 +90,23 @@ import org.jboss.logging.Logger;
  *       CI_BUSY} — nothing this service sends is ever allowed to run.
  *   <li><b>Which owed repositories are READY</b> — up to {@code free} of them, from {@link
  *       BumpOrder#nextUpTo}: an upstream that is itself owed goes before its consumer, and never more
- *       than one cycle break per tick.
+ *       than one cycle break per tick — made with whatever room the READY ones left, so a knot is
+ *       no longer starved by unrelated READY work (qits-1696).
  * </ol>
+ *
+ * <h2>The standing is readable (qits-1696)</h2>
+ *
+ * <p>{@link #standing(Instant)} is this same reasoning answered to a person — {@code GET
+ * /maintenance/api/bumps/standing} — and it exists because the knot that starved for hours on
+ * 2026-10-28 was invisible from every surface: a repository owed a bump and never sent one looks the
+ * same as a scheduler that is dead. It opens nothing, refuses nothing and records nothing. What it
+ * does share with {@link #tick()} is two pieces of memory, and neither moves a decision outside the
+ * bounds a tick already lives with: the qits-projects answers {@link #held} caches, which a read
+ * here may write — so the next tick can reuse an answer up to {@link
+ * MaintenanceConfig#bumpReleaseStateTtl()} old where it would have asked afresh, which is the very
+ * staleness every tick already accepts from the tick fifteen seconds before it — and the refusal
+ * set, which a read here only ever forgives where the refusal has aged out, exactly as the next
+ * tick would at the same instant. Nothing is ever added to the refusal set by a read.
  *
  * <h2>Recomputed every tick, never a frozen plan</h2>
  *
@@ -218,6 +236,64 @@ public class BumpDispatcher {
 
   /** The gates, in the order they are asked, with nothing done about the answer. */
   public Decision explain(Instant now) {
+    return explain(now, this::assess);
+  }
+
+  /**
+   * THE STANDING: what {@link #explain} decides, and the whole owed set it decided it from, with
+   * nothing done about either (qits-1696) — the read behind {@code GET
+   * /maintenance/api/bumps/standing}.
+   *
+   * <p><b>One walk serves both halves.</b> {@link #assess} asks qits-projects about every owed
+   * repository; reading it once and handing the same answer to the decision and to the listing means
+   * the two can never disagree about who is held, and the door costs one walk, not two. The walk is
+   * made even when a switch answers first, because "disabled, and here is what it would have
+   * dispatched" is the very picture a person reaches for this door to see. See the class doc for the
+   * little a read shares with the next tick.
+   */
+  public BumpStandingDto standing(Instant now) {
+    Assessment assessment = assess();
+    Decision decision = explain(now, () -> assessment);
+    Map<String, String> producers = artifacts.producers();
+    List<BumpStandingDto.StandingEntryDto> owed = new ArrayList<>();
+    for (BumpOrder.Standing entry : BumpOrder.standing(assessment.candidates(), producers)) {
+      List<BumpStandingDto.StandingChangeDto> changes = new ArrayList<>();
+      for (Change change : entry.candidate().changes()) {
+        changes.add(
+            new BumpStandingDto.StandingChangeDto(
+                change.ecosystem(), change.name(), change.from(), change.to()));
+      }
+      owed.add(
+          new BumpStandingDto.StandingEntryDto(
+              entry.candidate().repository(),
+              entry.reason(),
+              List.copyOf(new TreeSet<>(entry.blockedBy())),
+              List.copyOf(changes)));
+    }
+    List<BumpStandingDto.StandingPickDto> picks = new ArrayList<>();
+    for (BumpOrder.Pick pick : decision.picks()) {
+      picks.add(
+          new BumpStandingDto.StandingPickDto(
+              pick.candidate().repository(),
+              pick.cycleBroken(),
+              List.copyOf(new TreeSet<>(pick.blockedBy()))));
+    }
+    return new BumpStandingDto(
+        decision.outcome(),
+        decision.summary(),
+        decision.cap(),
+        decision.free(),
+        decision.ciActive(),
+        // Off the walk rather than the decision: a switch answers before the decision counts, and
+        // "disabled, 0 owed" beside a listing of twelve would be the decision's bookkeeping talking.
+        assessment.candidates().size(),
+        (int) assessment.candidates().stream().filter(BumpOrder.Candidate::held).count(),
+        List.copyOf(picks),
+        List.copyOf(owed),
+        assessment.refused());
+  }
+
+  private Decision explain(Instant now, Supplier<Assessment> assessment) {
     if (!config.bumpEnabled()) {
       return Decision.of("DISABLED", "qits.maintenance.bump.enabled is false");
     }
@@ -238,7 +314,7 @@ public class BumpDispatcher {
         (int)
             active.stream().filter(bump -> BumpStatus.REQUESTED.name().equals(bump.status)).count();
 
-    List<BumpOrder.Candidate> candidates = assess().candidates();
+    List<BumpOrder.Candidate> candidates = assessment.get().candidates();
     int held = (int) candidates.stream().filter(BumpOrder.Candidate::held).count();
 
     if (candidates.isEmpty()) {
@@ -323,7 +399,10 @@ public class BumpDispatcher {
     if (picks.isEmpty()) {
       return new Decision(
           "WAITING_ON_RELEASES",
-          "all " + candidates.size() + " owed bump(s) wait on a release request already open",
+          "all "
+              + candidates.size()
+              + " owed bump(s) wait, directly or through another owed bump, on a release already on"
+              + " its way",
           inFlight,
           cap,
           free,
@@ -334,7 +413,15 @@ public class BumpDispatcher {
     }
     List<String> names = new ArrayList<>();
     for (BumpOrder.Pick pick : picks) {
-      names.add(pick.candidate().repository());
+      // A cycle break rides along with READY work since qits-1696, so the summary has to say which
+      // one is the guess — otherwise it reads as one more READY repository.
+      names.add(
+          pick.cycleBroken()
+              ? pick.candidate().repository()
+                  + " (breaking a cycle, it waits on "
+                  + String.join(", ", new TreeSet<>(pick.blockedBy()))
+                  + ")"
+              : pick.candidate().repository());
     }
     return new Decision(
         "DISPATCH",
@@ -357,12 +444,13 @@ public class BumpDispatcher {
   private Optional<UUID> dispatch(BumpOrder.Pick pick, int owed, int stillOwed) {
     BumpOrder.Candidate candidate = pick.candidate();
     if (pick.cycleBroken()) {
-      // Every candidate waits on another candidate. The graph is not guaranteed acyclic and this
-      // must not become a tick in which nothing ever moves.
+      // It and everything it waits on wait on each other. The graph is not guaranteed acyclic, and
+      // since qits-1696 a knot is broken beside READY work rather than only once nothing at all is
+      // READY — which an estate of thirty owed repositories never was.
       LOG.warnf(
-          "Every one of the %d owed bumps waits on another; %s is dispatched anyway (it waits on"
-              + " %s), and the next tick asks again.",
-          owed, candidate.repository(), pick.blockedBy());
+          "%s and the owed bumps it waits on (%s) wait on each other in a cycle; it is dispatched"
+              + " anyway to break it (%d bump(s) owed in all), and the next tick asks again.",
+          candidate.repository(), pick.blockedBy(), owed);
     }
     return openMainOnly(candidate, stillOwed);
   }

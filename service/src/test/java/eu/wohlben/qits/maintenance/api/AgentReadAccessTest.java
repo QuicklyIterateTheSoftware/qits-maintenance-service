@@ -90,6 +90,7 @@ class AgentReadAccessTest {
   void anAgentReadsTheBumps() {
     agent().get(BASE + "/bumps").then().statusCode(200);
     agent().get(BASE + "/bumps/pending").then().statusCode(200);
+    agent().get(BASE + "/bumps/standing").then().statusCode(200);
     readable("/bumps/" + UUID.randomUUID());
   }
 
