@@ -470,11 +470,7 @@ public class BumpDispatcher {
       return Optional.empty();
     }
     String main = row.get().mainBranchOrDefault();
-    ReleaseRequestClient.RequestResult result =
-        releases.requestMainOnly(
-            repoId,
-            main,
-            ReleaseRequestClient.summary(candidate.group(), candidate.changes().size()));
+    ReleaseRequestClient.RequestResult result = releases.requestMainOnly(repoId, main);
     switch (result.outcome()) {
       case REQUESTED -> {
         store.recordOpenedRequest(

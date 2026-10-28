@@ -98,8 +98,6 @@ final class ProjectsContract {
 
   private static final String JOINED_BRANCH = "fix/rounding";
 
-  private static final String SUMMARY = ReleaseRequestClient.summary("dependencies", 1);
-
   private static final String TITLE = "SBOM missing for left-pad (npm)";
   private static final String IMPETUS =
       "left-pad 1.0.0 is in qits-artifacts with no usable SBOM (MISSING).";
@@ -306,7 +304,7 @@ final class ProjectsContract {
   private static final Call OPEN_REQUEST =
       (clients, params) -> {
         ReleaseRequestClient.RequestResult result =
-            clients.releases().requestRelease(params.get("repositoryId"), BUMP_BRANCH, SUMMARY);
+            clients.releases().requestRelease(params.get("repositoryId"), BUMP_BRANCH);
         JsonNode recorded =
             GoldenMasters.json(A_REPOSITORY_WITH_A_BRANCH_TO_RELEASE, CREATE_RELEASE_REQUEST)
                 .path("request");
@@ -360,7 +358,6 @@ final class ProjectsContract {
       () ->
           new PactDslJsonBody()
               .stringValue("branch", BUMP_BRANCH)
-              .stringType("summary", SUMMARY)
               .stringValue("priority", ReleaseRequestClient.LOWEST);
 
   private static final Supplier<DslPart> JOIN_BODY =

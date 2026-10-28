@@ -712,8 +712,7 @@
         "body": {
           "content": {
             "branch": "feature/export",
-            "priority": "LOWEST",
-            "summary": "bump(dependencies): 1 dependencies"
+            "priority": "LOWEST"
           },
           "contentType": "application/json",
           "encoded": false
@@ -729,18 +728,6 @@
           "content-type": [
             "application/json"
           ]
-        },
-        "matchingRules": {
-          "body": {
-            "$.summary": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            }
-          }
         },
         "method": "POST",
         "path": "/projects/api/repositories/00000000-0000-4000-8000-000000000002/release-requests"

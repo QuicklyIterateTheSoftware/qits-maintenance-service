@@ -62,7 +62,7 @@ import java.util.Set;
  *   <li><b>CONVERGED</b> — a 2xx with no id to hold on to. Asking again would get the same empty
  *       answer, so it is recorded rather than retried. (The ordinary convergence — the branch
  *       already being on an open request — is a 2xx WITH that request's id, and is REQUESTED.)
- *   <li><b>REFUSED</b> — a 4xx that is not an auth failure: a blank branch or summary, a repository
+ *   <li><b>REFUSED</b> — a 4xx that is not an auth failure: a blank branch, a repository
  *       id qits-projects does not hold, a route a deployed qits-projects does not serve yet. The
  *       same bytes fail identically every time, so nothing retries it; the sentence goes on the
  *       bump's message where a person reads it, and the next nightly bump of that group asks again
@@ -99,11 +99,13 @@ public class ReleaseRequestClient {
   public static final String REFUSED = "refused";
 
   /**
-   * {@code release_request.summary} is a default-length column over there, so this is the bound the
-   * ask is trimmed to. Nothing this service composes comes near it — the cap exists so a group name
-   * somebody made very long is a shortened summary rather than a 500 on the other side.
+   * {@code release_request}'s text columns are default-length over there, so this is the bound a
+   * composed sentence is trimmed to — the withdrawal {@code reason} today (qits-1673 dropped the
+   * only other user, the ask's {@code summary}, once qits-projects started deriving one of its own
+   * and ignoring whatever this service sent). Nothing this service composes comes near it — the cap
+   * exists so an unusually long sentence is shortened rather than a 500 on the other side.
    */
-  static final int SUMMARY_LIMIT = 255;
+  static final int REASON_LIMIT = 255;
 
   private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -147,12 +149,14 @@ public class ReleaseRequestClient {
    *     {@code id} its catalog listing answers. Not the name and not the project: the path parameter
    *     is resolved against that service's own repository table and nothing else addresses it.
    * @param branch the maintenance branch this bump pushed
-   * @param summary the release's summary line, which is also the fold's commit message
    */
-  public RequestResult requestRelease(String repoId, String branch, String summary) {
+  public RequestResult requestRelease(String repoId, String branch) {
     ObjectNode body = JSON.createObjectNode();
     body.put("branch", branch);
-    body.put("summary", cap(summary));
+    // `summary` is deliberately not sent (qits-1673): qits-projects derives what the request
+    // carries from its sources itself — for a `maintenance/*` one, that branch's own head commit
+    // subject — and ignores a stated summary outright, so sending one was dead weight this service
+    // no longer composes.
     // `priority` is LOWEST on every bump, unconditionally and by decision: a dependency bump is the
     // one release that is never what anybody is waiting for, so it yields the build queue to every
     // release a person asked for. There is no key to turn it up — a bump that needed to go first
@@ -267,8 +271,8 @@ public class ReleaseRequestClient {
    * qits-projects that does not accept main as a request's only source yet answers a 4xx, which is
    * REFUSED and is the dispatcher's to report.
    */
-  public RequestResult requestMainOnly(String repoId, String mainBranch, String summary) {
-    return requestRelease(repoId, mainBranch, summary);
+  public RequestResult requestMainOnly(String repoId, String mainBranch) {
+    return requestRelease(repoId, mainBranch);
   }
 
   /**
@@ -875,29 +879,12 @@ public class ReleaseRequestClient {
     return branches;
   }
 
-  /**
-   * The commit subject a bump's own commits carry, reused as the release summary.
-   *
-   * <p><b>{@code bump(<group>): <n> dependencies}</b> — the literal shape {@code
-   * ci/src/main/resources/platform-pipelines/maintenance-bump.yml} (in qits-ci) prints, word for word, the plural never
-   * singularised. Reusing it means the release request, the branch and the commits on it all read
-   * the same in a listing.
-   *
-   * <p><b>{@code n} is what was ASKED FOR, and it cannot be what a commit says.</b> The step counts
-   * what it APPLIED, and a bump is up to two commits — the maven step and the node/docker step each
-   * clone, commit and push — so there is no single number the subject could match. The count this
-   * service froze onto the row is the one it can stand behind.
-   */
-  public static String summary(String group, int changes) {
-    return cap("bump(" + group + "): " + changes + " dependencies");
-  }
-
-  /** A summary the column over there will hold. */
-  private static String cap(String summary) {
-    if (summary == null) {
+  /** A sentence the column over there will hold, bounded to {@link #REASON_LIMIT}. */
+  private static String cap(String text) {
+    if (text == null) {
       return "";
     }
-    return summary.length() <= SUMMARY_LIMIT ? summary : summary.substring(0, SUMMARY_LIMIT);
+    return text.length() <= REASON_LIMIT ? text : text.substring(0, REASON_LIMIT);
   }
 
   /** Somebody else's body on this service's message column: bounded, and never a wall of html. */
