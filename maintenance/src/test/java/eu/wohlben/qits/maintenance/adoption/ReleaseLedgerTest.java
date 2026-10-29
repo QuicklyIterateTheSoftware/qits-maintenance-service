@@ -27,9 +27,10 @@ import org.junit.jupiter.api.Test;
  *
  * <p>The seam is {@link ManifestScanner#pinsAt}: everything below the tag read — the four parsers,
  * the reactor, the discovery — is {@code ManifestScannerTest}'s subject and is stubbed here. What
- * this class is about is the three decisions the ledger itself makes: which pins are worth
- * recording, what happens when the git host does or does not hold the tag, and that recording twice
- * converges rather than accumulating.
+ * this class is about is the decisions the ledger itself makes: which pins are worth recording,
+ * what happens when the git host does or does not hold the tag, that recording twice converges
+ * rather than accumulating, and — since qits-1733 — which of {@link ReleaseLedger#record} and
+ * {@link ReleaseLedger#recordResolved} a given sha should go through.
  *
  * <p><b>Every fixture name carries a uuid</b>, for {@code DownstreamResolverTest}'s reason: this
  * module has no {@code InventoryReset} and the ledger is read by coordinate across the whole store.
@@ -97,6 +98,10 @@ class ReleaseLedgerTest {
    * package and nothing of ours releasing it makes anybody downstream; REACTOR is the repository's
    * own artifact and UNRESOLVED never became a version. A gitlink survives because {@code kindOf}
    * hardcodes it INTERNAL — and its "version" is the embedded commit, kept verbatim.
+   *
+   * <p>{@code record} is {@code ReleaseLedgerBackfill} and {@code ReleaseLedgerHeal}'s method
+   * (qits-1733), so the stub here is at the TAG, not at {@code sha}: backfill's sha is a gitlink
+   * row's recorded commit, never one this call just resolved from the tag.
    */
   @Test
   void onlyTheInternalPinsOfTheReleasedTreeAreRecorded() {
@@ -111,7 +116,7 @@ class ReleaseLedgerTest {
 
     trees.holds(
         repository,
-        SHA,
+        ReleaseLedger.TAG_PREFIX + "2026.906.1",
         SHA,
         pin(Ecosystem.NPM, internalNpm, "1.2.3"),
         pin(Ecosystem.MAVEN, internalMaven, "2026.905.1"),
@@ -124,10 +129,9 @@ class ReleaseLedgerTest {
     assertTrue(ledger.record("qits", repository, "2026.906.1", SHA, APRIL));
 
     assertEquals(
-        List.of("qits/" + repository + " " + SHA),
+        List.of("qits/" + repository + " refs/tags/2026.906.1"),
         trees.asked,
-        "a sha the caller already resolved is read directly, never through the tag a second time"
-            + " (qits-1733)");
+        "record always reads the tag; backfill's sha was never resolved from it (qits-1733)");
 
     assertEquals(1, declaring(Ecosystem.NPM, internalNpm).size());
     assertEquals(1, declaring(Ecosystem.MAVEN, internalMaven).size());
@@ -156,7 +160,7 @@ class ReleaseLedgerTest {
     String repository = "qits-idempotent" + run;
     String kept = "@qits/kept" + run;
     String dropped = "@qits/dropped" + run;
-    String revision = SHA;
+    String revision = ReleaseLedger.TAG_PREFIX + "1.0.0";
 
     trees.holds(
         repository, revision, SHA, pin(Ecosystem.NPM, kept, "1.0.0"),
@@ -179,8 +183,7 @@ class ReleaseLedgerTest {
   /**
    * <b>No sha, and a tag the git host does not hold, is POISON</b> — the same question has the same
    * answer for ever — so nothing is recorded and the frame is settled. This is {@code
-   * ReleaseLedgerHeal} and {@code ReleaseLedgerBackfill}'s path: neither has resolved a commit of
-   * its own, so the tree is read at the tag and a tag the host genuinely lacks is not retried.
+   * ReleaseLedgerHeal}'s path: it has no sha of its own at all.
    */
   @Test
   void noShaAndATagTheGitHostDoesNotHoldRecordsNothingAndDoesNotThrow() {
@@ -193,11 +196,35 @@ class ReleaseLedgerTest {
   }
 
   /**
+   * <b>A sha given, and a tag the git host does not hold, is STILL poison — this is backfill's
+   * semantics (qits-1733).</b> {@code ReleaseLedgerBackfill} hands {@code record} the gitlink
+   * latest row's recorded sha, a value no resolution of THIS tag ever produced, so {@code record}
+   * never reads at it: it always asks about the tag, and a tag the host has since lost is answered
+   * with a WARN and {@code false}, exactly as before 7f085e4 — never thrown. Without this split,
+   * folding backfill's sha into the "caller already resolved it" rule would turn every tag the git
+   * host has since lost into a thrown exception, which is what qits-1733 asks to be undone.
+   */
+  @Test
+  void aShaGivenButATagTheGitHostDoesNotHoldStillRecordsNothingAndDoesNotThrow() {
+    String repository = "qits-backfill-no-tag" + run;
+    // No stub for "refs/tags/1.0.0", nor for SHA: Trees.pinsAt answers GONE for both.
+
+    assertFalse(ledger.record("qits", repository, "1.0.0", SHA, APRIL));
+
+    assertEquals(
+        List.of("qits/" + repository + " refs/tags/1.0.0"),
+        trees.asked,
+        "record asks about the tag, never about the gitlink-row sha backfill handed it");
+    assertTrue(store.releasesOf(repository).isEmpty());
+    assertFalse(store.releaseRecorded(repository, "1.0.0"));
+  }
+
+  /**
    * <b>The qits-1733 race, reproduced.</b> {@code bus/ScmEventListener} resolves the tag itself and
-   * hands the commit sha here; the git host then answers 404 to a SECOND read of the very same tag
-   * — the live symptom — while the tree at the sha it already proved answers 200. Reading at the
-   * sha, as this class now does whenever one is given, never asks the tag that second time, so the
-   * race cannot bite: the row and its pins are recorded.
+   * hands the commit sha to {@code recordResolved}; the git host then answers 404 to a SECOND read
+   * of the very same tag — the live symptom — while the tree at the sha it already proved answers
+   * 200. Reading at the sha, as {@code recordResolved} does, never asks the tag that second time,
+   * so the race cannot bite: the row and its pins are recorded.
    */
   @Test
   void aCallerResolvedShaIsReadDirectlyEvenWhenTheTagWouldAnswer404() {
@@ -206,7 +233,7 @@ class ReleaseLedgerTest {
     // No stub for "refs/tags/1.0.0": Trees.pinsAt answers GONE (its 404) for anything unstubbed.
     trees.holds(repository, SHA, SHA, pin(Ecosystem.NPM, internal, "1.2.3"));
 
-    assertTrue(ledger.record("qits", repository, "1.0.0", SHA, APRIL));
+    assertTrue(ledger.recordResolved("qits", repository, "1.0.0", SHA, APRIL));
 
     assertEquals(
         List.of("qits/" + repository + " " + SHA),
@@ -229,19 +256,34 @@ class ReleaseLedgerTest {
 
     assertThrows(
         IllegalStateException.class,
-        () -> ledger.record("qits", repository, "1.0.0", SHA, APRIL));
+        () -> ledger.recordResolved("qits", repository, "1.0.0", SHA, APRIL));
 
     assertTrue(store.releasesOf(repository).isEmpty());
+  }
+
+  /** A blank or absent sha is never {@code recordResolved}'s to accept — call {@code record}. */
+  @Test
+  void recordResolvedRefusesABlankSha() {
+    String repository = "qits-no-resolved-sha" + run;
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> ledger.recordResolved("qits", repository, "1.0.0", "  ", APRIL));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> ledger.recordResolved("qits", repository, "1.0.0", null, APRIL));
   }
 
   /**
    * A git host that cannot be ASKED is retryable, and it is thrown on purpose: on the bus path the
    * claim rolls back and the release is offered again, which is the only thing that fills this row.
+   * This exercises {@code record}'s own tag read — backfill and heal's path — so the stub is at the
+   * tag, not at {@code sha}.
    */
   @Test
   void aGitHostThatWillNotAnswerIsLeftToThrow() {
     String repository = "qits-dark-host" + run;
-    trees.unreachable(repository, SHA);
+    trees.unreachable(repository, ReleaseLedger.TAG_PREFIX + "1.0.0");
 
     assertThrows(
         IllegalStateException.class, () -> ledger.record("qits", repository, "1.0.0", SHA, APRIL));
@@ -253,7 +295,9 @@ class ReleaseLedgerTest {
   @Test
   void aReleaseThatDeclaresNothingInternalStillGetsItsRow() {
     String repository = "qits-bare" + run;
-    trees.holds(repository, SHA, SHA, pin(Ecosystem.NPM, "@angular/core" + run, "20.0.0"));
+    trees.holds(
+        repository, ReleaseLedger.TAG_PREFIX + "1.0.0", SHA,
+        pin(Ecosystem.NPM, "@angular/core" + run, "20.0.0"));
 
     assertTrue(ledger.record("qits", repository, "1.0.0", SHA, APRIL));
 
