@@ -14,6 +14,7 @@ import eu.wohlben.qits.maintenance.api.Fixture;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
 import eu.wohlben.qits.maintenance.automation.DependencyBumpAutomation;
 import eu.wohlben.qits.maintenance.automation.EstatePinsAutomation;
+import eu.wohlben.qits.maintenance.automation.UpstreamReplan;
 import eu.wohlben.qits.maintenance.bump.BumpDispatcher;
 import eu.wohlben.qits.maintenance.bump.BumpOrder;
 import eu.wohlben.qits.maintenance.bump.CiClient;
@@ -82,6 +83,8 @@ class BumpDispatchTest {
   @Inject InventoryReset inventory;
 
   @Inject WorkQueue queue;
+
+  @Inject UpstreamReplan upstream;
 
   @BeforeEach
   void scriptThePeers() {
@@ -810,6 +813,48 @@ class BumpDispatchTest {
     assertNull(
         store.repository("qits-zzz-service").orElseThrow().reofferOwedAt,
         "the main-only request is the re-offer; the mark is cleared");
+  }
+
+  /**
+   * <b>Reproduction (qits-1653): AN EMBEDDED SPA'S RELEASE PUTS THE SERVICE THAT EMBEDS IT FIRST.</b>
+   * Three repositories are owed maven bumps and were reached days ago; the service embedding {@code
+   * qits-system-frontend} owes only that gitlink, was reached five minutes ago and has no request
+   * open. By the clock alone it sorts last and, under a cap of one, waits behind every other owed
+   * repository while the released SPA is not live. The upstream hook marks it, and the next tick
+   * opens it first.
+   */
+  @Test
+  void anEmbeddedSpasReleasePutsTheServiceThatEmbedsItFirst() {
+    inventory.clear();
+    owes("qits-aaa-service", "eu.wohlben.qits:qits-a");
+    owes("qits-bbb-service", "eu.wohlben.qits:qits-b");
+    owes("qits-ccc-service", "eu.wohlben.qits:qits-c");
+    owesItsSubmodule("qits-system-service", "qits-system-frontend");
+    lastReached("qits-aaa-service", Instant.now().minus(Duration.ofDays(3)));
+    lastReached("qits-bbb-service", Instant.now().minus(Duration.ofDays(2)));
+    lastReached("qits-ccc-service", Instant.now().minus(Duration.ofDays(1)));
+    lastReached("qits-system-service", Instant.now().minus(Duration.ofMinutes(5)));
+    // A cap of four with three active: one free.
+    Fixture.scriptCiQueue(peers, 3);
+
+    // Without the mark, least-recently-dispatched puts the just-served service last.
+    assertEquals(
+        List.of("qits-aaa-service", "qits-bbb-service", "qits-ccc-service", "qits-system-service"),
+        dispatcher.assess().candidates().stream().map(BumpOrder.Candidate::repository).toList());
+
+    upstream.replanConsumers(Ecosystem.GITLINK, "qits-system-frontend");
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    assertNotNull(store.repository("qits-system-service").orElseThrow().reofferOwedAt);
+    assertEquals(
+        "qits-system-service",
+        dispatcher.assess().candidates().getFirst().repository(),
+        "the marked one ahead of every repository reached longer ago");
+    assertEquals(List.of("qits-system-service"), repositoriesOf(dispatcher.tick()));
+    assertEquals(0, asks("catalog-qits-aaa-service"), "the rest wait for the next tick");
+    assertNull(
+        store.repository("qits-system-service").orElseThrow().reofferOwedAt,
+        "the main-only request clears the mark");
   }
 
   /** The mark only reorders: a marked repository with an open request is still held. */

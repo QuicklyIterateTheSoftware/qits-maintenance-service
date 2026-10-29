@@ -206,6 +206,85 @@ class UpstreamReplanTest {
     assertEquals(1, store.upstreamRestarts(REQUEST), "counted from zero again");
   }
 
+  // --- an embedded SPA's release: the consumer owed first (qits-1653) ---------------------------
+
+  /** The fixture's submodule: {@code webui}, a GITLINK INTERNAL by construction. */
+  private static final String FRONTEND = "qits-ci-frontend";
+
+  /** The repository's open-request listing: readable, and nothing open. */
+  private void noOpenRequest() {
+    peers.answer(
+        PeerTarget.PROJECTS,
+        Fixture.RELEASE_REQUESTS_PATH,
+        FakePeers.Scripted.ok("{\"requests\":[]}"));
+  }
+
+  private Instant reofferOwedAt() {
+    return store.repository(Fixture.REPOSITORY).orElseThrow().reofferOwedAt;
+  }
+
+  /**
+   * <b>A GITLINK release with no open request marks its consumer owed a re-offer</b> (qits-1653):
+   * the embedded SPA is not live until the service that embeds it releases, so the dispatcher sorts
+   * that service first rather than behind its own recent dispatch.
+   */
+  @Test
+  void aGitlinkReleaseWithNoOpenRequestMarksItsConsumerOwed() {
+    noOpenRequest();
+    assertNull(reofferOwedAt());
+
+    upstream.replanConsumers(Ecosystem.GITLINK, FRONTEND);
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    assertNotNull(reofferOwedAt(), "first in the dispatcher's queue");
+    assertTrue(bumpRows(REQUEST).isEmpty(), "nothing is re-planned where nothing is open");
+  }
+
+  /**
+   * A maven release with no open request marks nothing: a library has cascades of consumers, and
+   * putting every one first would erase the order the dispatcher keeps.
+   */
+  @Test
+  void aMavenReleaseWithNoOpenRequestMarksNothing() {
+    noOpenRequest();
+
+    upstream.replanConsumers(Ecosystem.MAVEN, EVENTSTREAM);
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    assertNull(reofferOwedAt());
+  }
+
+  /**
+   * A GITLINK release onto an open request re-plans it as every upstream does, and marks nothing:
+   * the release is already on its way.
+   */
+  @Test
+  void aGitlinkReleaseOntoAnOpenRequestReplansItAndMarksNothing() {
+    listing("PENDING", "PENDING");
+
+    upstream.replanConsumers(Ecosystem.GITLINK, FRONTEND);
+    queue.awaitIdle(Duration.ofSeconds(30));
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    List<MtBump> rows = bumpRows(REQUEST);
+    assertEquals(1, rows.size(), rows.toString());
+    assertEquals(BumpTrigger.UPSTREAM.name(), rows.getFirst().trigger);
+    assertEquals(1, store.upstreamRestarts(REQUEST));
+    assertNull(reofferOwedAt());
+  }
+
+  /** A listing that could not be read is not "no open request": nothing is marked. */
+  @Test
+  void anUnreadableListingMarksNothing() {
+    Fixture.scriptReleaseRequestUnreachable(peers);
+
+    upstream.replanConsumers(Ecosystem.GITLINK, FRONTEND);
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    assertNull(reofferOwedAt());
+    assertTrue(bumpRows(REQUEST).isEmpty());
+  }
+
   // --- no open request: the dispatcher's main-only request -------------------------------------
 
   /**

@@ -47,9 +47,16 @@ import org.jboss.logging.Logger;
  *       it is left alone until it has one. A plain REJECTED is not enough (qits-1199): qits-projects
  *       also lands a request there when a pre-run automation fails, before any QA ran. A verdict
  *       resets the count.
- *   <li><b>No open request</b>: nothing here. The dispatcher's next tick finds the repository owed
- *       and opens a main-only LOWEST request whose pre-run writes the bump —
- *       behind the same capacity gate and chain order every bump has always waited behind.
+ *   <li><b>No open request</b>: nothing is re-planned. The dispatcher's next tick finds the
+ *       repository owed and opens a main-only LOWEST request whose pre-run writes the bump —
+ *       behind the same capacity gate and chain order every bump has always waited behind. <b>A
+ *       GITLINK upstream also marks the consumer owed a re-offer</b> (qits-1653), which the
+ *       dispatcher sorts first and clears when it opens that request: an embedded SPA — {@code
+ *       qits-system-frontend} at {@code service/src/main/webui} — has one consumer and is not live
+ *       until that consumer releases, and least-recently-dispatched puts a service it just served
+ *       last, behind every other owed repository for hours. Maven, npm and the rest are never
+ *       marked: a library has whole cascades of consumers, and marking them all would put every one
+ *       first and erase the ordering. An unreadable listing marks nothing — it is not "no request".
  * </ul>
  *
  * <h2>And the estate (qits-1224)</h2>
@@ -121,7 +128,14 @@ public class UpstreamReplan {
     }
     for (String consumer : consumers) {
       try {
-        replan(consumer, DependencyBumpAutomation.KIND);
+        Outcome outcome = replan(consumer, DependencyBumpAutomation.KIND);
+        if (ecosystem == Ecosystem.GITLINK && outcome == Outcome.NO_OPEN_REQUEST) {
+          // The embedding service is owed this release and nothing is on its way: first in the
+          // dispatcher's queue, not last behind its own recent dispatch (qits-1653).
+          store.markReofferOwed(consumer, Instant.now());
+          LOG.infof("%s has no open release request; it is owed %s %s and goes first in the bump"
+              + " queue", consumer, ecosystem.wireName(), name);
+        }
       } catch (RuntimeException e) {
         // One consumer's failure costs that consumer, never the rest of the list.
         LOG.warnf("The upstream re-plan of %s for %s %s failed: %s", consumer,
@@ -182,23 +196,40 @@ public class UpstreamReplan {
     }
   }
 
-  /** One repository: re-plan one kind on each open, not-READY request, minding the guard. */
-  void replan(String repository, String kind) {
+  /**
+   * What {@link #replan} found (qits-1653): only {@link #NO_OPEN_REQUEST} is acted on, by {@link
+   * #replanConsumers} for a GITLINK upstream.
+   */
+  enum Outcome {
+    /** The listing was read and holds no open request: the dispatcher opens one when owed. */
+    NO_OPEN_REQUEST,
+    /** At least one open request was there; each was re-planned, or left alone by its own rule. */
+    REPLANNED,
+    /** Nothing could be asked: no catalog row to address, or a listing that could not be read. */
+    SKIPPED
+  }
+
+  /**
+   * One repository: re-plan one kind on each open, not-READY request, minding the guard. The answer
+   * says whether the repository had no open request at all — an unreadable listing is {@link
+   * Outcome#SKIPPED}, never that.
+   */
+  Outcome replan(String repository, String kind) {
     Optional<MtRepository> row = store.repository(repository);
     if (row.isEmpty() || row.get().catalogId == null || row.get().catalogId.isBlank()) {
-      return;
+      return Outcome.SKIPPED;
     }
     ReleaseRequestClient.Listing listing = releases.openRequests(row.get().catalogId);
     if (!listing.readable()) {
       LOG.warnf("The open release requests of %s could not be read: %s", repository,
           listing.error());
-      return;
+      return Outcome.SKIPPED;
     }
     List<ReleaseRequestClient.Listed> open = listing.requests();
     if (open.isEmpty()) {
       LOG.debugf("%s has no open release request; the dispatcher opens one when it is owed",
           repository);
-      return;
+      return Outcome.NO_OPEN_REQUEST;
     }
     for (ReleaseRequestClient.Listed request : open) {
       if ("READY".equals(request.state())) {
@@ -234,5 +265,6 @@ public class UpstreamReplan {
             request.id(), e.getMessage());
       }
     }
+    return Outcome.REPLANNED;
   }
 }
