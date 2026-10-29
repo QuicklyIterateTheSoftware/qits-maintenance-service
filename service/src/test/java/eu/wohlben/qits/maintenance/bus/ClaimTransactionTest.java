@@ -205,6 +205,11 @@ class ClaimTransactionTest {
         PeerTarget.GITHOST,
         "/git/qits/" + REPOSITORY + "/tree/refs%2Ftags%2F" + version,
         FakePeers.Scripted.ok("{\"entries\":[]}", Map.of("Git-Commit-Sha", RELEASE_SHA)));
+    // The ledger reads the released tree at the commit the tag resolved to (qits-1733).
+    peers.answer(
+        PeerTarget.GITHOST,
+        "/git/qits/" + REPOSITORY + "/tree/" + RELEASE_SHA,
+        FakePeers.Scripted.ok("{\"entries\":[]}", Map.of("Git-Commit-Sha", RELEASE_SHA)));
 
     // And main, once the finalize merge has made the release's commit its head (qits-1257).
     peers.answer(
