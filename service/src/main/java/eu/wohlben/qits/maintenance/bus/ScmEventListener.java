@@ -175,9 +175,11 @@ public class ScmEventListener implements QitsDurableEventListener {
    *
    * <p>Fully qualified rather than bare: git's own ref search would try {@code refs/<version>} and
    * a branch of that name before it reached the tag, and a release version is exactly the kind of
-   * string somebody once made a branch out of. Two readers now — this resolves the release's commit
-   * at it and the ledger reads the released tree at it — so a second copy of the string would be
-   * the one that quietly asked about a ref nobody has.
+   * string somebody once made a branch out of. This resolves the release's commit at it — the one
+   * read of it — and hands that commit to the ledger, which reads the released tree AT THE COMMIT
+   * rather than resolving this same tag a second time (qits-1733): a second copy of the string would
+   * be the one that quietly asked about a ref nobody has, and a second resolution of the very same
+   * ref was the bug that spelling would have reintroduced.
    */
   static final String TAG_PREFIX = ReleaseLedger.TAG_PREFIX;
 

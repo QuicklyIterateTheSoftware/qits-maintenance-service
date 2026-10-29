@@ -111,7 +111,7 @@ class ReleaseLedgerTest {
 
     trees.holds(
         repository,
-        ReleaseLedger.TAG_PREFIX + "2026.906.1",
+        SHA,
         SHA,
         pin(Ecosystem.NPM, internalNpm, "1.2.3"),
         pin(Ecosystem.MAVEN, internalMaven, "2026.905.1"),
@@ -124,9 +124,10 @@ class ReleaseLedgerTest {
     assertTrue(ledger.record("qits", repository, "2026.906.1", SHA, APRIL));
 
     assertEquals(
-        List.of("qits/" + repository + " refs/tags/2026.906.1"),
+        List.of("qits/" + repository + " " + SHA),
         trees.asked,
-        "the tag is spelled in full, so no branch of that name can answer for it");
+        "a sha the caller already resolved is read directly, never through the tag a second time"
+            + " (qits-1733)");
 
     assertEquals(1, declaring(Ecosystem.NPM, internalNpm).size());
     assertEquals(1, declaring(Ecosystem.MAVEN, internalMaven).size());
@@ -155,7 +156,7 @@ class ReleaseLedgerTest {
     String repository = "qits-idempotent" + run;
     String kept = "@qits/kept" + run;
     String dropped = "@qits/dropped" + run;
-    String revision = ReleaseLedger.TAG_PREFIX + "1.0.0";
+    String revision = SHA;
 
     trees.holds(
         repository, revision, SHA, pin(Ecosystem.NPM, kept, "1.0.0"),
@@ -176,17 +177,61 @@ class ReleaseLedgerTest {
   }
 
   /**
-   * A tag the git host does not hold is POISON — the same question has the same answer for ever —
-   * so nothing is recorded and the frame is settled.
+   * <b>No sha, and a tag the git host does not hold, is POISON</b> — the same question has the same
+   * answer for ever — so nothing is recorded and the frame is settled. This is {@code
+   * ReleaseLedgerHeal} and {@code ReleaseLedgerBackfill}'s path: neither has resolved a commit of
+   * its own, so the tree is read at the tag and a tag the host genuinely lacks is not retried.
    */
   @Test
-  void aTagTheGitHostDoesNotHoldRecordsNothingAndDoesNotThrow() {
+  void noShaAndATagTheGitHostDoesNotHoldRecordsNothingAndDoesNotThrow() {
     String repository = "qits-no-tag" + run;
 
-    assertFalse(ledger.record("qits", repository, "1.0.0", SHA, APRIL));
+    assertFalse(ledger.record("qits", repository, "1.0.0", null, APRIL));
 
     assertTrue(store.releasesOf(repository).isEmpty());
     assertFalse(store.releaseRecorded(repository, "1.0.0"));
+  }
+
+  /**
+   * <b>The qits-1733 race, reproduced.</b> {@code bus/ScmEventListener} resolves the tag itself and
+   * hands the commit sha here; the git host then answers 404 to a SECOND read of the very same tag
+   * — the live symptom — while the tree at the sha it already proved answers 200. Reading at the
+   * sha, as this class now does whenever one is given, never asks the tag that second time, so the
+   * race cannot bite: the row and its pins are recorded.
+   */
+  @Test
+  void aCallerResolvedShaIsReadDirectlyEvenWhenTheTagWouldAnswer404() {
+    String repository = "qits-race" + run;
+    String internal = "@qits/race" + run;
+    // No stub for "refs/tags/1.0.0": Trees.pinsAt answers GONE (its 404) for anything unstubbed.
+    trees.holds(repository, SHA, SHA, pin(Ecosystem.NPM, internal, "1.2.3"));
+
+    assertTrue(ledger.record("qits", repository, "1.0.0", SHA, APRIL));
+
+    assertEquals(
+        List.of("qits/" + repository + " " + SHA),
+        trees.asked,
+        "only the sha is ever asked about; the tag is never read a second time");
+    assertEquals(1, declaring(Ecosystem.NPM, internal).size());
+    assertEquals(SHA, declaring(Ecosystem.NPM, internal).get(0).release().sha);
+  }
+
+  /**
+   * <b>A sha given, and the tree at it 404s, is thrown rather than swallowed.</b> The caller just
+   * resolved that exact commit, so the git host answering otherwise within the same release is the
+   * qits-1733 inconsistency, not a tag it legitimately lacks — thrown so the bus frame stays owed
+   * and is redelivered instead of losing the row for good.
+   */
+  @Test
+  void aCallerResolvedShaThatTheTreeReadDoesNotFindIsThrown() {
+    String repository = "qits-race-miss" + run;
+    // No stub for SHA either: Trees.pinsAt answers GONE for it too, as the live 404 did.
+
+    assertThrows(
+        IllegalStateException.class,
+        () -> ledger.record("qits", repository, "1.0.0", SHA, APRIL));
+
+    assertTrue(store.releasesOf(repository).isEmpty());
   }
 
   /**
@@ -196,7 +241,7 @@ class ReleaseLedgerTest {
   @Test
   void aGitHostThatWillNotAnswerIsLeftToThrow() {
     String repository = "qits-dark-host" + run;
-    trees.unreachable(repository, ReleaseLedger.TAG_PREFIX + "1.0.0");
+    trees.unreachable(repository, SHA);
 
     assertThrows(
         IllegalStateException.class, () -> ledger.record("qits", repository, "1.0.0", SHA, APRIL));
@@ -208,9 +253,7 @@ class ReleaseLedgerTest {
   @Test
   void aReleaseThatDeclaresNothingInternalStillGetsItsRow() {
     String repository = "qits-bare" + run;
-    trees.holds(
-        repository, ReleaseLedger.TAG_PREFIX + "1.0.0", SHA,
-        pin(Ecosystem.NPM, "@angular/core" + run, "20.0.0"));
+    trees.holds(repository, SHA, SHA, pin(Ecosystem.NPM, "@angular/core" + run, "20.0.0"));
 
     assertTrue(ledger.record("qits", repository, "1.0.0", SHA, APRIL));
 

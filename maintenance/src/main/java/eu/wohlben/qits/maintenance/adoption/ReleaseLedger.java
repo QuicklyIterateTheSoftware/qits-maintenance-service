@@ -47,10 +47,32 @@ import org.jboss.logging.Logger;
  * nothing else can be one — and it is the half that matters most: it is the whole frontend→service
  * hop, and its {@code version} is the embedded commit sha rather than a version.
  *
- * <h2>Failure, and why the split is the listener's</h2>
+ * <h2>Failure, and why the split now follows who resolved the commit (qits-1733)</h2>
  *
  * <p>The one caller on the bus path is {@code bus/ScmEventListener}, inside a durable claim, so
- * this holds the same three-way split that method does:
+ * this used to hold the same three-way split that method does, reading the tree at {@code
+ * refs/tags/<version>} regardless of what the caller already knew. That second resolution was the
+ * bug: the listener resolves the tag itself to get {@code sha}, hands it here, and this went on to
+ * ask the git host about the SAME tag a second time to read the tree — and the git host sometimes
+ * answers 404 to that second ask even though the tag plainly exists, the first ask having just
+ * proved it. Seen live: {@code 2026.1029.83835 is not a tag the git host holds} logged in the same
+ * second as the listener's own successful resolve. The result was poison that was not actually
+ * poison — a WARN, a {@code false}, no {@code mt_release} row, the frame acked and nothing ever
+ * retrying it — and {@code GET /pins} refusing the release's deployment for ever afterward.
+ *
+ * <p><b>The fix is to stop resolving twice.</b> A full commit sha needs no ref resolution at all,
+ * so when the caller hands one, the tree is read AT THE SHA — {@code manifests.pinsAt(project,
+ * repository, sha)} — never at the tag a second time. And because the caller just proved that
+ * commit exists (it is how {@code sha} was obtained), any answer other than FOUND for that read is
+ * not a tag the host might legitimately lack: it is the git host contradicting itself within the
+ * same request, which is exactly the race above, so it is now <b>thrown</b> rather than swallowed —
+ * NOT_FOUND included, alongside UNREACHABLE and INVALID as before. Throwing keeps the bus frame
+ * owed, so it is redelivered, and a redelivery racing the same inconsistency a second time is far
+ * cheaper than a release whose ledger row is lost for good.
+ *
+ * <p>The three-way split survives for the two callers that have no sha of their own — {@code
+ * ReleaseLedgerHeal} and {@code work/ReleaseLedgerBackfill}'s rows written before the sha column
+ * existed — which still read the tree at the tag and keep today's behaviour:
  *
  * <ul>
  *   <li>a git host that cannot be ASKED is retryable and is <b>thrown</b> — the frame stays owed and
@@ -85,9 +107,11 @@ public class ReleaseLedger {
    * a branch of that name before it reached the tag, and a release version is exactly the kind of
    * string somebody once made a branch out of.
    *
-   * <p><b>One spelling, two readers.</b> {@code bus/ScmEventListener} resolves a release's commit
-   * with it and this reads the released tree at it; a second copy of the string would be the one
-   * that quietly asked about a ref nobody has.
+   * <p><b>One spelling, and this class resolves it at most once per release</b> (qits-1733). {@code
+   * bus/ScmEventListener} resolves a release's commit with it; this class reads the released tree
+   * at that COMMIT when the caller hands one, and falls back to resolving this same tag itself only
+   * when no commit is given. A second copy of the string would be the one that quietly asked about
+   * a ref nobody has.
    */
   public static final String TAG_PREFIX = "refs/tags/";
 
@@ -98,17 +122,33 @@ public class ReleaseLedger {
   @Inject MaintenanceConfig config;
 
   /**
-   * Records one release: the row, and every INTERNAL pin the tree at its tag declared.
+   * Records one release: the row, and every INTERNAL pin the tree at its released commit declared.
+   *
+   * <p><b>Reads at {@code sha} when the caller gave one, and never re-resolves the tag to get
+   * there</b> (qits-1733). {@code bus/ScmEventListener} and {@code work/ReleaseLedgerBackfill} both
+   * already know the commit — the first from resolving the tag itself moments earlier, the second
+   * from the gitlink's own recorded sha — so handing it here means the tree is read with a full
+   * commit sha, which needs no ref resolution and so cannot race the tag the way a second {@code
+   * refs/tags/<version>} lookup can. In that branch any status other than FOUND is thrown, NOT_FOUND
+   * included: the caller just proved the commit exists, so the git host answering otherwise is not a
+   * tag it legitimately lacks, it is the same inconsistency that motivated this change, and throwing
+   * keeps the frame owed for a retry rather than recording nothing for good.
+   *
+   * <p>{@code sha} is null for {@code ReleaseLedgerHeal}, which has only a version and a deployment
+   * asking about it — there the tree is read at the tag, as it always was, and the three-way split
+   * in the class comment applies.
    *
    * @param project the project the git host addresses the repository under
    * @param repository the CATALOG NAME — {@code mt_release.repository} is compared with a closure
    *     entry directly, so nothing else may be written into it
    * @param version the released version, which is also the tag's name
-   * @param sha the commit that tag resolves to, where the caller has already resolved it; null
-   *     falls back to the commit this read resolved, which is the same commit
+   * @param sha the commit the caller has already resolved, read directly and never re-resolved from
+   *     the tag; null or blank falls back to reading the tree at the tag itself
    * @param occurredAt the publisher's moment, never a clock reading where there is a frame
    * @return whether a row was written
-   * @throws IllegalStateException when the git host could not be asked — retryable, on purpose
+   * @throws IllegalStateException when the git host could not be asked (always retryable), or when
+   *     {@code sha} was given and the tree at it answered anything but FOUND — the caller already
+   *     proved that commit exists, so this is thrown rather than swallowed
    */
   public boolean record(
       String project, String repository, String version, String sha, Instant occurredAt) {
@@ -118,7 +158,8 @@ public class ReleaseLedger {
           repository, version, project);
       return false;
     }
-    String revision = TAG_PREFIX + version;
+    boolean callerResolved = sha != null && !sha.isBlank();
+    String revision = callerResolved ? sha : TAG_PREFIX + version;
     ManifestScanner.Pins read = manifests.pinsAt(project, repository, revision);
     if (read.status() == FileLookup.Status.UNREACHABLE
         || read.status() == FileLookup.Status.INVALID) {
@@ -127,6 +168,14 @@ public class ReleaseLedger {
       throw new IllegalStateException(
           "the git host could not be asked for " + repository + " " + revision + ": "
               + read.message());
+    }
+    if (callerResolved && read.status() != FileLookup.Status.FOUND) {
+      // The caller already resolved this exact commit, so anything but FOUND here is the git host
+      // contradicting itself within the same release — the qits-1733 race — not a tag it genuinely
+      // lacks. Thrown so the frame stays owed and is redelivered, rather than losing the row.
+      throw new IllegalStateException(
+          "the git host answered " + read.status() + " for " + repository + " " + version + " at "
+              + sha + ", although that commit was just resolved");
     }
     if (read.status() != FileLookup.Status.FOUND) {
       LOG.warnf(
