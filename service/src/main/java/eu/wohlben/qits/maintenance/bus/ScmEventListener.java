@@ -176,10 +176,13 @@ public class ScmEventListener implements QitsDurableEventListener {
    * <p>Fully qualified rather than bare: git's own ref search would try {@code refs/<version>} and
    * a branch of that name before it reached the tag, and a release version is exactly the kind of
    * string somebody once made a branch out of. This resolves the release's commit at it — the one
-   * read of it — and hands that commit to the ledger, which reads the released tree AT THE COMMIT
-   * rather than resolving this same tag a second time (qits-1733): a second copy of the string would
-   * be the one that quietly asked about a ref nobody has, and a second resolution of the very same
-   * ref was the bug that spelling would have reintroduced.
+   * read of it — and hands that commit to {@link ReleaseLedger#recordResolved}, which reads the
+   * released tree AT THE COMMIT rather than resolving this same tag a second time (qits-1733): a
+   * second copy of the string would be the one that quietly asked about a ref nobody has, and a
+   * second resolution of the very same ref was the bug that spelling would have reintroduced.
+   * {@code recordResolved} is the method for this reason: this listener's {@code sha} is a commit
+   * THIS tag was just resolved to, unlike {@code work/ReleaseLedgerBackfill}'s, whose sha comes from
+   * a gitlink row and so still needs {@link ReleaseLedger#record} to ask the tag question for real.
    */
   static final String TAG_PREFIX = ReleaseLedger.TAG_PREFIX;
 
@@ -396,7 +399,8 @@ public class ScmEventListener implements QitsDurableEventListener {
    * <p><b>The tag is resolved rather than correlated with a push.</b> A release IS the tag, and
    * the {@code SCMRelease} is published the moment qits-githost's tag primitive answers, so the tag
    * is there when this frame arrives; reading it is one call whose answer is the release's own
-   * commit, handed to the ledger so its own read of the tree costs no second resolution.
+   * commit, handed to {@link ReleaseLedger#recordResolved} so its own read of the tree costs no
+   * second resolution of this same tag (qits-1733).
    *
    * <p><b>The failure split is the seam's.</b> A git host that cannot be ASKED is retryable, so it
    * is thrown and the frame stays owed; a tag the git host does not HOLD is poison — the same
@@ -435,7 +439,7 @@ public class ScmEventListener implements QitsDurableEventListener {
           frame.name(), frame.id(), repository, version);
       return;
     }
-    ledger.record(project, repository, version, tag.headSha(), Instant.now());
+    ledger.recordResolved(project, repository, version, tag.headSha(), Instant.now());
   }
 
   /**

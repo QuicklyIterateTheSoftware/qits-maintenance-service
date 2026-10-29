@@ -220,7 +220,7 @@ class ScmEventListenerTest {
     RecordingStore store;
 
     @Override
-    public boolean record(
+    public boolean recordResolved(
         String project, String repository, String version, String sha, Instant occurredAt) {
       if (failWith != null) {
         throw failWith;
