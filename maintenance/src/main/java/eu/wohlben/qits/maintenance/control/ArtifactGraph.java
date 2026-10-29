@@ -12,6 +12,7 @@ import eu.wohlben.qits.maintenance.entity.MtPin;
 import eu.wohlben.qits.maintenance.entity.MtRepository;
 import eu.wohlben.qits.maintenance.latest.VersionOrder;
 import eu.wohlben.qits.maintenance.model.Ecosystem;
+import eu.wohlben.qits.maintenance.model.RepositoryStatus;
 import eu.wohlben.qits.maintenance.model.SbomStatus;
 import eu.wohlben.qits.maintenance.pending.PendingChanges;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
@@ -510,13 +511,23 @@ public class ArtifactGraph {
    *
    * <p><b>ONE READ per answer, never one per row.</b> The catalog is tens of rows, a dependents
    * listing can be hundreds, and every row of it names one of those few repositories.
+   *
+   * <p><b>A catalog id two rows share answers with the live one</b> (qits-1735). A rename keeps
+   * qits-projects' row id, so the ABSENT old row and the new one carry the same {@code catalog_id};
+   * a plain put let whichever came last in name order win, and an application's producer became a
+   * repository nobody scans. The same preference as {@code MaintenanceStore.repositoryName}: a
+   * row that is not {@link RepositoryStatus#retired retired} first, then the lowest name.
    */
   private RepositoryNames names() {
     Map<String, String> byCatalogId = new LinkedHashMap<>();
     Map<String, String> byName = new LinkedHashMap<>();
-    for (MtRepository row : store.repositories()) {
+    List<MtRepository> rows = new ArrayList<>(store.repositories());
+    rows.sort(
+        Comparator.comparing((MtRepository row) -> RepositoryStatus.retired(row.status))
+            .thenComparing(row -> row.name, Comparator.nullsLast(Comparator.naturalOrder())));
+    for (MtRepository row : rows) {
       if (row.catalogId != null && !row.catalogId.isBlank() && row.name != null) {
-        byCatalogId.put(row.catalogId, row.name);
+        byCatalogId.putIfAbsent(row.catalogId, row.name);
         byName.put(row.name, row.catalogId);
       }
     }

@@ -49,6 +49,7 @@ import jakarta.enterprise.context.control.ActivateRequestContext;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -975,6 +976,13 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
    * <p><b>One query</b>, {@code name = ?1 or catalog_id = ?1}, because the caller is the bus
    * listener and it runs inside the claim transaction of somebody else's release.
    *
+   * <p><b>Several rows can match, and which one answers is decided here, not by the query plan</b>
+   * (qits-1735). A rename keeps qits-projects' row id, so the ABSENT old row and the live new one
+   * share a {@code catalog_id}; an unordered {@code firstResult} filed releases under the old name
+   * at random, and the ledger then kept a release nothing would ever place on main. So: a row whose
+   * NAME is the spelling answers first — a name is answered unchanged, always — then a row that is
+   * not {@link RepositoryStatus#retired retired}, then the lowest name.
+   *
    * @return the catalog name, or the spelling unchanged when the catalog knows neither
    */
   @ActivateRequestContext
@@ -987,8 +995,14 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
     return DbRetry.inNewTx(
         "resolve a repository spelling",
         () -> {
-          MtRepository row = find("name = ?1 or catalogId = ?1", spelling).firstResult();
-          return row == null ? spelling : row.name;
+          List<MtRepository> rows = list("name = ?1 or catalogId = ?1", spelling);
+          return rows.stream()
+              .min(
+                  Comparator.comparing((MtRepository row) -> !spelling.equals(row.name))
+                      .thenComparing(row -> RepositoryStatus.retired(row.status))
+                      .thenComparing(row -> row.name))
+              .map(row -> row.name)
+              .orElse(spelling);
         });
   }
 

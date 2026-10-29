@@ -33,6 +33,7 @@ import eu.wohlben.qits.maintenance.manifest.Globs;
 import eu.wohlben.qits.maintenance.model.BranchState;
 import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.PinKind;
+import eu.wohlben.qits.maintenance.model.RepositoryStatus;
 import eu.wohlben.qits.maintenance.pending.PendingChanges;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -289,8 +290,9 @@ public class Inventory {
     }
     // …and the UNION beyond the last scan (qits-1172). A release scan replaces the rows above with
     // the TAG's pins, and a tag can run ahead of main and of the deployment, so the keep-set also
-    // holds what main declared at its last main scan, what every release not yet on main declared,
-    // and what every release that serves or would be rolled back to declared. Read before the
+    // holds what main declared at its last main scan, what every release not yet on main declared
+    // (of a repository still maintained — see keptReleases, qits-1735), and what every release that
+    // serves or would be rolled back to declared. Read before the
     // dedupe, so a version three of these name is one row per provenance and never lost.
     List<MtMainPin> mainPins = store.allMainPins();
     for (MtMainPin pin : mainPins) {
@@ -301,7 +303,7 @@ public class Inventory {
     Map<String, java.util.Set<String>> deployedByApplication = deployed.byApplication();
     java.util.Set<String> deployedVersions =
         DeployedVersions.union(deployedByApplication.values());
-    List<MtRelease> kept = store.keptReleases(deployedVersions);
+    List<MtRelease> kept = keptReleases(rows, deployedVersions);
     // Before a single ledger pin is served: a deployed release the ledger never recorded is a
     // refusal, never a 200 that quietly lacks it.
     requireRecorded(deployedByApplication, kept, rows, mainPins);
@@ -317,6 +319,35 @@ public class Inventory {
     pins.addAll(carriedDaemons.resolve(stored));
     pins.sort(PIN_ORDER);
     return new PinSourceDto(Instant.now(), List.copyOf(repositories), List.copyOf(pins));
+  }
+
+  /**
+   * The releases the ledger keeps, less the not-on-main ones of a repository that is no longer
+   * maintained (qits-1735).
+   *
+   * <p>"Not on main yet" is a promise that main will catch up, and {@code ScanService.keepMain} is
+   * what notices when it has — for a repository it scans. A repository renamed away (ABSENT) or
+   * dropped by its project (UNDECLARED) is never scanned again, so its {@code on_main} never flips
+   * and {@link MaintenanceStore#keptReleases} kept those pins for ever: measured as {@code release
+   * <v> (not on main yet)} rows under names the catalog no longer lists. Such a release is kept
+   * only while the deployer serves or would roll back to its version, which is still a fact about
+   * a running system whatever became of the repository. A release whose repository has no
+   * inventory row at all is kept as before: the inventory saying nothing is not evidence.
+   */
+  private List<MtRelease> keptReleases(
+      List<MtRepository> rows, java.util.Set<String> deployedVersions) {
+    java.util.Set<String> retired = new java.util.HashSet<>();
+    for (MtRepository row : rows) {
+      if (RepositoryStatus.retired(row.status)) {
+        retired.add(row.name);
+      }
+    }
+    return store.keptReleases(deployedVersions).stream()
+        .filter(
+            release ->
+                !retired.contains(release.repository)
+                    || deployedVersions.contains(release.version))
+        .toList();
   }
 
   /** The {@code via} of a row the release ledger holds: which release, and why it is kept. */
@@ -389,7 +420,11 @@ public class Inventory {
    * ArtifactGraph#applicationProducers} — the repository that released the docker package whose
    * last path segment is the application name, which is exactly how qits-deployments derived that
    * name from the same {@code SoftwareRelease}. Candidates are kept only when the inventory holds
-   * a row of that name, since only those have a ledger this service writes.
+   * a row of that name, since only those have a ledger this service writes — and only when that
+   * row is not {@link RepositoryStatus#retired retired} (qits-1735). An ABSENT or UNDECLARED
+   * repository is scanned by nobody, so a heal recorded under its name is a not-on-main row that
+   * nothing would ever place on main; its renamed successor, sharing the catalog id, is the
+   * candidate {@link ArtifactGraph#applicationProducers} answers once it has released an image.
    *
    * <h2>An application that maps to nothing is SKIPPED, with a WARN</h2>
    *
@@ -458,12 +493,15 @@ public class Inventory {
       String application = deployment.getKey();
       List<String> repositories =
           producers.getOrDefault(application, java.util.Set.of()).stream()
-              .filter(inventory::containsKey)
+              .filter(
+                  name ->
+                      inventory.containsKey(name)
+                          && !RepositoryStatus.retired(inventory.get(name).status))
               .toList();
       if (repositories.isEmpty()) {
         LOG.warnf(
-            "qits-deployments serves %s at %s, which maps to no repository this inventory holds;"
-                + " its versions are kept by version alone",
+            "qits-deployments serves %s at %s, which maps to no repository this inventory"
+                + " maintains; its versions are kept by version alone",
             application.isEmpty() ? "an unnamed application" : application,
             deployment.getValue());
         continue;

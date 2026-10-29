@@ -47,5 +47,19 @@ public enum RepositoryStatus {
    * next finds it declared is the only way back. While it stays UNDECLARED, every full scan also
    * withdraws the main-only requests this service opened on it.
    */
-  UNDECLARED
+  UNDECLARED;
+
+  /**
+   * Whether a stored status word is {@link #ABSENT} or {@link #UNDECLARED}: a row kept for its name
+   * and its {@code catalog_id} whose repository this service no longer maintains (qits-1735).
+   *
+   * <p>A rename keeps qits-projects' row id, so the ABSENT old row and the live new one share a
+   * {@code catalog_id}, and every reader that resolves an id or a candidate through the inventory
+   * has to prefer the live one — or a release gets filed under a name nothing will ever scan again,
+   * and the keep-set holds it for ever. {@link #UNREACHABLE} and {@link #CONFIG_ERROR} are not
+   * retired: those repositories are still maintained, merely not readable right now.
+   */
+  public static boolean retired(String status) {
+    return ABSENT.name().equals(status) || UNDECLARED.name().equals(status);
+  }
 }

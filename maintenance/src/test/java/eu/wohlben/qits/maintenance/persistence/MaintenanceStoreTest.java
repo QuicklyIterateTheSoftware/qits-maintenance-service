@@ -160,6 +160,31 @@ class MaintenanceStoreTest {
   }
 
   /**
+   * <b>A rename keeps the catalog id, so two rows answer one spelling</b> (qits-1735). The old name
+   * is ABSENT, the new one is live, and an unordered {@code firstResult} filed releases under the
+   * old name at random. The ABSENT row is named to sort FIRST, so a name order alone would pick it.
+   * A spelling that IS a row's name still answers with that name, retired or not.
+   */
+  @Test
+  void aCatalogIdARenameLeftOnTwoRowsAnswersWithTheLiveOne() {
+    String catalogId = UUID.randomUUID().toString();
+    String suffix = UUID.randomUUID().toString();
+    String renamedAway = "a-renamed-" + suffix;
+    String undeclared = "b-undeclared-" + suffix;
+    String live = "z-live-" + suffix;
+    store.markRepository(
+        renamedAway, "qits", catalogId, null, RepositoryStatus.ABSENT, DROPPED, Instant.now());
+    store.markRepository(
+        undeclared, "qits", catalogId, null, RepositoryStatus.UNDECLARED, UNDECLARED, Instant.now());
+    store.markRepository(
+        live, "qits", catalogId, null, RepositoryStatus.UNREACHABLE, "not now", Instant.now());
+
+    assertEquals(live, store.repositoryName(catalogId), "the live row answers the shared id");
+    assertEquals(renamedAway, store.repositoryName(renamedAway), "a name is answered unchanged");
+    assertEquals(undeclared, store.repositoryName(undeclared), "a name is answered unchanged");
+  }
+
+  /**
    * A catalog listing that carried no id says nothing about the id this row already has, and
    * clearing it would take the translation away from every graph row that still needs it.
    */

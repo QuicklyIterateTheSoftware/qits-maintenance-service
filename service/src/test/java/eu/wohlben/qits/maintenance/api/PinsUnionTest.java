@@ -321,6 +321,88 @@ class PinsUnionTest {
         .body(eventstreamVersions(), hasItem(MAIN_VERSION));
   }
 
+  // --- rule 3c: a repository nobody maintains any more keeps nothing by "not on main" -------------
+
+  /**
+   * <b>THE STUCK KEEP</b> (qits-1735). A release recorded not on main, under a name the catalog then
+   * renamed away: nothing scans an ABSENT repository, so {@code on_main} never flips and the ledger
+   * served {@code release <v> (not on main yet)} for ever. It is kept only while it is deployed.
+   */
+  @Test
+  void aNotOnMainReleaseOfARenamedAwayRepositoryIsNotKept() {
+    notOnMainReleaseOfARetiredRepository(RepositoryStatus.ABSENT);
+  }
+
+  /** The same for a repository its project no longer declares (qits-1695's UNDECLARED). */
+  @Test
+  void aNotOnMainReleaseOfAnUndeclaredRepositoryIsNotKept() {
+    notOnMainReleaseOfARetiredRepository(RepositoryStatus.UNDECLARED);
+  }
+
+  private void notOnMainReleaseOfARetiredRepository(RepositoryStatus status) {
+    scanMain();
+    recordedNotOnMain();
+    given()
+        .when()
+        .get(BASE + "/pins")
+        .then()
+        .statusCode(200)
+        .body(eventstreamVersions(), hasItem(TAG_PIN_VERSION));
+
+    retire(status);
+
+    given()
+        .when()
+        .get(BASE + "/pins")
+        .then()
+        .statusCode(200)
+        .body(eventstreamVersions(), not(hasItem(TAG_PIN_VERSION)));
+  }
+
+  /**
+   * …but a version the deployer serves is kept whatever became of the repository: a running
+   * system still needs what it was built from. Its image producer is the ABSENT row, which is not
+   * asked to heal, so the application is kept by version alone.
+   */
+  @Test
+  void aDeployedReleaseOfARenamedAwayRepositoryIsStillKept() {
+    scanMain();
+    recordedNotOnMain();
+    imageReleasedBy(Fixture.REPOSITORY);
+    retire(RepositoryStatus.ABSENT);
+    deployed(APPLICATION, RELEASE);
+
+    given()
+        .when()
+        .get(BASE + "/pins")
+        .then()
+        .statusCode(200)
+        .body(eventstreamVersions(), hasItem(TAG_PIN_VERSION))
+        .body(
+            "pins.find { it.version == '" + TAG_PIN_VERSION + "' && it.via != null }.via",
+            org.hamcrest.Matchers.equalTo("release " + RELEASE + " (deployed or rollback)"));
+  }
+
+  /**
+   * An application whose only producer is an ABSENT repository is not a ledger question: the heal
+   * would record a not-on-main row under a name nothing scans, which is how the stuck keep above was
+   * made. It is answered, kept by version alone, and its tag is never read.
+   */
+  @Test
+  void aDeployedApplicationProducedOnlyByARenamedAwayRepositoryIsNotHealed() {
+    scanMain();
+    imageReleasedBy(Fixture.REPOSITORY);
+    retire(RepositoryStatus.ABSENT);
+    deployed(APPLICATION, RELEASE);
+    tagHeld(RELEASE);
+
+    given().when().get(BASE + "/pins").then().statusCode(200);
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    assertFalse(store.releaseRecorded(Fixture.REPOSITORY, RELEASE), "no ledger row was healed");
+    assertEquals(0, tagReads(RELEASE), "and its tag was never read");
+  }
+
   // --- rule 4: a tag the git host does not hold wipes nothing ------------------------------------
 
   @Test
@@ -376,6 +458,28 @@ class PinsUnionTest {
         List.of(),
         GroupSource.DEFAULT,
         pin -> PinKind.INTERNAL,
+        Instant.now());
+  }
+
+  /** A release of the fixture repository at {@link #RELEASE}, recorded and not on main. */
+  private void recordedNotOnMain() {
+    store.recordRelease(
+        Fixture.REPOSITORY,
+        RELEASE,
+        Fixture.TAG_SHA,
+        Instant.parse("2026-10-10T19:27:00Z"),
+        List.of(new MaintenanceStore.ReleasePin(Ecosystem.MAVEN, EVENTSTREAM, TAG_PIN_VERSION)));
+  }
+
+  /** The fixture repository's row, as a full scan leaves a rename or a dropped submodule. */
+  private void retire(RepositoryStatus status) {
+    store.markRepository(
+        Fixture.REPOSITORY,
+        Fixture.PROJECT,
+        Fixture.CATALOG_ID,
+        null,
+        status,
+        "no longer maintained",
         Instant.now());
   }
 
