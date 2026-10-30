@@ -1,0 +1,24 @@
+{
+  "provider": "contract-provider-service",
+  "pacts": [
+    {
+      "consumerRepository": "contract-service",
+      "groupId": "eu.wohlben.qits",
+      "artifactId": "contract-service-pacts-contract-provider-service",
+      "pactVersion": "2026.1028.235307",
+      "deployedVersions": [
+        "2026.1030.192107",
+        "2026.1029.90000"
+      ]
+    },
+    {
+      "consumerRepository": "contract-service",
+      "groupId": "eu.wohlben.qits",
+      "artifactId": "contract-service-pacts-contract-provider-service",
+      "pactVersion": "2026.1030.200000",
+      "deployedVersions": [
+        "2026.1030.204903"
+      ]
+    }
+  ]
+}

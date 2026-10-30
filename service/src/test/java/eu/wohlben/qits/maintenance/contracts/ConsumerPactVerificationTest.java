@@ -193,4 +193,9 @@ class ConsumerPactVerificationTest {
   Map<String, String> aRepositoryWhoseManifestsPinGoldenMasters() {
     return states.params(ProviderStates.A_REPOSITORY_WHOSE_MANIFESTS_PIN_GOLDEN_MASTERS);
   }
+
+  @State(ProviderStates.A_PROVIDER_WHOSE_DEPLOYED_CONSUMERS_PUBLISH_PACTS)
+  Map<String, String> aProviderWhoseDeployedConsumersPublishPacts() {
+    return states.params(ProviderStates.A_PROVIDER_WHOSE_DEPLOYED_CONSUMERS_PUBLISH_PACTS);
+  }
 }
