@@ -197,6 +197,25 @@ class ReRunPlannedOnTheWorkerTest {
     assertEquals("2026.821.3", change.get("to").asText());
   }
 
+  /**
+   * <b>A FRESH plan ends the re-run and sends nothing</b> (qits-1766): with every internal pin at
+   * the fold already at its latest, the worker ends the row the door opened NOTHING_TO_DO with the
+   * plan's reason, rather than sending qits-ci a run with no {@code changes} it refuses.
+   */
+  @Test
+  void aFreshPlanEndsTheRowAndSendsNothing() {
+    AutomationFixture.scriptManifests(peers, FOLD_A, AutomationFixture.CURRENT_POM, null);
+
+    String id = rerun(BODY).when().post(RERUN).then().statusCode(202).extract().path("id");
+    assertTrue(queue.awaitIdle(Duration.ofSeconds(60)), "the worker finished the plan");
+
+    MtBump ended = store.bump(UUID.fromString(id)).orElseThrow();
+    assertEquals(BumpStatus.NOTHING_TO_DO.name(), ended.status, ended.message);
+    assertTrue(ended.message.startsWith("fresh: "), ended.message);
+    assertEquals(1, rows().size(), "one row, the one the door opened");
+    assertTrue(peers.bodiesFor(CiClient.TRIGGER_PATH).isEmpty(), "nothing sent to qits-ci");
+  }
+
   /** A second re-run while the first is still active is a 409, and opens nothing. */
   @Test
   void aSecondReRunWhileOneIsActiveIs409() {

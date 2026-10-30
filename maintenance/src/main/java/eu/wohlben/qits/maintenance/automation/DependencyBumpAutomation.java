@@ -43,8 +43,8 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
  *       mt_latest} — a maven property several artifacts read decided once, at a version every one
  *       of them has published (qits-1206) — and what is left after the fold's own {@code hold:}
  *       list is the change list.
- *       Nothing behind is FRESH with no run — the loop's terminator, as estate pins' is: the
- *       re-fold this kind's own commit causes is planned again and finds nothing.
+ *       Nothing behind is FRESH with no run, a re-run's included — the loop's terminator, as estate
+ *       pins' is: the re-fold this kind's own commit causes is planned again and finds nothing.
  *   <li><b>Writes</b> through the shared core's {@code automations/dependency-bump.yml}: the payload
  *       carries {@code changes} in exactly the {@code MaintenanceBump} entry shape ({@link Change})
  *       and {@code commitPaths}, the manifests those changes touch.
@@ -206,6 +206,16 @@ public class DependencyBumpAutomation implements ReleaseRequestAutomation {
   @Override
   public Target target() {
     return Target.OWN_BRANCH;
+  }
+
+  /**
+   * The re-run door plans this kind too (qits-1766): its plan IS its change list, and a run sent
+   * with none is refused by qits-ci's {@code dependency-bump.yml} — which turned the request
+   * REJECTED rather than reading FRESH.
+   */
+  @Override
+  public boolean planIsTheChangeList() {
+    return true;
   }
 
   @Override
