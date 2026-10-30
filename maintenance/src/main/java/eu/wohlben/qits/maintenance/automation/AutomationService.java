@@ -25,6 +25,7 @@ import eu.wohlben.qits.maintenance.error.NoSuchRepositoryException;
 import eu.wohlben.qits.maintenance.error.ReleaseRequestNotOpenException;
 import eu.wohlben.qits.maintenance.githost.FileLookup;
 import eu.wohlben.qits.maintenance.githost.GitHostReader;
+import eu.wohlben.qits.maintenance.githost.GitHostRefs;
 import eu.wohlben.qits.maintenance.githost.TreeLookup;
 import eu.wohlben.qits.maintenance.model.BumpMode;
 import eu.wohlben.qits.maintenance.model.BumpStatus;
@@ -230,6 +231,9 @@ public class AutomationService {
   @Inject CiClient ci;
 
   @Inject GitHostReader gitHost;
+
+  /** The one ref write: recutting a stale own branch (qits-1764). */
+  @Inject GitHostRefs refs;
 
   @Inject QaChecks qaChecks;
 
@@ -1403,7 +1407,11 @@ public class AutomationService {
           row.branch, start.message());
       return;
     }
-    store.bumpStartHead(row.id, start.found() ? start.headSha() : null);
+    String startHead = start.found() ? start.headSha() : null;
+    if (startHead != null && recut(row, repository, startHead)) {
+      startHead = null;
+    }
+    store.bumpStartHead(row.id, startHead);
     AutomationSubject subject =
         subject(
             repository, row.releaseRequestId, row.foldSha, List.of(), row.workItem, baseRef,
@@ -1437,6 +1445,51 @@ public class AutomationService {
             row.workItem,
             extras);
     dispatched(row, result);
+  }
+
+  /**
+   * <b>A stale own branch is recut, not fast-forwarded</b> (qits-1764): whether the branch at
+   * {@code head} was deleted so the run starts it afresh on {@code row.foldSha}.
+   *
+   * <p>The core commits onto the fold and pushes plainly, never forced, so a branch whose tip does
+   * not descend from the fold refuses that push ("the fold no longer contains it"). That is the
+   * branch qits-projects left behind when it DROPPED it from the request — a person's source was
+   * moved out, the request refolded from main and the sources that remain, and the old tip still
+   * stands on the fold that carried the moved-out source. Nothing of it reaches the request any
+   * more, so deleting it loses nothing.
+   *
+   * <p><b>Only on two facts, both read</b>: the fold does not contain the head, and the request no
+   * longer names the branch as a source. A branch still joined is never touched — a run sent just
+   * before its join's refold would otherwise throw away the commit the request is folding. Either
+   * answer unreadable, or a delete the git host refuses, keeps today's behaviour: the head stays the
+   * start, and the worst that can happen is the refused push this used to end in. The containment
+   * read comes first, so the ordinary own branch — inside its own fold — costs no request read.
+   */
+  private boolean recut(MtBump row, MtRepository repository, String head) {
+    if (repository.catalogId == null || repository.catalogId.isBlank()) {
+      return false;
+    }
+    GitHostReader.Containment contained = gitHost.contains(repository.catalogId, head, row.foldSha);
+    if (!contained.readable() || contained.contains()) {
+      return false;
+    }
+    ReleaseRequestClient.ReleaseState request =
+        releases.state(repository.catalogId, row.releaseRequestId);
+    if (!request.readable() || request.branches().contains(row.branch)) {
+      return false;
+    }
+    GitHostRefs.Deletion deletion =
+        refs.delete(repository.catalogId, repository.project, repository.name, row.branch);
+    if (deletion.outcome() == GitHostRefs.Deleted.FAILED) {
+      LOG.warnf("The automation %s keeps the stale head %s of %s: %s", row.id, abbreviate(head),
+          row.branch, deletion.message());
+      return false;
+    }
+    LOG.infof(
+        "Recutting %s for release request %s: its head %s is not in fold %s and the request no"
+            + " longer joins it",
+        row.branch, requestName(row), abbreviate(head), abbreviate(row.foldSha));
+    return true;
   }
 
   /**

@@ -19,8 +19,9 @@ import java.util.List;
  * {@code /git/…} routes, and every commit is a CI step's. A delete needs no clone and no step: it is
  * {@code DELETE /githost/api/repositories/{repoId}/branches/{name}}, which the git host admits for
  * {@code qits:system} — the role {@link PeerClient} presents — and announces as {@code
- * SCMDeleteBranch} like a push would. Its only caller is {@code AutomationBranchSweep}, which only
- * ever names a {@code maintenance/automations/} branch.
+ * SCMDeleteBranch} like a push would. Its callers are {@code AutomationBranchSweep} and the
+ * own-branch dispatch's recut of a branch its request dropped (qits-1764), and both only ever name
+ * a {@code maintenance/automations/} branch.
  *
  * <p>{@code repoId} is {@code mt_repository.catalog_id}: qits-projects' row id, which is also the git
  * host's storage key.
