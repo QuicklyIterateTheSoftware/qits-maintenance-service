@@ -787,9 +787,12 @@ qits-ci a3ecce2 made its read-only run and repository routes take `qits:system`.
 needs beyond the orchestrator's is one claim, `project = *`, because qits-ci's trigger demands every
 project. See README's "Rollout needs".
 
-`quarkus.oidc.tenant-enabled=${qits.auth.machine.required:false}` — validation follows the rollout
-gate rather than standing on its own, so with the gate off there is no OIDC tenant, nothing fetches
-a JWKS, and a clone-alone build needs no issuer. There is no third state.
+`qits.auth.machine.required=true` and `quarkus.oidc.tenant-enabled=true` ship as a PAIR of literals
+(qits-765: a deployment no longer supplies `QITS_AUTH_MACHINE_REQUIRED`), with `%dev.`/`%test.`
+turning both off — validation follows the rollout gate rather than standing on its own, so with the
+gate off there is no OIDC tenant, nothing fetches a JWKS, and a clone-alone build needs no issuer.
+There is no third state. A packaged IT runs in normal mode, so `PackagedSurfaceIT` turns the pair
+off by hand and `StoryProfile` turns it back on.
 
 **ONE AUDIENCE AND IT IS A LITERAL**: `quarkus.oidc.token.audience=qits-platform`. qits-idp
 stamps that value onto every token it mints whatever the client asked for, so the tenant admits

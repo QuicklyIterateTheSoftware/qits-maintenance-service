@@ -38,12 +38,12 @@ import org.junit.jupiter.api.TestMethodOrder;
  * The whole service as it is <b>packaged</b> — like {@link PackagedSurfaceIT} beside it, but with
  * the OIDC tenant <b>on</b>, which no {@code @QuarkusTest} here can prove.
  *
- * <p>The shipped tenant is {@code quarkus.oidc.tenant-enabled=${qits.auth.machine.required:false}},
- * and <b>no other suite in this repository turns that gate on at all</b> — the test
- * application.properties says so in as many words ("the OIDC tenant is disabled because
- * qits.auth.machine.required defaults false"), which is what keeps a clone-alone {@code ./mvnw
- * verify} free of an issuer. The consequence is that the entire shipped {@code quarkus.oidc.*}
- * block — auth-server-url with {@code discovery-enabled=false} and {@code jwks-path=jwks} joined
+ * <p>The shipped tenant is ON in normal mode ({@code qits.auth.machine.required=true} and {@code
+ * quarkus.oidc.tenant-enabled=true}, off as a pair under {@code %dev}/{@code %test}), and <b>no other
+ * suite in this repository turns that gate on at all</b> — the @QuarkusTest suites run under {@code
+ * %test} and {@link PackagedSurfaceIT} turns the pair off by hand, which is what keeps a clone-alone
+ * {@code ./mvnw verify} free of an issuer. The consequence is that the entire shipped {@code
+ * quarkus.oidc.*} block — auth-server-url with {@code discovery-enabled=false} and {@code jwks-path=jwks} joined
  * onto it, the boot-time fetch that {@code connection-delay} retries, audience enforcement,
  * groups→roles mapping — is exercised NOWHERE else. This is the one place it runs. The far side is
  * {@link MockIdp}, whose recordings make the interaction assertable on <b>both ends</b>.

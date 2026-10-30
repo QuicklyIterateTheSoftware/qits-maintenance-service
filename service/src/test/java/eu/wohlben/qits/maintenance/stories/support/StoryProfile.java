@@ -49,10 +49,11 @@ import java.util.Map;
  *       Three of the eight are one stand-in behind three prefixes and two more behind two, exactly
  *       as {@code qits-artifacts} and {@code qits-platform-mirror} really mount them — which is what
  *       keeps a maven lookup from being answerable by the mirror's route.
- *   <li><b>{@code qits.auth.machine.required}</b> — THE GATE. The shipped tenant is
- *       {@code quarkus.oidc.tenant-enabled=${qits.auth.machine.required:false}}, so this one key is
+ *   <li><b>{@code qits.auth.machine.required}</b> and {@code quarkus.oidc.tenant-enabled} — THE
+ *       GATE, as a pair. Both ship ON in normal mode, but {@link PackagedSurfaceIT.PackagedUnderTarget}
+ *       turns both off for a run with no idp, so this profile turns both back on: together they are
  *       the difference between a service that validates machine bearers and one that does not, and
- *       no other suite in this repository turns it on at all. No audience travels with it any more:
+ *       no other suite in this repository turns them on at all. No audience travels with it any more:
  *       qits-auth-core's {@code MachineAuth} ships its own
  *       {@code qits.auth.machine.platform-audience=qits-platform} default.
  *   <li><b>{@code quarkus.oidc.auth-server-url}</b> — where the idp is. Discovery stays off and
@@ -197,6 +198,7 @@ public class StoryProfile extends PackagedSurfaceIT.PackagedUnderTarget {
     // first pass five minutes after boot — and is no more of a concern here than that sweep is.
 
     overrides.put("qits.auth.machine.required", "true");
+    overrides.put("quarkus.oidc.tenant-enabled", "true");
     // No audience override needed beside it: qits-auth-core's MachineAuth now ships its own
     // qits.auth.machine.platform-audience=qits-platform default, the same platform audience
     // quarkus.oidc.token.audience enforces as a literal over there, so there is nothing left to

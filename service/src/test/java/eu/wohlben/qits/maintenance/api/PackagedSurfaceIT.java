@@ -129,6 +129,11 @@ public class PackagedSurfaceIT {
           // datasource above is opened and migrated either way, which is why the triple is not
           // optional.
           Map.entry("qits.eventstream.enabled", "false"),
+          // The machine gate and the OIDC tenant ship ON in normal mode (qits-765), and there is no
+          // idp on the far side of this IT — so both are turned off here by hand, as a pair, the same
+          // way the bus is. TokenValidationBootstrapIT's StoryProfile turns both back on.
+          Map.entry("qits.auth.machine.required", "false"),
+          Map.entry("quarkus.oidc.tenant-enabled", "false"),
           Map.entry("qits.maintenance.targets.projects-url", dead),
           Map.entry("qits.maintenance.targets.githost-url", dead),
           Map.entry("qits.maintenance.targets.ci-url", dead),
