@@ -292,7 +292,7 @@ to the pool, and a settle that fails within the budget rethrows its own exceptio
 
 **THE PRE-RUN HAS TWO STAGES (qits-1133), AND `dependency-bump` IS THE FOURTH KIND.** Every kind
 says its `Stage`: SOURCE (`estate-pins`, `dependency-bump` — build inputs) is settled first, DERIVED
-(`screenshot-baselines`, `entity-diagram` — built from those inputs) is neither planned nor stored
+(`screenshot-baselines`, `entity-diagram`, qits-881's `cli-tapes` — built from those inputs) is neither planned nor stored
 until every applicable SOURCE kind is FRESH at the fold, and answers WAITING until then. Carry-over is
 per stage: a DERIVED kind's union is its own stage's paths, so a SOURCE commit (a pom the bump moved)
 re-runs it, and a kind that declares `inputPaths()` (`entity-diagram`: `**/*.java`, `**/pom.xml`;
@@ -320,8 +320,9 @@ ledger row is written — not off `latestMoved`, which fires before it, and the 
 repository's project is re-planned through `AutomationService.replan`, past its stored per-fold
 FRESH (`EstatePinsUpstreamReplanTest`).
 
-**KINDS QA CHECKS ARE DEFERRED (qits-1180).** `entity-diagram` and `screenshot-baselines` say
-`checkedByQa()`. Where the repository's QA names them under `check-outputs:` at the fold (`QaChecks`, qits-1178:
+**KINDS QA CHECKS ARE DEFERRED (qits-1180).** `entity-diagram`, `screenshot-baselines` and
+qits-881's `cli-tapes` say `checkedByQa()`. Where the repository's QA names them under
+`check-outputs:` at the fold (`QaChecks`, qits-1178:
 its `release.yml` slot, else its own recipe copy, else qits-ci's packaged recipe; in doubt, no) and the trigger
 `accepts` DEFERRED, they are not planned or run: answered DEFERRED, never
 stored, unless the previous fold's outcome carries over (then FRESH, as today). Applicability is still

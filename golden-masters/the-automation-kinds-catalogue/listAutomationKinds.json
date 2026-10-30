@@ -1,6 +1,18 @@
 {
   "kinds": [
     {
+      "kind": "cli-tapes",
+      "label": "CLI tapes",
+      "committablePaths": [
+        ":(glob)tapes/golden/**",
+        ":(glob)tapes/recordings/**"
+      ],
+      "approvalRoles": [
+        "agent",
+        "person"
+      ]
+    },
+    {
       "kind": "dependency-bump",
       "label": "Dependency bump",
       "committablePaths": [

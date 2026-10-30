@@ -31,6 +31,7 @@ class AutomationKindsApiTest {
         .then()
         .statusCode(200)
         .body("kinds.kind", contains(
+                "cli-tapes",
                 "dependency-bump",
                 "entity-diagram",
                 "estate-pins",
@@ -46,6 +47,12 @@ class AutomationKindsApiTest {
             contains("agent", "person"))
         .body(
             "kinds.find { it.kind == 'entity-diagram' }.approvalRoles", contains("agent", "person"))
+        .body("kinds.find { it.kind == 'cli-tapes' }.label", org.hamcrest.Matchers.is("CLI tapes"))
+        .body(
+            "kinds.find { it.kind == 'cli-tapes' }.committablePaths",
+            contains(":(glob)tapes/golden/**", ":(glob)tapes/recordings/**"))
+        .body(
+            "kinds.find { it.kind == 'cli-tapes' }.approvalRoles", contains("agent", "person"))
         .body("kinds.find { it.kind == 'estate-pins' }.approvalRoles", empty())
         .body("kinds.find { it.kind == 'dependency-bump' }.approvalRoles", empty())
         .body(

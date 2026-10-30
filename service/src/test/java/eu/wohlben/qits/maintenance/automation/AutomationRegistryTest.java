@@ -145,18 +145,19 @@ class AutomationRegistryTest {
 
   /**
    * <b>Every kind declares the approval roles epic qits-1038 decided</b> (qits-1045):
-   * {@code screenshot-baselines} and {@code entity-diagram} admit an agent or a person —
-   * generated content a release request would otherwise ship unreviewed — and {@code estate-pins}
-   * and {@code dependency-bump}, which move internal pins only and are already gated by CI, admit
-   * nobody — nor do qits-1516's two {@code golden-recordings-*} kinds, whose re-recorded pacts the
-   * gate re-checks and the providers verify.
+   * {@code screenshot-baselines}, {@code entity-diagram} and qits-881's {@code cli-tapes} admit an
+   * agent or a person — generated content a release request would otherwise ship unreviewed — and
+   * {@code estate-pins} and {@code dependency-bump}, which move internal pins only and are already
+   * gated by CI, admit nobody — nor do qits-1516's two {@code golden-recordings-*} kinds, whose
+   * re-recorded pacts the gate re-checks and the providers verify.
    */
   @Test
   void everyKindDeclaresItsApprovalRoles() {
     for (ReleaseRequestAutomation kind : automations.kinds()) {
       Set<String> expected =
           switch (kind.kind()) {
-            case ScreenshotBaselinesAutomation.KIND, EntityDiagramAutomation.KIND ->
+            case ScreenshotBaselinesAutomation.KIND, EntityDiagramAutomation.KIND,
+                CliTapesAutomation.KIND ->
                 Set.of("agent", "person");
             case EstatePinsAutomation.KIND,
                 DependencyBumpAutomation.KIND,
