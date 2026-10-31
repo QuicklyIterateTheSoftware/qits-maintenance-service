@@ -82,7 +82,7 @@
              eu.wohlben.qits:<consumer>-pacts-qits-maintenance-service, and
              service/.../contracts/ConsumerPactVerificationTest verifies every one pinned here.
              Test scope; qits-maintenance bumps it when the consumer releases a changed pact. -->
-        <qits.projects-service-pacts-qits-maintenance-service.version>2026.1022.215818</qits.projects-service-pacts-qits-maintenance-service.version>
+        <qits.projects-service-pacts-qits-maintenance-service.version>2026.1031.33239</qits.projects-service-pacts-qits-maintenance-service.version>
         <qits.artifacts-service-pacts-qits-maintenance-service.version>2026.1018.153037</qits.artifacts-service-pacts-qits-maintenance-service.version>
         <qits.orchestrator-service-pacts-qits-maintenance-service.version>2026.1018.172917</qits.orchestrator-service-pacts-qits-maintenance-service.version>
         <qits.platform-access-cli-pacts-qits-maintenance-service.version>2026.1019.65035</qits.platform-access-cli-pacts-qits-maintenance-service.version>
