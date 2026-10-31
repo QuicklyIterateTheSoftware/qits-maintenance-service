@@ -531,6 +531,12 @@ GET  /pins                                        → {generatedAt,
                                                                     the deployer did not answer, or a
                                                                     deployed release of ours has no
                                                                     ledger row
+GET  /deployed-pacts?provider=<repository>         → {provider,
+                                                     pacts:[{consumerRepository, groupId,
+                                                             artifactId, pactVersion,
+                                                             deployedVersions:[…]}]}
+                                                                400 no provider
+                                                                503 the deployer did not answer
 GET  /artifacts                                   → [{ecosystem, name, repository, latest, version,
                                                       occurredAt, sbomStatus, dependentCount,
                                                       behindCount}]
@@ -666,6 +672,16 @@ POST /sbom-check/runs                             → 202 the report above, once
   `refs/tags/<version>` on the work queue and records it through `ReleaseLedger.record`, so a later
   GC run is answered. One attempt per pair per window (in flight: none; tag not held: 6 h; git host
   unreachable: 15 min); a tag the git host does not hold stays a 503 that says it needs a person.
+- **`/deployed-pacts` is a provider release gate's list of consumer pacts to verify** (qits-1765),
+  read by a CI step and the one route that also takes `qits:ci-run`. For every
+  `eu.wohlben.qits:<consumer>-pacts-<provider>` maven row in `mt_artifact`, each deployed or
+  rollback version of an application the consumer produces (`control/DeployedVersions` through
+  `ArtifactGraph.applicationProducers`, as `/pins` joins them) takes the NEWEST pact version at or
+  below it — pacts are published only when they change — compared numerically per calver segment
+  (`bump/Calver`). A version with no pact at or below it, or a commit sha, names none. One row per
+  (consumer, pact version), ordered by both; `deployedVersions` newest first. A provider with no
+  pact rows answers an empty list without asking the deployer; otherwise the deployer's silence is
+  a 503, as on `/pins`. The logic is `control/DeployedPacts`.
 - **The docker rows include the images a pom pins WITHOUT SPELLING THEM OUT, and `via` is how you
   tell.** Container image versions are maven pins now — qits-workspaces pins
   `qits-workspace-daemon-protocol` and `qits-workspace-editor-image`, qits-projects pins

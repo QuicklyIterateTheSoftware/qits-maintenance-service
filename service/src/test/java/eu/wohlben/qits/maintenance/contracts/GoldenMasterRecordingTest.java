@@ -215,6 +215,14 @@ class GoldenMasterRecordingTest {
               "listAutomationKinds",
               "/maintenance/api/automations/kinds",
               Map.of(),
+              null),
+          // The CLI's provider release gate (qits-1765): which consumer pact versions the
+          // deployed and rollback versions of each consumer were built against.
+          Interaction.read(
+              ProviderStates.A_PROVIDER_WHOSE_DEPLOYED_CONSUMERS_PUBLISH_PACTS,
+              "listDeployedPacts",
+              "/maintenance/api/deployed-pacts",
+              Map.of("provider", "{provider}"),
               null));
 
   private static final ObjectMapper JSON = new ObjectMapper();

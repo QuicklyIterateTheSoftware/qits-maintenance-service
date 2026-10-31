@@ -296,6 +296,30 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/DependentDto"
+    DeployedPactDto:
+      type: object
+      properties:
+        consumerRepository:
+          type: string
+        groupId:
+          type: string
+        artifactId:
+          type: string
+        pactVersion:
+          type: string
+        deployedVersions:
+          type: array
+          items:
+            type: string
+    DeployedPactsDto:
+      type: object
+      properties:
+        provider:
+          type: string
+        pacts:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeployedPactDto"
     DownstreamDto:
       type: object
       properties:
@@ -1017,6 +1041,42 @@ paths:
         - qits:desk
         - qits:system
         - qits:agent
+  /maintenance/api/deployed-pacts:
+    get:
+      summary: The consumer pact versions a provider's deployed consumers were built
+        against
+      operationId: listDeployedPacts
+      parameters:
+      - name: provider
+        in: query
+        schema:
+          type: string
+      responses:
+        "200":
+          description: The pacts; empty for an unknown provider
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeployedPactsDto"
+        "400":
+          description: No provider named
+        "503":
+          description: The deployed versions could not be read from qits-deployments
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      tags:
+      - Deployed Pacts Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+        - qits:admin-agent
+        - qits:desk-admin
+        - qits:desk
+        - qits:system
+        - qits:agent
+        - qits:ci-run
   /maintenance/api/pins:
     get:
       summary: Every internal artifact version the platform's manifests still pin

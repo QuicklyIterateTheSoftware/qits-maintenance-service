@@ -3,6 +3,32 @@
   "provider": "qits-maintenance",
   "states": [
     {
+      "name": "a provider whose deployed consumers publish pacts",
+      "slug": "a-provider-whose-deployed-consumers-publish-pacts",
+      "params": {
+        "provider": "contract-provider-service"
+      },
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "listDeployedPacts",
+          "method": "GET",
+          "path": "/maintenance/api/deployed-pacts",
+          "query": {
+            "provider": "{provider}"
+          },
+          "status": 200,
+          "file": "a-provider-whose-deployed-consumers-publish-pacts/listDeployedPacts.json",
+          "frozen": {
+            "ids": [],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
       "name": "a release request with a failed automation",
       "slug": "a-release-request-with-a-failed-automation",
       "params": {

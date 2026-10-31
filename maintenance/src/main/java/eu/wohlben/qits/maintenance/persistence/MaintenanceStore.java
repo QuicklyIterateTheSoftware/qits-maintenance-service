@@ -2700,6 +2700,35 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
                 .list());
   }
 
+  /**
+   * EVERY released version of every artifact of one ecosystem whose name ends with {@code suffix} —
+   * what {@code control/DeployedPacts} reads a provider's consumer pacts from.
+   *
+   * <p><b>Every version, not the newest per name</b>, which is what sets it apart from {@link
+   * #newestArtifactPerName}: a pact is published only when it changes, so the version a deployed
+   * consumer was built against is usually an older row than the newest.
+   *
+   * <p>The {@code like} is a narrowing and the {@code endsWith} the decision: {@code _} in a
+   * suffix is a LIKE wildcard, and a looser match must never reach the caller.
+   */
+  @ActivateRequestContext
+  public List<MtArtifact> artifactsNamedWithSuffix(Ecosystem ecosystem, String suffix) {
+    if (suffix == null || suffix.isEmpty()) {
+      return List.of();
+    }
+    return DbRetry.inNewTx(
+        "read every version of the artifacts named *" + suffix,
+        () ->
+            MtArtifact.<MtArtifact>find(
+                    "ecosystem = ?1 and name like ?2",
+                    Sort.by("name").and("version"),
+                    ecosystem.wireName(),
+                    "%" + suffix)
+                .stream()
+                .filter(row -> row.name != null && row.name.endsWith(suffix))
+                .toList());
+  }
+
   /** Everything one artifact's document listed. */
   @ActivateRequestContext
   public List<MtArtifactComponent> components(UUID artifactId) {

@@ -74,6 +74,8 @@ public class ProviderStates {
   public static final String A_RELEASE_REQUEST_WITH_AN_AUTOMATION_TO_RERUN_FOR_A_WORK_ITEM =
       "a release request with an automation to re-run for a work item";
   public static final String THE_AUTOMATION_KINDS_CATALOGUE = "the automation kinds catalogue";
+  public static final String A_PROVIDER_WHOSE_DEPLOYED_CONSUMERS_PUBLISH_PACTS =
+      "a provider whose deployed consumers publish pacts";
 
   /** The work item the CLI's {@code qits maintenance automation run --work-item} names. */
   static final String WORK_ITEM = "qits-112";
@@ -131,6 +133,8 @@ public class ProviderStates {
         A_RELEASE_REQUEST_WITH_AN_AUTOMATION_TO_RERUN_FOR_A_WORK_ITEM,
         this::releaseRequestToRerunForAWorkItem);
     states.put(THE_AUTOMATION_KINDS_CATALOGUE, ProviderStates::automationKindsCatalogue);
+    states.put(
+        A_PROVIDER_WHOSE_DEPLOYED_CONSUMERS_PUBLISH_PACTS, this::deployedConsumersPublishingPacts);
   }
 
   /** Every state name this provider answers for. */
@@ -428,6 +432,37 @@ public class ProviderStates {
     Map<String, String> params = new TreeMap<>();
     params.put("repoName", library);
     params.put("repositoryId", libraryId);
+    return new Setup(params, List.of());
+  }
+
+  /**
+   * One consumer, {@code contract-service}, publishing its pact against {@code
+   * contract-provider-service} at two sparse versions, and qits-deployments serving it at three:
+   * two built after the older pact, one after the newer. {@code listDeployedPacts} answers two
+   * rows, the older naming two deployed versions (qits-1765). The pact rows go in the store and the
+   * deployer's answer in the scripted peers, both emptied by {@link #cleanUp()}.
+   */
+  private Setup deployedConsumersPublishingPacts() {
+    emptyEstate();
+    String provider = "contract-provider-service";
+    store.upsertArtifact(
+        Ecosystem.DOCKER, "qits/contract-service", "2026.1030.204903", REPOSITORY, SCANNED);
+    for (String version : List.of("2026.1028.235307", "2026.1030.200000")) {
+      store.upsertArtifact(
+          Ecosystem.MAVEN,
+          "eu.wohlben.qits:" + REPOSITORY + "-pacts-" + provider,
+          version,
+          REPOSITORY,
+          SCANNED);
+    }
+    peers.answer(
+        PeerTarget.DEPLOYMENTS,
+        "/deployments/api/pins",
+        FakePeers.Scripted.ok(
+            "{\"pins\":[{\"applicationName\":\"contract-service\",\"shas\":"
+                + "[\"2026.1030.204903\",\"2026.1030.192107\",\"2026.1029.90000\"]}]}"));
+    Map<String, String> params = new TreeMap<>();
+    params.put("provider", provider);
     return new Setup(params, List.of());
   }
 
