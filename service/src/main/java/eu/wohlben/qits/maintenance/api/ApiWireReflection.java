@@ -13,6 +13,7 @@ import eu.wohlben.qits.maintenance.dto.DependentsDto;
 import eu.wohlben.qits.maintenance.dto.FailureDto;
 import eu.wohlben.qits.maintenance.dto.GroupDto;
 import eu.wohlben.qits.maintenance.dto.PinDto;
+import eu.wohlben.qits.maintenance.dto.DeployedPactsDto;
 import eu.wohlben.qits.maintenance.dto.PinSourceDto;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto;
 import eu.wohlben.qits.maintenance.dto.RepositoryDependentsDto;
@@ -80,6 +81,10 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
       PinSourceDto.class,
       PinSourceDto.RepositoryStateDto.class,
       PinSourceDto.ArtifactPinDto.class,
+      // The consumer pacts a provider's gate verifies (qits-1765); read by `qits artifacts fetch
+      // deployed-pacts` in CI, where a 500 fails every provider's release.
+      DeployedPactsDto.class,
+      DeployedPactsDto.DeployedPactDto.class,
       // BumpDto grew `releaseRequestId` with the release door, and the bump detail page reads it.
       BumpDto.class,
       PendingBumpsDto.class,
