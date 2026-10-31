@@ -371,8 +371,9 @@ HELD when it has any open release request (its pre-run carries the bump, and `Up
 re-plans it) or when the main-only request this service last opened for the exact same pending set
 is on its way, shipped, or was withdrawn by its own pre-run. A person's withdrawal frees it; an
 unreadable answer holds. Gates in order: `bump.enabled`, `bump.internal.auto`, the dependency-bump
-switch; nothing owed; `bump.dispatch.quiet-hours`; qits-ci's free slots (`slots - active - our
-REQUESTED rows`, an unreadable snapshot is busy — qits-882); then `BumpOrder.nextUpTo`, bottom of the
+switch; nothing owed; `bump.dispatch.quiet-hours`; the CI room (qits-1769: qits-system's connected,
+unquarantined targets' free CI slots by its `SlotAllocator` rule, minus qits-ci's `queued` runs and
+our REQUESTED rows; either read unreadable is busy, no target able to host CI is NO_SLOTS); then `BumpOrder.nextUpTo`, bottom of the
 chain first and least-recently-dispatched first (`MaintenanceStore.lastDispatchedAt`, the newest
 MAIN_ONLY `opened_at`, so the alphabet is never the tiebreak) — except that a repository owed a
 RE-OFFER (`mt_repository.reoffer_owed_at`, V28, qits-1578) sorts before every unmarked one. The mark

@@ -198,9 +198,9 @@ public final class BumpOrder {
    * is waiting on the other, and sending both in one tick costs nothing the ordering exists to
    * prevent. That is what makes a batch safe here and is the whole of qits-882 — the dispatcher used
    * to hand out one per tick only when qits-ci was idle, while eight slots sat seven-free. <b>{@code
-   * n} is {@link BumpDispatcher}'s configured cap minus what is already using it</b> (epic
-   * qits-1481: qits-ci stopped reporting a slot count of its own to read {@code n} off, so it is
-   * configured — {@code qits.maintenance.bump.ci-active-cap} — rather than read).
+   * n} is {@link BumpDispatcher}'s free CI room</b>: the CI leases qits-system's connected,
+   * unquarantined targets would grant now, minus what qits-ci holds queued and this service's own
+   * requested rows (qits-1769; between epic qits-1481 and then it was a configured cap).
    *
    * <p><b>The cycle rule is never multiplied, and since qits-1696 it is never starved either.</b>
    * The READY candidates are taken first, up to {@code n}. If that leaves room, ONE more pick may

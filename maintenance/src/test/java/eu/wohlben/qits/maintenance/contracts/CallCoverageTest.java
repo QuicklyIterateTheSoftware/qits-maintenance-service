@@ -83,6 +83,7 @@ class CallCoverageTest {
       case GITHOST -> GitHostContract.GITHOST.repository();
       case CI -> CiContract.CI.repository();
       case DEPLOYMENTS -> DeploymentsContract.DEPLOYMENTS.repository();
+      case SYSTEM -> SystemContract.SYSTEM.repository();
       case MAVEN_REGISTRY, NPM_REGISTRY, OCI_REGISTRY, ARTIFACTS_SBOM, ARTIFACTS_DOCS ->
           ArtifactsContract.ARTIFACTS.repository();
       case MAVEN_MIRROR, NPM_MIRROR -> MirrorContract.MIRROR.repository();

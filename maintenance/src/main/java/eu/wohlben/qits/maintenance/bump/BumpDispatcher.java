@@ -37,7 +37,7 @@ import org.jboss.logging.Logger;
 
 /**
  * A MAIN-ONLY RELEASE REQUEST FOR EVERY REPOSITORY OWED A BUMP AND WITHOUT ONE — as many at a time
- * as qits-ci has room for, and always from the bottom of the chain.
+ * as the estate's targets have CI room for, and always from the bottom of the chain.
  *
  * <h2>What it does</h2>
  *
@@ -56,21 +56,23 @@ import org.jboss.logging.Logger;
  * are kept, because a main-only request is still a CI build: the capacity gate, bottom of the chain
  * first, least recently dispatched first, the quiet hours and the refusal set.
  *
- * <h2>The capacity gate is CONFIGURED again, not read (epic qits-1481)</h2>
+ * <h2>The capacity gate is READ from qits-system (qits-1769)</h2>
  *
- * <p><b>Behaviour change: qits-882's free slots were read off qits-ci's connected, unquarantined
- * runners, and qits-ci no longer has any to report.</b> A CI run is a lease now, and how many run at
- * once is qits-system's {@code SlotAllocator} to grant against every target's minimums — a fact
- * qits-ci itself does not hold any more, so {@code GET /ci/api/runs/queue} lost {@code runners}
- * (only {@code running} and {@code queued} are left, see {@link CiClient#queue()}). Reading no
- * capacity is not the same as having none to ration by: this service still must not flood a
- * resource-restricted platform with main-only requests, so {@link
- * MaintenanceConfig#bumpCiActiveCap()} replaces the read number with a configured one (default 4).
- * {@code free = max(0, cap - ciActive - requested)} — qits-ci's running-plus-queued count, minus
- * this service's own automation rows it has not accepted yet (a {@code REQUESTED} row is in no
- * listing qits-ci answers, and counting it twice would hide room that is not really free). An
- * unreadable snapshot still counts as BUSY, and a cap of zero still means nothing is ever free
- * (the old {@code NO_SLOTS} wording now says the cap itself, not a missing runner).
+ * <p>qits-882 read free slots off qits-ci's runners; epic qits-1481 made a CI run a lease, so qits-ci
+ * has none to report, and for a while a configured cap of 4 stood in, measured against qits-ci's
+ * running-plus-queued count for EVERY run on the platform. That count sat at or above 4 most of the
+ * day, so the gate read busy while real slots were free (2026-10-31: 8 active against the cap,
+ * nothing queued, and target {@code workstation} had 2 of its 6 slots free for CI). The room is now
+ * read where the leases are granted: {@link SystemClient#targets()}, one read of {@code GET
+ * /system/api/targets}. Per connected, unquarantined target, {@link SystemClient.Target#freeCi()} is
+ * how many more CI leases qits-system's {@code SlotAllocator.fits} would grant there — {@code T −
+ * n_total − Σ_{u≠ci} max(0, r[u] − n[u])}, or {@code T − n_total} when {@code Σ r > T} and the
+ * reservations are ignored, floored at zero. Then {@code free = max(0, Σ free_t − ciQueued −
+ * requested)}: the runs qits-ci already holds QUEUED claim that room first, and so does each of this
+ * service's own automation rows it has not accepted yet (a {@code REQUESTED} row is in no listing
+ * either peer answers). A RUNNING run is not subtracted — its lease is in a target's {@code used}
+ * already. Either read unreadable is {@code CI_UNREADABLE}; no eligible target able to host CI at all
+ * is {@code NO_SLOTS}; no room is {@code CI_BUSY}. There is no setting left to tune.
  *
  * <h2>The gates, in the order they are asked</h2>
  *
@@ -86,10 +88,11 @@ import org.jboss.logging.Logger;
  *       judged by a step that was itself broken must not hold forever (qits-1696). A person's
  *       withdrawal frees it. An unreadable answer holds, as every read here does.
  *   <li><b>Is this a quiet hour</b> ({@link MaintenanceConfig#bumpQuietHours()}). Empty by default.
- *   <li><b>How much of the configured cap is free</b> — {@link CiClient#queue()}, one read of {@code
- *       GET /ci/api/runs/queue}, and an unreadable snapshot counts as BUSY. {@code free = cap -
- *       active - requested}, floored at zero; a cap of zero is {@code NO_SLOTS} rather than {@code
- *       CI_BUSY} — nothing this service sends is ever allowed to run.
+ *   <li><b>How much CI room the estate has</b> (qits-1769) — {@link SystemClient#targets()} and
+ *       {@link CiClient#queue()}, and either unreadable is {@code CI_UNREADABLE}. {@code free = Σ
+ *       free_t − ciQueued − requested} over the connected, unquarantined targets, floored at zero
+ *       (see above); no such target able to host a CI lease at all is {@code NO_SLOTS} rather than
+ *       {@code CI_BUSY}.
  *   <li><b>Which owed repositories are READY</b> — up to {@code free} of them, from {@link
  *       BumpOrder#nextUpTo}: an upstream that is itself owed goes before its consumer, and never more
  *       than one cycle break per tick — made with whatever room the READY ones left, so a knot is
@@ -129,8 +132,8 @@ import org.jboss.logging.Logger;
  * <p><b>Except a repository owed a RE-OFFER, which goes before all of them</b> (qits-1578). When a
  * {@code dependency-bump} ends SUPERSEDED because its release request closed before the bump could
  * land, {@code mt_repository.reoffer_owed_at} is set; such a repository was reached recently by
- * construction, so least-recently-dispatched alone would put it last behind the per-tick cap. The
- * mark sorts it ahead of every unmarked one (each group keeping the order above), never decides
+ * construction, so least-recently-dispatched alone would put it last, behind the tick's free room.
+ * The mark sorts it ahead of every unmarked one (each group keeping the order above), never decides
  * whether it is held, and is cleared when its main-only request is opened.
  */
 @ApplicationScoped
@@ -143,6 +146,9 @@ public class BumpDispatcher {
   @Inject MaintenanceConfig config;
 
   @Inject CiClient ci;
+
+  /** Where the CI room is read: qits-system grants the leases (qits-1769). */
+  @Inject SystemClient system;
 
   @Inject ReleaseRequestClient releases;
 
@@ -185,12 +191,12 @@ public class BumpDispatcher {
    * @param outcome the short name of the gate that answered
    * @param summary the sentence for a person
    * @param inFlight automation rows not yet ended, or null when the gate answered before asking
-   * @param cap {@link MaintenanceConfig#bumpCiActiveCap()} as asked this tick, null when it was not
-   *     asked or the queue could not be read
-   * @param free how many of the cap this tick may fill — cap minus qits-ci's active runs minus our
-   *     REQUESTED rows, floored at zero — null when it was not asked or could not be read
-   * @param ciActive what qits-ci holds, running and queued, null when it was not asked or could not
-   *     be read
+   * @param capacity how many CI leases the connected, unquarantined targets could hold at once
+   *     ({@link SystemClient.Targets#ciCapacity()}), null when it was not asked or could not be read
+   * @param free how many bumps this tick may send — the targets' free CI slots minus qits-ci's
+   *     queued runs minus our REQUESTED rows, floored at zero — null when it was not asked or could
+   *     not be read
+   * @param ciQueued the runs qits-ci holds QUEUED, null when it was not asked or could not be read
    * @param owed how many repositories are owed a bump and could still be sent one
    * @param held how many of those are held by a request already on its way
    * @param picks what would be dispatched this tick, in order — empty on every outcome but DISPATCH
@@ -199,9 +205,9 @@ public class BumpDispatcher {
       String outcome,
       String summary,
       Integer inFlight,
-      Integer cap,
+      Integer capacity,
       Integer free,
-      Integer ciActive,
+      Integer ciQueued,
       int owed,
       int held,
       List<BumpOrder.Pick> picks) {
@@ -283,9 +289,9 @@ public class BumpDispatcher {
     return new BumpStandingDto(
         decision.outcome(),
         decision.summary(),
-        decision.cap(),
+        decision.capacity(),
         decision.free(),
-        decision.ciActive(),
+        decision.ciQueued(),
         // Off the walk rather than the decision: a switch answers before the decision counts, and
         // "disabled, 0 owed" beside a listing of twelve would be the decision's bookkeeping talking.
         assessment.candidates().size(),
@@ -345,53 +351,66 @@ public class BumpDispatcher {
           List.of());
     }
 
-    // qits-ci reports no capacity of its own any more (epic qits-1481); this read is for whether it
-    // can be asked at all, and for how much of the CONFIGURED cap is already in use.
+    // The room is qits-system's to report (qits-1769); qits-ci's queue says what already waits for it.
     CiClient.QueueState queue = ci.queue();
-    if (!queue.readable()) {
-      LOG.debugf("qits-ci's queue could not be read (%s); nothing is dispatched.", queue.error());
+    SystemClient.Targets targets = system.targets();
+    if (!queue.readable() || !targets.readable()) {
+      List<String> unread = new ArrayList<>();
+      if (!targets.readable()) {
+        unread.add(targets.error());
+      }
+      if (!queue.readable()) {
+        unread.add("qits-ci's queue could not be read (" + queue.error() + ")");
+      }
+      String why = String.join("; ", unread);
+      LOG.debugf("The CI room could not be read (%s); nothing is dispatched.", why);
       return new Decision(
           "CI_UNREADABLE",
-          "qits-ci's queue could not be read (" + queue.error() + "), which counts as busy",
+          why + ", which counts as busy",
           inFlight,
           null,
           null,
-          null,
+          queue.queued(),
           candidates.size(),
           held,
           List.of());
     }
-    int cap = config.bumpCiActiveCap();
-    int ciActive = queue.active();
-    if (cap == 0) {
-      // The cap itself refuses everything: a platform that wants no automated bump traffic on CI
-      // at all, rather than qits-882's "no runner is connected".
+    int ciQueued = queue.queued();
+    int capacity = targets.ciCapacity();
+    if (capacity == 0) {
       return new Decision(
           "NO_SLOTS",
-          "qits.maintenance.bump.ci-active-cap is 0; nothing may be dispatched",
+          "no connected, unquarantined target can host a CI run ("
+              + targets.eligible().size()
+              + " of "
+              + targets.targets().size()
+              + " target(s) connected and unquarantined); nothing may be dispatched",
           inFlight,
           0,
           0,
-          ciActive,
+          ciQueued,
           candidates.size(),
           held,
           List.of());
     }
-    int free = Math.max(0, cap - ciActive - requested);
+    int poolFree = targets.freeCi();
+    int free = Math.max(0, poolFree - ciQueued - requested);
     if (free == 0) {
       return new Decision(
           "CI_BUSY",
-          "qits-ci's queue is at its cap of "
-              + cap
-              + " ("
-              + ciActive
-              + " active run(s) and "
+          "no CI slot is free for a bump: "
+              + poolFree
+              + " free CI slot(s) of "
+              + capacity
+              + ", "
+              + ciQueued
+              + " queued run(s) and "
               + requested
-              + " bump(s) waiting to reach it); nothing is free",
+              + " bump(s) waiting to reach qits-ci",
           inFlight,
-          cap,
+          capacity,
           0,
-          ciActive,
+          ciQueued,
           candidates.size(),
           held,
           List.of());
@@ -406,9 +425,9 @@ public class BumpDispatcher {
               + " owed bump(s) wait, directly or through another owed bump, on a release already on"
               + " its way",
           inFlight,
-          cap,
+          capacity,
           free,
-          ciActive,
+          ciQueued,
           candidates.size(),
           held,
           List.of());
@@ -432,12 +451,12 @@ public class BumpDispatcher {
             + " ("
             + free
             + " of "
-            + cap
-            + " free)",
+            + capacity
+            + " CI slot(s) free for bumps)",
         inFlight,
-        cap,
+        capacity,
         free,
-        ciActive,
+        ciQueued,
         candidates.size(),
         held,
         List.copyOf(picks));
@@ -683,7 +702,7 @@ public class BumpDispatcher {
       Map<String, Instant> lastDispatched = store.lastDispatchedAt();
       // OWED A RE-OFFER FIRST (qits-1578): a repository whose bump was stranded on a request that
       // closed was, by construction, reached recently — least-recently-dispatched alone would put it
-      // last behind the cap. The mark only reorders; held() above is untouched by it.
+      // last behind the free room. The mark only reorders; held() above is untouched by it.
       candidates.sort(
           Comparator.comparing(
                   (BumpOrder.Candidate candidate) -> !reofferOwed.contains(candidate.repository()))

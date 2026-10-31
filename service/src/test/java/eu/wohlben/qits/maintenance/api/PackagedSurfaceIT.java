@@ -138,6 +138,7 @@ public class PackagedSurfaceIT {
           Map.entry("qits.maintenance.targets.githost-url", dead),
           Map.entry("qits.maintenance.targets.ci-url", dead),
           Map.entry("qits.maintenance.targets.deployments-url", dead),
+          Map.entry("qits.maintenance.targets.system-url", dead),
           Map.entry("qits.maintenance.registries.maven-url", dead),
           Map.entry("qits.maintenance.registries.npm-url", dead),
           Map.entry("qits.maintenance.registries.oci-url", dead),

@@ -19,6 +19,7 @@ import eu.wohlben.qits.maintenance.bump.BumpDispatcher;
 import eu.wohlben.qits.maintenance.bump.BumpOrder;
 import eu.wohlben.qits.maintenance.bump.CiClient;
 import eu.wohlben.qits.maintenance.bump.ReleaseRequestClient;
+import eu.wohlben.qits.maintenance.bump.SystemClient;
 import eu.wohlben.qits.maintenance.entity.MtReleaseRequest;
 import eu.wohlben.qits.maintenance.latest.GitlinkSha;
 import eu.wohlben.qits.maintenance.manifest.GroupConfig;
@@ -55,14 +56,13 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * THE GATE: a main-only release request for every repository owed a bump and without one, as many
- * at a time as the configured CI cap has room for, and none when it has none.
+ * at a time as the estate's targets have CI room for, and none when they have none.
  *
  * <p>The subject here is the DISPATCH DECISION rather than the selection — which repository goes
  * first is {@code BumpOrderTest}'s, stated against a graph. What this pins is the part no unit test
- * can: that the CI queue snapshot, {@code qits.maintenance.bump.ci-active-cap} (a configured number
- * since epic qits-1481 — see {@link BumpDispatcher}'s class doc, qits-ci no longer reports one of
- * its own), the automation rows still REQUESTED and the release requests already open are actually
- * wired to the thing that opens a request. Since qits-1133 R5 that thing is a MAIN-ONLY {@code
+ * can: that qits-system's targets (the CI room, read since qits-1769 — see {@link
+ * BumpDispatcher}'s class doc), qits-ci's queued runs, the automation rows still REQUESTED and the
+ * release requests already open are actually wired to the thing that opens a request. Since qits-1133 R5 that thing is a MAIN-ONLY {@code
  * LOWEST} request, never a {@code maintenance/<group>} branch, and there is no window to open
  * first.
  *
@@ -518,52 +518,84 @@ class BumpDispatchTest {
     assertEquals(0, asks("catalog-" + repository), "no release ask was posted");
   }
 
-  // --- the capacity gate (epic qits-1481: a CONFIGURED cap, qits-ci reports no slots) ----------
+  // --- the capacity gate (qits-1769: the room is READ from qits-system's targets) --------------
+
+  /** Five READY repositories, each owed one internal bump: more than any room below. */
+  private void fiveReady() {
+    inventory.clear();
+    for (String name : List.of("qits-r1", "qits-r2", "qits-r3", "qits-r4", "qits-r5")) {
+      owes(name, "eu.wohlben.qits:" + name);
+    }
+  }
 
   /**
-   * A busy qits-ci is not handed another build, and room under the cap is what it was waiting for.
-   * The shipped cap is 4 ({@code qits.maintenance.bump.ci-active-cap}, unoverridden in this suite).
+   * <b>Reproduction (qits-1769, 2026-10-31 12:23 UTC)</b>: eight CI runs going on the platform and
+   * nothing queued — which a configured cap of four read as busy — while target {@code workstation}
+   * had two of its slots free for CI. Running runs are in {@code used.ci} already, so they are not
+   * subtracted again: exactly two go.
    */
   @Test
-  void aQueueAtTheCapOpensNothingAndRoomUnderItOpensOne() {
-    Fixture.scriptCiQueue(peers, 4);
+  void eightRunningRunsAndATargetWithTwoFreeSlotsDispatchTwo() {
+    fiveReady();
+    Fixture.scriptCiQueue(peers, 8, 0);
+    Fixture.scriptTargets(
+        peers,
+        Fixture.target(
+            "workstation", 6, Fixture.slots(2, 0, 0), Fixture.slots(4, 0, 0), true, false),
+        Fixture.target("lab", 4, Fixture.slots(0, 0, 0), Fixture.slots(4, 0, 0), true, false));
 
-    assertTrue(dispatcher.tick().isEmpty(), "four active runs fill the cap of four");
+    BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
+    assertEquals("DISPATCH", decision.outcome(), decision.summary());
+    assertEquals(10, decision.capacity());
+    assertEquals(0, decision.ciQueued());
+    assertEquals(2, decision.free());
+    assertEquals(List.of("qits-r1", "qits-r2"), repositoriesOf(dispatcher.tick()));
+    assertEquals(0, asks("catalog-qits-r3"));
+  }
+
+  /** Every target full: CI_BUSY, saying how it counted, and nothing opened — until a slot frees. */
+  @Test
+  void everyTargetFullIsBusyAndAFreedSlotOpensOne() {
+    Fixture.scriptCiRoom(peers, 0);
+
+    BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
+    assertEquals("CI_BUSY", decision.outcome());
+    assertEquals(
+        "no CI slot is free for a bump: 0 free CI slot(s) of 4, 0 queued run(s) and 0 bump(s)"
+            + " waiting to reach qits-ci",
+        decision.summary());
+    assertEquals(4, decision.capacity());
+    assertEquals(0, decision.free());
+    assertTrue(dispatcher.tick().isEmpty());
     assertEquals(0, asks(Fixture.CATALOG_ID));
 
-    Fixture.scriptCiQueueEmpty(peers);
+    Fixture.scriptCiRoom(peers, 1);
     assertEquals(1, dispatcher.tick().size());
   }
 
-  /** <b>UNREADABLE IS BUSY.</b> Nothing is opened blind. */
+  /** <b>A QUEUED RUN CLAIMS THE ROOM FIRST.</b> Two free slots and one run queued: one bump goes. */
   @Test
-  void aQueueThatCannotBeReadIsTreatedAsBusy() {
-    peers.answer(
-        PeerTarget.CI, CiClient.QUEUE_PATH, FakePeers.Scripted.unreachable("connection refused"));
-
-    assertEquals("CI_UNREADABLE", dispatcher.explain(Instant.now()).outcome());
-    assertTrue(dispatcher.tick().isEmpty());
-    assertEquals(0, asks(Fixture.CATALOG_ID));
-  }
-
-  /** A snapshot missing either half is unreadable, not empty. */
-  @Test
-  void aSnapshotMissingEitherHalfIsUnreadableNotEmpty() {
-    peers.answer(PeerTarget.CI, CiClient.QUEUE_PATH, FakePeers.Scripted.ok("{\"running\":[]}"));
+  void twoFreeSlotsAndOneQueuedRunOpenOne() {
+    fiveReady();
+    Fixture.scriptCiQueue(peers, 2, 1);
+    Fixture.scriptTargets(
+        peers,
+        Fixture.target(
+            "workstation", 4, Fixture.slots(0, 0, 0), Fixture.slots(2, 0, 0), true, false));
 
     BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
-    assertEquals("CI_UNREADABLE", decision.outcome());
-    assertTrue(decision.summary().contains("queued"), decision.summary());
-    assertTrue(dispatcher.tick().isEmpty());
+    assertEquals(1, decision.ciQueued());
+    assertEquals(1, decision.free());
+    assertEquals(List.of("qits-r1"), repositoriesOf(dispatcher.tick()));
   }
 
   /**
-   * <b>AN AUTOMATION ROW OF OURS STILL REQUESTED COUNTS AGAINST THE CAP.</b> It is a build this
-   * service asked for that qits-ci has not accepted yet, so it is in no listing qits-ci answers.
-   * Once qits-ci accepts it, it is counted there and not again here.
+   * <b>AN AUTOMATION ROW OF OURS STILL REQUESTED COUNTS AGAINST THE ROOM.</b> It is a build this
+   * service asked for that qits-ci has not accepted yet, so it is in no listing either peer answers.
+   * Once qits-ci accepts it, its lease is counted there and not again here.
    */
   @Test
-  void aRequestedAutomationRowCountsAgainstTheCap() {
+  void aRequestedAutomationRowCountsAgainstTheRoom() {
     UUID requested =
         store.openAutomation(
             new MaintenanceStore.AutomationOpening(
@@ -583,30 +615,29 @@ class BumpDispatchTest {
                 null),
             true,
             Instant.now());
-    Fixture.scriptCiQueue(peers, 3);
+    Fixture.scriptCiRoom(peers, 1);
 
     BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
     assertEquals("CI_BUSY", decision.outcome());
-    assertEquals(4, decision.cap());
+    assertEquals(4, decision.capacity());
     assertEquals(0, decision.free());
     assertEquals(1, decision.inFlight());
     assertTrue(
-        decision.summary().contains("cap of 4 (3 active run(s) and 1 bump(s) waiting to reach it)"),
+        decision.summary().contains("1 free CI slot(s) of 4, 0 queued run(s) and 1 bump(s) waiting"),
         decision.summary());
     assertTrue(dispatcher.tick().isEmpty());
 
-    // The queue snapshot is unchanged: only the row's own status moved, REQUESTED to dispatched,
-    // so it stops being counted here — it is qits-ci's queue listing's to count from now on, and
-    // this fixture does not need to grow `active` to prove that: it is enough that `requested`
-    // dropping to zero is what frees the room, not a coincidence of a larger snapshot.
+    // The targets are unchanged: only the row's own status moved, REQUESTED to dispatched, so it
+    // stops being counted here. It is enough that `requested` dropping to zero is what frees the
+    // room, not a coincidence of a roomier fixture.
     store.bumpDispatched(requested, "e-other", List.of("run-other"));
     assertEquals(1, dispatcher.explain(Instant.now()).free(), "a dispatched row is not counted twice");
     assertEquals(1, dispatcher.tick().size());
   }
 
-  /** QITS-882: every READY repository goes in one tick while there is room under the cap. */
+  /** QITS-882: every READY repository goes in one tick while there is room. */
   @Test
-  void everyReadyRepositoryGoesInOneTickWhileThereIsRoomUnderTheCap() {
+  void everyReadyRepositoryGoesInOneTickWhileThereIsRoom() {
     inventory.clear();
     owes("qits-aaa-service", "eu.wohlben.qits:qits-a");
     owes("qits-bbb-service", "eu.wohlben.qits:qits-b");
@@ -614,12 +645,12 @@ class BumpDispatchTest {
     lastReached("qits-aaa-service", Instant.now().minus(Duration.ofHours(1)));
     lastReached("qits-bbb-service", Instant.now().minus(Duration.ofDays(2)));
     lastReached("qits-ccc-service", Instant.now().minus(Duration.ofDays(1)));
-    Fixture.scriptCiQueue(peers, 1);
+    Fixture.scriptCiRoom(peers, 3);
 
     BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
     assertEquals("DISPATCH", decision.outcome());
-    assertEquals(4, decision.cap());
-    assertEquals(1, decision.ciActive());
+    assertEquals(4, decision.capacity());
+    assertEquals(0, decision.ciQueued());
     assertEquals(3, decision.free());
 
     List<UUID> sent = dispatcher.tick();
@@ -629,38 +660,140 @@ class BumpDispatchTest {
         "every READY one in one tick, the longest-waiting first");
   }
 
-  /** Two free under the cap and five READY: exactly two go, and the other three wait. */
+  /**
+   * <b>ONLY A CONNECTED, UNQUARANTINED TARGET COUNTS</b> — the allocator grants nothing anywhere
+   * else. Two idle targets that cannot be granted on, beside one that is full, are no room at all;
+   * and nor do they count toward the capacity.
+   */
   @Test
-  void twoFreeUnderTheCapOpenExactlyTwoOfFive() {
-    inventory.clear();
-    for (String name : List.of("qits-r1", "qits-r2", "qits-r3", "qits-r4", "qits-r5")) {
-      owes(name, "eu.wohlben.qits:" + name);
-    }
-    Fixture.scriptCiQueue(peers, 2);
-
-    assertEquals(2, dispatcher.explain(Instant.now()).free());
-    assertEquals(List.of("qits-r1", "qits-r2"), repositoriesOf(dispatcher.tick()));
-    assertEquals(0, asks("catalog-qits-r3"));
-    assertEquals(0, asks("catalog-qits-r4"));
-    assertEquals(0, asks("catalog-qits-r5"));
-  }
-
-  /** The cap fully used: CI_BUSY, saying how it counted, and nothing opened. */
-  @Test
-  void theCapFullyUsedIsBusyAndOpensNothing() {
-    Fixture.scriptCiQueue(peers, 4);
+  void aQuarantinedOrDisconnectedTargetIsIgnored() {
+    Fixture.scriptCiQueue(peers, 4, 0);
+    Fixture.scriptTargets(
+        peers,
+        Fixture.target("quarantined", 8, Fixture.slots(0, 0, 0), Fixture.slots(0, 0, 0), true, true),
+        Fixture.target(
+            "disconnected", 8, Fixture.slots(0, 0, 0), Fixture.slots(0, 0, 0), false, false),
+        Fixture.target("full", 4, Fixture.slots(0, 0, 0), Fixture.slots(4, 0, 0), true, false));
 
     BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
-    assertEquals("CI_BUSY", decision.outcome());
-    assertEquals(
-        "qits-ci's queue is at its cap of 4 (4 active run(s) and 0 bump(s) waiting to reach it);"
-            + " nothing is free",
-        decision.summary());
+    assertEquals("CI_BUSY", decision.outcome(), decision.summary());
+    assertEquals(4, decision.capacity());
     assertTrue(dispatcher.tick().isEmpty());
   }
 
-  // A cap of zero, even an idle queue, is NO_SLOTS — see BumpDispatchCapZeroTest, a separate
-  // @QuarkusTest because the cap is read once at config time and this suite runs with the default.
+  /**
+   * <b>WHAT IS RESERVED FOR THE OTHER TYPES AND NOT USED BY THEM STAYS FREE FOR THEM</b> — unless
+   * the reservations add up to more than the total, when qits-system's {@code SlotAllocator}
+   * ignores them and so does this (qits-1769 mirrors its {@code fits} exactly).
+   */
+  @Test
+  void reservationsAboveTheTotalAreIgnored() {
+    fiveReady();
+    Fixture.scriptCiQueue(peers, 0, 0);
+    // Σr = 0 + 2 + 1 = 3 ≤ 4: the three unused workspace/desk reservations leave one slot for CI.
+    Fixture.scriptTargets(
+        peers,
+        Fixture.target("reserved", 4, Fixture.slots(0, 2, 1), Fixture.slots(0, 0, 0), true, false));
+    BumpDispatcher.Decision honoured = dispatcher.explain(Instant.now());
+    assertEquals(1, honoured.free());
+    assertEquals(1, honoured.capacity());
+
+    // Σr = 0 + 3 + 2 = 5 > 4: ignored, every slot is free for CI.
+    Fixture.scriptTargets(
+        peers,
+        Fixture.target(
+            "overbooked", 4, Fixture.slots(0, 3, 2), Fixture.slots(0, 0, 0), true, false));
+    BumpDispatcher.Decision ignored = dispatcher.explain(Instant.now());
+    assertEquals(4, ignored.free());
+    assertEquals(4, ignored.capacity());
+    assertEquals(4, dispatcher.tick().size());
+  }
+
+  /**
+   * <b>NO TARGET THAT COULD EVER HOST CI IS {@code NO_SLOTS}</b>, not a busy queue: none connected
+   * and unquarantined, or every slot of the ones that are reserved for other types.
+   */
+  @Test
+  void noTargetThatCanHostCiIsNoSlots() {
+    Fixture.scriptCiQueue(peers, 0, 0);
+    Fixture.scriptTargets(
+        peers,
+        Fixture.target("away", 6, Fixture.slots(0, 0, 0), Fixture.slots(0, 0, 0), false, false),
+        Fixture.target(
+            "agents-only", 2, Fixture.slots(0, 1, 1), Fixture.slots(0, 0, 0), true, false));
+
+    BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
+    assertEquals("NO_SLOTS", decision.outcome());
+    assertEquals(0, decision.capacity());
+    assertEquals(1, decision.owed(), "the work is owed and reported, it is simply never sent");
+    assertTrue(decision.summary().contains("1 of 2 target(s)"), decision.summary());
+    assertTrue(dispatcher.tick().isEmpty());
+
+    Fixture.scriptTargets(peers);
+    assertEquals("NO_SLOTS", dispatcher.explain(Instant.now()).outcome(), "no target at all");
+    assertTrue(dispatcher.tick().isEmpty());
+    assertEquals(0, asks(Fixture.CATALOG_ID));
+  }
+
+  /** <b>UNREADABLE IS BUSY.</b> Targets that cannot be read open nothing, and the sentence says so. */
+  @Test
+  void targetsThatCannotBeReadOpenNothing() {
+    Fixture.scriptCiQueueEmpty(peers);
+    peers.answer(
+        PeerTarget.SYSTEM,
+        SystemClient.TARGETS_PATH,
+        FakePeers.Scripted.unreachable("connection refused"));
+
+    BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
+    assertEquals("CI_UNREADABLE", decision.outcome());
+    assertTrue(decision.summary().contains("qits-system's targets"), decision.summary());
+    assertFalse(decision.summary().contains("queue"), decision.summary());
+    assertTrue(dispatcher.tick().isEmpty());
+    assertEquals(0, asks(Fixture.CATALOG_ID));
+  }
+
+  /** A target missing what the rule needs is unreadable, never guessed as idle. */
+  @Test
+  void aTargetMissingItsUsedCountsIsUnreadable() {
+    Fixture.scriptCiQueueEmpty(peers);
+    peers.answer(
+        PeerTarget.SYSTEM,
+        SystemClient.TARGETS_PATH,
+        FakePeers.Scripted.ok(
+            "[{\"name\":\"lab\",\"slotsTotal\":6,\"reservations\":{},\"connected\":true,"
+                + "\"quarantined\":false}]"));
+
+    BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
+    assertEquals("CI_UNREADABLE", decision.outcome());
+    assertTrue(decision.summary().contains("lab"), decision.summary());
+    assertTrue(dispatcher.tick().isEmpty());
+  }
+
+  /** <b>UNREADABLE IS BUSY</b> for qits-ci's queue too. Nothing is opened blind. */
+  @Test
+  void aQueueThatCannotBeReadIsTreatedAsBusy() {
+    Fixture.scriptCiQueueEmpty(peers);
+    peers.answer(
+        PeerTarget.CI, CiClient.QUEUE_PATH, FakePeers.Scripted.unreachable("connection refused"));
+
+    BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
+    assertEquals("CI_UNREADABLE", decision.outcome());
+    assertTrue(decision.summary().contains("qits-ci's queue"), decision.summary());
+    assertTrue(dispatcher.tick().isEmpty());
+    assertEquals(0, asks(Fixture.CATALOG_ID));
+  }
+
+  /** A snapshot missing either half is unreadable, not empty. */
+  @Test
+  void aSnapshotMissingEitherHalfIsUnreadableNotEmpty() {
+    Fixture.scriptCiQueueEmpty(peers);
+    peers.answer(PeerTarget.CI, CiClient.QUEUE_PATH, FakePeers.Scripted.ok("{\"running\":[]}"));
+
+    BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
+    assertEquals("CI_UNREADABLE", decision.outcome());
+    assertTrue(decision.summary().contains("queued"), decision.summary());
+    assertTrue(dispatcher.tick().isEmpty());
+  }
 
   // --- the order ----------------------------------------------------------------------------------
 
@@ -722,7 +855,7 @@ class BumpDispatchTest {
 
   /**
    * <b>THE KNOT IS BROKEN IN THE SAME TICK AS THE READY WORK (qits-1696)</b> — after it, once, and
-   * only because the cap left room.
+   * only because the READY work left room.
    */
   @Test
   void aKnotIsBrokenInTheSameTickAsReadyWork() {
@@ -732,7 +865,7 @@ class BumpDispatchTest {
     assertEquals("DISPATCH", decision.outcome());
     assertEquals(
         "the next 2 bumps are qits-ready-c, qits-knot-a (breaking a cycle, it waits on"
-            + " qits-knot-b) (4 of 4 free)",
+            + " qits-knot-b) (4 of 4 CI slot(s) free for bumps)",
         decision.summary());
 
     assertEquals(List.of("qits-ready-c", "qits-knot-a"), repositoriesOf(dispatcher.tick()));
@@ -758,9 +891,9 @@ class BumpDispatchTest {
 
     standing
         .body("outcome", is("DISPATCH"))
-        .body("cap", is(4))
+        .body("capacity", is(4))
         .body("free", is(4))
-        .body("ciActive", is(0))
+        .body("ciQueued", is(0))
         .body("owed", is(3))
         .body("held", is(0))
         .body("picks.repository", contains("qits-ready-c", "qits-knot-a"))
@@ -788,7 +921,7 @@ class BumpDispatchTest {
   /**
    * <b>A REPOSITORY OWED A RE-OFFER GOES FIRST</b> (qits-1578). Its dependency bump was stranded on
    * a request that closed, so the dispatcher reached it recently — least-recently-dispatched alone
-   * would put it behind one reached a fortnight ago, and under a cap of one it would wait a whole
+   * would put it behind one reached a fortnight ago, and with room for one it would wait a whole
    * tick or more. Marked, it goes first; the main-only request it is opened clears the mark, and
    * the order falls back to the clock.
    */
@@ -800,8 +933,8 @@ class BumpDispatchTest {
     lastReached("qits-aaa-service", Instant.now().minus(Duration.ofDays(14)));
     lastReached("qits-zzz-service", Instant.now().minus(Duration.ofMinutes(5)));
     store.markReofferOwed("qits-zzz-service", Instant.now());
-    // A cap of four with three active: one free.
-    Fixture.scriptCiQueue(peers, 3);
+    // One CI slot free for bumps.
+    Fixture.scriptCiRoom(peers, 1);
 
     assertEquals(1, dispatcher.explain(Instant.now()).free());
     assertEquals(
@@ -819,7 +952,7 @@ class BumpDispatchTest {
    * <b>Reproduction (qits-1653): AN EMBEDDED SPA'S RELEASE PUTS THE SERVICE THAT EMBEDS IT FIRST.</b>
    * Three repositories are owed maven bumps and were reached days ago; the service embedding {@code
    * qits-system-frontend} owes only that gitlink, was reached five minutes ago and has no request
-   * open. By the clock alone it sorts last and, under a cap of one, waits behind every other owed
+   * open. By the clock alone it sorts last and, with room for one, waits behind every other owed
    * repository while the released SPA is not live. The upstream hook marks it, and the next tick
    * opens it first.
    */
@@ -834,8 +967,8 @@ class BumpDispatchTest {
     lastReached("qits-bbb-service", Instant.now().minus(Duration.ofDays(2)));
     lastReached("qits-ccc-service", Instant.now().minus(Duration.ofDays(1)));
     lastReached("qits-system-service", Instant.now().minus(Duration.ofMinutes(5)));
-    // A cap of four with three active: one free.
-    Fixture.scriptCiQueue(peers, 3);
+    // One CI slot free for bumps.
+    Fixture.scriptCiRoom(peers, 1);
 
     // Without the mark, least-recently-dispatched puts the just-served service last.
     assertEquals(

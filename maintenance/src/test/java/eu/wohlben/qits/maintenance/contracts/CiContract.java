@@ -13,8 +13,9 @@ import java.util.Map;
 
 /**
  * <b>What qits-maintenance asks qits-ci, and why</b> (ticket qits-1149): the trigger that applies a
- * bump or an automation, the run it names, the automatic retry of a run, and the queue snapshot the
- * dispatcher reads for whether qits-ci can be asked at all — every call {@link CiClient} makes.
+ * bump or an automation, the run it names, the automatic retry of a run, and the queue snapshot whose
+ * {@code queued} half the dispatcher subtracts from qits-system's free CI slots (qits-1769) — every
+ * call {@link CiClient} makes.
  * <b>The queue carries no capacity any more</b> (epic qits-1481): its provider state was renamed
  * from {@code runners with free slots} to {@code a run queue with a run waiting}, and {@code
  * runners[]} is gone from the body, because a run is now a CI lease and qits-system's allocator,
@@ -133,12 +134,13 @@ final class CiContract {
                   .consumes("running[]", "queued[]")
                   .anyLength("running", "queued"),
               (peers, p) -> {
-                // No more runners[] (epic qits-1481): the dispatcher reads this only for whether
-                // qits-ci can be asked at all, never for a slot count. See CiClient#queue and
-                // BumpDispatcher's class doc.
+                // No more runners[] (epic qits-1481): the room is qits-system's (SystemContract),
+                // and the dispatcher subtracts only the queued half from it (qits-1769). See
+                // CiClient#queue and BumpDispatcher's class doc.
                 CiClient.QueueState queue = peers.ci().queue();
                 assertTrue(queue.readable(), queue.error());
-                assertEquals(2, queue.active(), "one running and one queued");
+                assertEquals(1, queue.running(), "one running");
+                assertEquals(1, queue.queued(), "one queued");
               }));
 
   static final PeerRow.Contract CONTRACT = new PeerRow.Contract(CI, ROWS);

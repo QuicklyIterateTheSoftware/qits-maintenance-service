@@ -3,8 +3,8 @@ package eu.wohlben.qits.maintenance.peer;
 /**
  * Every address this service reads or writes.
  *
- * <p><b>Ten targets, one credential.</b> A target is an ADDRESS — a base url a path is appended
- * to; configured for nine of them, derived in code for {@link #NPM_MIRROR}. Two of the nine share
+ * <p><b>Eleven targets, one credential.</b> A target is an ADDRESS — a base url a path is appended
+ * to; configured for ten of them, derived in code for {@link #NPM_MIRROR}. Two of the ten share
  * one key ({@link #ARTIFACTS_SBOM} and {@link #ARTIFACTS_DOCS}, both qits-artifacts' own API). There used to be five
  * oidc clients, one per peer SERVICE, because a token used to be cut FOR one service's own audience;
  * the epic qits-540 dossier's 'Plan (as of 2026-09-13)', C4, replaced all five with one named client,
@@ -43,6 +43,14 @@ public enum PeerTarget {
    * rollback restores. {@code GET /pins} keeps what those releases declared (qits-1172).
    */
   DEPLOYMENTS("qits.maintenance.targets.deployments-url"),
+
+  /**
+   * qits-system — {@code GET /system/api/targets}, every target's slots, reservations and leases in
+   * use, which is where the dispatcher reads how much CI room the estate has (qits-1769). qits-ci
+   * holds no runner since epic qits-1481, so the free-slot count is read where the leases are
+   * granted. See {@link eu.wohlben.qits.maintenance.bump.SystemClient}.
+   */
+  SYSTEM("qits.maintenance.targets.system-url"),
 
   /** qits-artifacts' hosted maven repository: {@code maven-metadata.xml} for internal artifacts. */
   MAVEN_REGISTRY("qits.maintenance.registries.maven-url"),

@@ -74,6 +74,7 @@
         <qits.githost-golden-masters.version>2026.1020.204038</qits.githost-golden-masters.version>
         <qits.idp-golden-masters.version>2026.1027.165632</qits.idp-golden-masters.version>
         <qits.mirror-golden-masters.version>2026.1018.160931</qits.mirror-golden-masters.version>
+        <qits.system-golden-masters.version>2026.1028.203654</qits.system-golden-masters.version>
         <!-- The shared JVM consumer helper (qits-integrations-quarkus-javalib): golden-master reader,
              row builder, pact-file compare. Test scope. -->
         <qits.pact-consumer.version>2026.1019.82625</qits.pact-consumer.version>
@@ -262,6 +263,12 @@
                 <groupId>${project.groupId}</groupId>
                 <artifactId>qits-mirror-golden-masters</artifactId>
                 <version>${qits.mirror-golden-masters.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: recordings a test reads, never code. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-system-golden-masters</artifactId>
+                <version>${qits.system-golden-masters.version}</version>
             </dependency>
             <dependency>
                 <!-- Test scope at every declaration site. -->

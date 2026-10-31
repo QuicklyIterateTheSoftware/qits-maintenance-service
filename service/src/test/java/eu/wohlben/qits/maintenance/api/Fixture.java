@@ -1,6 +1,7 @@
 package eu.wohlben.qits.maintenance.api;
 
 import eu.wohlben.qits.maintenance.bump.CiClient;
+import eu.wohlben.qits.maintenance.bump.SystemClient;
 import eu.wohlben.qits.maintenance.manifest.GitmodulesParser;
 import eu.wohlben.qits.maintenance.peer.FakePeers;
 import eu.wohlben.qits.maintenance.model.Ecosystem;
@@ -358,47 +359,115 @@ public final class Fixture {
                 + "\"repositoriesSkipped\":[]}"));
   }
 
+  /** The slots of the one target {@link #scriptCiRoom} scripts: the room a tick can fill at most. */
+  public static final int POOL_SLOTS = 4;
+
   /**
-   * qits-ci has nothing queued and nothing running — the state the dispatch gate waits for.
+   * Room on CI for every bump a tick could send: qits-ci has nothing queued and nothing running, and
+   * qits-system's one target has all {@link #POOL_SLOTS} slots free — the state the dispatch gate
+   * waits for.
    *
-   * <p>Every test that expects the clock to hand a bump out has to say this: an UNSCRIPTED snapshot
-   * is a 404, and the gate reads a snapshot it could not read as BUSY.
+   * <p>Every test that expects the clock to hand a bump out has to say this: an UNSCRIPTED read is
+   * a 404, and the gate reads either read it could not make as BUSY.
    */
   public static void scriptCiQueueEmpty(FakePeers peers) {
-    scriptCiQueue(peers, 0);
+    scriptCiRoom(peers, POOL_SLOTS);
   }
 
   /**
-   * qits-ci's queue snapshot — {@code GET /ci/api/runs/queue} — with {@code active} runs. <b>There
-   * is no {@code runners} field any more</b> (epic qits-1481): the snapshot carries only {@code
-   * running} and {@code queued}, and the dispatch gate no longer reads a capacity out of it — see
-   * {@code BumpDispatcher}'s class doc.
-   *
-   * <p>The first active run is QUEUED and the rest RUNNING: the gate counts both halves rather than
-   * matching on a status, and a fixture that only ever filled one half would let a gate that read
-   * only the other pass unnoticed.
+   * {@code free} CI slots for bumps (qits-1769): one connected, unquarantined target of {@link
+   * #POOL_SLOTS} slots and no reservations, with the rest used by RUNNING CI leases — which qits-ci
+   * lists as {@code running}, and the gate must not subtract a second time — and nothing queued.
    */
-  public static void scriptCiQueue(FakePeers peers, int active) {
-    StringBuilder running = new StringBuilder();
-    StringBuilder queued = new StringBuilder();
-    for (int index = 0; index < active; index++) {
-      StringBuilder half = index == 0 ? queued : running;
-      half.append(half.length() == 0 ? "" : ",")
-          .append("{\"id\":\"busy-")
-          .append(index)
-          .append("\",\"status\":\"")
-          .append(index == 0 ? "QUEUED" : "RUNNING")
-          .append("\"}");
-    }
+  public static void scriptCiRoom(FakePeers peers, int free) {
+    int running = POOL_SLOTS - free;
+    scriptCiQueue(peers, running, 0);
+    scriptTargets(
+        peers, target("workstation", POOL_SLOTS, slots(0, 0, 0), slots(running, 0, 0), true, false));
+  }
+
+  /**
+   * qits-ci's queue snapshot — {@code GET /ci/api/runs/queue} — with {@code running} and {@code
+   * queued} runs. <b>There is no {@code runners} field any more</b> (epic qits-1481): the room is
+   * read from qits-system (qits-1769, {@link #scriptTargets}), and of this snapshot the gate counts
+   * only the queued half.
+   */
+  public static void scriptCiQueue(FakePeers peers, int running, int queued) {
     peers.answer(
         PeerTarget.CI,
         CiClient.QUEUE_PATH,
         FakePeers.Scripted.ok(
             "{\"generatedAt\":\"2026-10-03T12:00:00Z\",\"running\":["
-                + running
+                + runs("running", running, "RUNNING")
                 + "],\"queued\":["
-                + queued
+                + runs("queued", queued, "QUEUED")
                 + "]}"));
+  }
+
+  private static String runs(String prefix, int count, String status) {
+    StringBuilder runs = new StringBuilder();
+    for (int index = 0; index < count; index++) {
+      runs.append(index == 0 ? "" : ",")
+          .append("{\"id\":\"")
+          .append(prefix)
+          .append('-')
+          .append(index)
+          .append("\",\"status\":\"")
+          .append(status)
+          .append("\"}");
+    }
+    return runs.toString();
+  }
+
+  /** qits-system's {@code GET /system/api/targets}, answering exactly these {@link #target}s. */
+  public static void scriptTargets(FakePeers peers, String... targets) {
+    peers.answer(
+        PeerTarget.SYSTEM,
+        SystemClient.TARGETS_PATH,
+        FakePeers.Scripted.ok("[" + String.join(",", targets) + "]"));
+  }
+
+  /** Per-type slot counts, in qits-system's order: ci, workspace, desk. */
+  public static int[] slots(int ci, int workspace, int desk) {
+    return new int[] {ci, workspace, desk};
+  }
+
+  /**
+   * One target as qits-system lists it — the fields the gate reads and a few it does not, so a
+   * reader that required more than the rule needs would be caught here.
+   */
+  public static String target(
+      String name,
+      int slotsTotal,
+      int[] reservations,
+      int[] used,
+      boolean connected,
+      boolean quarantined) {
+    return "{\"id\":\""
+        + java.util.UUID.nameUUIDFromBytes(name.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+        + "\",\"name\":\""
+        + name
+        + "\",\"slotsTotal\":"
+        + slotsTotal
+        + ",\"reservations\":"
+        + byType(reservations)
+        + ",\"used\":"
+        + byType(used)
+        + ",\"connected\":"
+        + connected
+        + ",\"quarantined\":"
+        + quarantined
+        + ",\"registered\":true}";
+  }
+
+  private static String byType(int[] counts) {
+    return "{\"ci\":"
+        + counts[0]
+        + ",\"workspace\":"
+        + counts[1]
+        + ",\"desk\":"
+        + counts[2]
+        + "}";
   }
 
   public static void scriptRun(FakePeers peers, String runId, String status) {

@@ -716,8 +716,8 @@ class UpstreamReplanTest {
     store.recordOpenedRequest(
         "reached-" + older, older, "main", MtReleaseRequest.MAIN_ONLY, List.of(),
         Instant.now().minus(Duration.ofDays(14)));
-    // A cap of four with three active: one free.
-    Fixture.scriptCiQueue(peers, 3);
+    // One CI slot free for bumps.
+    Fixture.scriptCiRoom(peers, 1);
 
     List<UUID> sent = dispatcher.tick();
     queue.awaitIdle(Duration.ofSeconds(30));

@@ -194,13 +194,13 @@ components:
           type: string
         summary:
           type: string
-        cap:
+        capacity:
           type: integer
           format: int32
         free:
           type: integer
           format: int32
-        ciActive:
+        ciQueued:
           type: integer
           format: int32
         owed:

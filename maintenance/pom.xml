@@ -166,6 +166,11 @@
             <scope>test</scope>
         </dependency>
         <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-system-golden-masters</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <!-- The shared consumer helper: GoldenMasters, GoldenInteraction, ConsumerPact. -->
             <groupId>${project.groupId}</groupId>
             <artifactId>qits-pact-consumer</artifactId>

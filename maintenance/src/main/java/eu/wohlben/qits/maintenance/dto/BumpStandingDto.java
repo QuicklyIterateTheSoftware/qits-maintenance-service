@@ -19,9 +19,11 @@ import java.util.List;
  *     QUIET_HOURS}, {@code CI_UNREADABLE}, {@code NO_SLOTS}, {@code CI_BUSY}, {@code
  *     WAITING_ON_RELEASES} or {@code DISPATCH}
  * @param summary the same sentence the dispatcher would explain itself with
- * @param cap the configured CI cap, null when that gate was not reached or the queue was unreadable
- * @param free how much of the cap a tick may fill now, null likewise
- * @param ciActive qits-ci's running and queued runs, null likewise
+ * @param capacity how many CI leases qits-system's connected, unquarantined targets could hold at
+ *     once (qits-1769), null when that gate was not reached or a read failed
+ * @param free how many bumps a tick may send now — the targets' free CI slots minus {@code
+ *     ciQueued} minus this service's requested rows, floored at zero — null likewise
+ * @param ciQueued the runs qits-ci holds queued, null likewise
  * @param owed how many repositories are owed a bump and could still be sent one — the length of
  *     {@code standing}, counted whichever gate answered
  * @param held how many of those wait on a release request already on its way
@@ -34,9 +36,9 @@ import java.util.List;
 public record BumpStandingDto(
     String outcome,
     String summary,
-    Integer cap,
+    Integer capacity,
     Integer free,
-    Integer ciActive,
+    Integer ciQueued,
     int owed,
     int held,
     List<StandingPickDto> picks,

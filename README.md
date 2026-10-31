@@ -25,7 +25,7 @@ The contract — routes, model, config keys, schedules and the bump payload — 
 | external latest | qits-mirror | `central` maven-metadata, `npmjs` packument |
 | applying a bump | qits-ci | `POST /ci/api/events/trigger`, event `MaintenanceBump` |
 | the bump's outcome | qits-ci + qits-githost | `GET /ci/api/runs/{id}`, then the branch head |
-| how much room CI has | qits-ci | `GET /ci/api/runs/queue` — the dispatch gate: connected, unquarantined runners' slots minus every running and queued run; an unreadable snapshot counts as busy |
+| how much room CI has | qits-system + qits-ci | `GET /system/api/targets` — every connected, unquarantined target's free CI slots by qits-system's own allocation rule — minus the runs `GET /ci/api/runs/queue` holds `queued`; the dispatch gate (qits-1769), and either read unreadable counts as busy |
 | an internal release | qits-events | `SoftwareRelease` off the durable bus — see **The event bus** |
 | a release is usable | qits-events | `ReleaseRequestStateChanged` with `state=FINALIZED` (qits-projects) — see **The event bus** |
 | a branch's life | qits-events | `SCMRelease`, `SCMDeleteBranch`, `SCMPublishCommit` |
@@ -227,7 +227,7 @@ pending set it was opened for, and it is the one kind of request that plans EXTE
 | switches | `bump.enabled`, `bump.internal.auto`, `automations.dependency-bump.enabled` | `DISABLED` |
 | owed | is any OK repository's `dependencies` group pending, and not HELD | `NOTHING_OWED` |
 | clock | is this a `bump.dispatch.quiet-hours` hour | `QUIET_HOURS` |
-| capacity | how many of qits-ci's runner slots are free (`slots - active - our REQUESTED rows`) | `CI_UNREADABLE` (busy), `NO_SLOTS`, `CI_BUSY` |
+| capacity | how many CI slots the targets have free (`Σ free_t - ciQueued - our REQUESTED rows`, qits-1769) | `CI_UNREADABLE` (busy), `NO_SLOTS`, `CI_BUSY` |
 | order | which owed repositories are READY — bottom of the chain first | `WAITING_ON_RELEASES` |
 
 **HELD** is a repository with any open release request (its own pre-run carries the bump), or one
@@ -241,7 +241,7 @@ holds. A repository whose ask cannot be made — no catalog id, a 4xx — is set
 read off the **changes**: a candidate waits only while one of its own pending changes names
 something another candidate publishes — matched through `ArtifactGraph#producers()` for a maven,
 npm or docker coordinate, and by name for a GITLINK, whose `name` IS its repository. A cycle
-degrades to a pick with a WARN, never to a stall: after the READY picks, if the cap left room, ONE
+degrades to a pick with a WARN, never to a stall: after the READY picks, if they left room, ONE
 member of a knot of free candidates goes, marked `cycleBroken` — at most one per tick, and only a
 candidate whose every owed upstream is free and waits back on it (qits-1696: the break used to wait
 for a tick with nothing READY at all, which an estate of thirty owed repositories never had).
@@ -251,9 +251,15 @@ least recently dispatched** (`MaintenanceStore.lastDispatchedAt`, the newest mai
 repository; never reached counts as oldest), because it used to be the alphabet, and the alphabet
 starved the same repositories every night (measured 2026-09-13).
 
-**Free slots are read, not configured (qits-882)**: one `GET /ci/api/runs/queue`, whose connected,
-unquarantined runners' slots minus every running and queued run minus this service's rows qits-ci
-has not accepted yet is how many requests may open this tick.
+**Free slots are read, not configured (qits-1769)**: since a CI run is a lease (epic qits-1481)
+qits-ci holds no runner to report slots from, so the room is read from qits-system, which grants the
+leases. One `GET /system/api/targets`: per connected, unquarantined target, `free_t` is how many
+more CI leases its `SlotAllocator.fits` would admit — `T - n_total - Σ_{u≠ci} max(0, r[u] - n[u])`,
+or `T - n_total` when `Σ r > T` and the reservations are ignored, floored at zero. Then
+`free = max(0, Σ free_t - ciQueued - requested)`: the runs qits-ci holds `queued` (one `GET
+/ci/api/runs/queue`) and this service's rows qits-ci has not accepted yet claim that room first; a
+running run's lease is in `used` already. No eligible target able to host CI at all is `NO_SLOTS`.
+The configured cap that stood in between (epic qits-1481) is gone, with no replacement setting.
 
 ### Group bumps are retired (qits-1133)
 
@@ -791,6 +797,7 @@ environment without a rebuild.
 | `qits.maintenance.targets.githost-url` | `http://qits-githost:8080` | where the manifests are |
 | `qits.maintenance.targets.ci-url` | `http://qits-ci:8080` | which CI applies a bump |
 | `qits.maintenance.targets.deployments-url` | `http://${QITS_ENVIRONMENT:dev}-qits-deployments:8080` | which versions serve or would roll back; `GET /pins` keeps what those releases declared |
+| `qits.maintenance.targets.system-url` | `http://${QITS_ENVIRONMENT:dev}-qits-system:8080` | where the CI room is read: the targets' slots and leases (qits-1769) |
 | `qits.maintenance.targets.artifacts-url` | `http://qits-artifacts:8080` | where the SBOM documents and the changelog listings are — a bare host, because both routes' whole paths belong to the caller |
 | `qits.maintenance.registries.maven-url` | `http://qits-artifacts:8080/artifacts/maven/maven` | internal maven |
 | `qits.maintenance.registries.npm-url` | `http://qits-artifacts:8080/artifacts/npm/npm` | internal npm |
