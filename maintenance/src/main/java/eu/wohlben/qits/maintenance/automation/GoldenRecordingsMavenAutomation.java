@@ -14,14 +14,17 @@ import org.w3c.dom.NodeList;
 
 /**
  * <b>Golden recordings, maven</b> (qits-1516): a maven consumer's {@code pacts/*.json}, re-recorded
- * when the fold moved a {@code qits.<app>-golden-masters.version} — see {@link
+ * when the fold moved a {@code qits.<app>-golden-masters.version} — or, for a three-part
+ * library-kit pact, the library's pin, such as {@code qits.eventstream.version} for {@code
+ * *_qits-eventstream-javalib_qits-events-service.json} (qits-1782) — see {@link
  * GoldenRecordingsAutomation} for the whole of the kind.
  *
  * <p><b>Owns a fold with a root {@code pom.xml}.</b> It applies when a reactor pom — the root, then
  * its {@code <modules>} two levels deep, read only until one answers — declares a property named
  * {@code qits.*-golden-masters.version} or a dependency whose {@code <artifactId>} ends in {@code
  * -golden-masters}. On this estate the root pom declares the property, so the answer is the one
- * root-pom read {@code entity-diagram} already made at the same fold.
+ * root-pom read {@code entity-diagram} already made at the same fold. A reactor that pins none —
+ * qits-edge-service — still applies when it commits a library-kit pact, which the base decides.
  */
 @ApplicationScoped
 public class GoldenRecordingsMavenAutomation extends GoldenRecordingsAutomation {

@@ -12,14 +12,17 @@ import java.util.regex.Pattern;
 
 /**
  * <b>Golden recordings, npm</b> (qits-1516): an npm consumer's {@code pacts/*.json}, re-recorded
- * when the fold moved an {@code @qits/<app>-golden-masters} dependency — see {@link
- * GoldenRecordingsAutomation} for the whole of the kind.
+ * when the fold moved an {@code @qits/<app>-golden-masters} dependency — or, for a three-part
+ * library-kit pact such as {@code *_qits-ui-components-jslib_<provider>.json}, the library's
+ * package, {@code @qits/ui-components} (qits-1782) — see {@link GoldenRecordingsAutomation} for the
+ * whole of the kind.
  *
  * <p><b>Owns a fold with a root {@code package.json} and NO root {@code pom.xml}</b>: a root pom is
  * {@link GoldenRecordingsMavenAutomation}'s, whatever else the root holds, which is what keeps the
  * two kinds from both naming one fold's pacts. It applies when that {@code package.json} names an
  * {@code @qits/*-golden-masters} under {@code dependencies} or {@code devDependencies}: the pom
- * read (shared with the other kinds of the settle) and one {@code package.json} read.
+ * read (shared with the other kinds of the settle) and one {@code package.json} read — or, failing
+ * that, when it commits a library-kit pact, which the base decides from the {@code pacts/} listing.
  */
 @ApplicationScoped
 public class GoldenRecordingsNpmAutomation extends GoldenRecordingsAutomation {

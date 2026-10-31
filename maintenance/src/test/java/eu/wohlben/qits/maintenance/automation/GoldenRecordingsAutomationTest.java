@@ -1,8 +1,10 @@
 package eu.wohlben.qits.maintenance.automation;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import eu.wohlben.qits.maintenance.control.ArtifactGraph;
 import eu.wohlben.qits.maintenance.entity.MtRepository;
 import eu.wohlben.qits.maintenance.githost.FileLookup;
 import eu.wohlben.qits.maintenance.githost.GitHostReader;
@@ -21,7 +23,8 @@ import org.junit.jupiter.api.Test;
  * <b>{@code golden-recordings-maven} and {@code golden-recordings-npm}</b> (qits-1516), over a fake
  * {@link GitHostReader} and a scripted {@link ManifestScanner} — no Quarkus, no network: the build
  * shape that splits the two, the golden-masters pin that makes either apply, the per-subject pacts
- * path, and the plan's comparison of the fold's pins against {@code main}'s.
+ * path, and the plan's comparison of the fold's pins against {@code main}'s — and, since qits-1782,
+ * the three-part library-kit pacts that make a library's pin a recording input too.
  */
 class GoldenRecordingsAutomationTest {
 
@@ -88,6 +91,25 @@ class GoldenRecordingsAutomationTest {
       return this;
     }
 
+    private final Map<String, TreeLookup> trees = new LinkedHashMap<>();
+
+    /** A {@code pacts/} directory holding exactly these blobs. */
+    Host pacts(String... names) {
+      trees.put(
+          "pacts",
+          TreeLookup.found(
+              SHA,
+              java.util.Arrays.stream(names)
+                  .map(name -> new TreeLookup.TreeEntry(name, "blob"))
+                  .toList()));
+      return this;
+    }
+
+    Host pactsUnreachable() {
+      trees.put("pacts", TreeLookup.unreachable("connection refused"));
+      return this;
+    }
+
     @Override
     public FileLookup blob(String project, String repository, String revision, String path) {
       return blobs.getOrDefault(path, FileLookup.absent());
@@ -95,9 +117,35 @@ class GoldenRecordingsAutomationTest {
 
     @Override
     public TreeLookup tree(String project, String repository, String revision, String path) {
-      return TreeLookup.absent();
+      return trees.getOrDefault(path, TreeLookup.absent());
     }
   }
+
+  /** Who released what, scripted; counts its reads, since each one is a query. */
+  private static final class Graph extends ArtifactGraph {
+
+    private final Map<String, String> producers;
+
+    int reads;
+
+    Graph(Map<String, String> producers) {
+      this.producers = producers;
+    }
+
+    @Override
+    public Map<String, String> producers() {
+      reads++;
+      return producers;
+    }
+  }
+
+  private static final String EVENTSTREAM_PACT =
+      "x_qits-eventstream-javalib_qits-events-service.json";
+
+  private static final Map<String, String> EVENTSTREAM_PRODUCERS =
+      Map.of(
+          ArtifactGraph.producerKey("maven", "eu.wohlben.qits:qits-eventstream-contracts"),
+          "qits-eventstream-javalib");
 
   /** The scan's discovery, scripted per revision: the fold's sha and {@code main}. */
   private static final class Scanner extends ManifestScanner {
@@ -159,6 +207,23 @@ class GoldenRecordingsAutomationTest {
         null,
         "property:qits.eventstream.version",
         false);
+  }
+
+  private static ParsedPin eventstreamContracts(String version) {
+    return new ParsedPin(
+        Ecosystem.MAVEN,
+        "pom.xml",
+        "eu.wohlben.qits:qits-eventstream-contracts",
+        version,
+        null,
+        "property:qits.eventstream.version",
+        false);
+  }
+
+  private static ParsedPin npmUiComponents(String version) {
+    return ParsedPin.of(
+        Ecosystem.NPM, "package.json", "@qits/ui-components", version, "^" + version,
+        "dependencies");
   }
 
   private static ParsedPin npmGolden(String version) {
@@ -340,5 +405,198 @@ class GoldenRecordingsAutomationTest {
     npm.scanner =
         new Scanner().at(SHA, npmGolden("2026.1022.2")).at("main", npmGolden("2026.1022.1"));
     assertEquals(Plan.Kind.RUN, npm.plan(subject).kind());
+  }
+
+  // --- library-kit pacts (qits-1782) ----------------------------------------------------------
+
+  @Test
+  void aMovedLibraryKitPinWithAThreePartPactRunsByTheProducers() {
+    Graph graph = new Graph(EVENTSTREAM_PRODUCERS);
+    maven.graph = graph;
+    maven.scanner =
+        new Scanner()
+            .at(SHA, mavenGolden("2026.1020.204038"), eventstreamContracts("2026.1031.2"))
+            .at("main", mavenGolden("2026.1020.204038"), eventstreamContracts("2026.1031.1"));
+    AutomationSubject subject =
+        subject(
+            new Host()
+                .blob("pom.xml", POM_WITH_PROPERTY)
+                .pacts("x_qits-githost-service.json", EVENTSTREAM_PACT));
+
+    Plan plan = maven.plan(subject);
+
+    assertEquals(Plan.Kind.RUN, plan.kind(), plan.reason());
+    assertEquals(1, graph.reads, "the producers are read once per plan");
+  }
+
+  @Test
+  void aMovedLibraryKitPinNoReleaseAnnouncedRunsByTheComponentName() {
+    maven.graph = new Graph(Map.of());
+    maven.scanner =
+        new Scanner()
+            .at(SHA, eventstreamContracts("2026.1031.2"))
+            .at("main", eventstreamContracts("2026.1031.1"));
+
+    Plan plan =
+        maven.plan(subject(new Host().blob("pom.xml", POM_WITHOUT).pacts(EVENTSTREAM_PACT)));
+
+    assertEquals(Plan.Kind.RUN, plan.kind(), plan.reason());
+  }
+
+  @Test
+  void aProducerNamingAnotherRepositoryOverridesTheNameRule() {
+    maven.graph =
+        new Graph(
+            Map.of(
+                ArtifactGraph.producerKey("maven", "eu.wohlben.qits:qits-eventstream-contracts"),
+                "somebody-else"));
+    maven.scanner =
+        new Scanner()
+            .at(SHA, eventstreamContracts("2026.1031.2"))
+            .at("main", eventstreamContracts("2026.1031.1"));
+
+    Plan plan =
+        maven.plan(subject(new Host().blob("pom.xml", POM_WITHOUT).pacts(EVENTSTREAM_PACT)));
+
+    assertEquals(Plan.Kind.FRESH, plan.kind(), plan.reason());
+  }
+
+  @Test
+  void libraryKitPinsEqualToMainAreFresh() {
+    maven.graph = new Graph(EVENTSTREAM_PRODUCERS);
+    maven.scanner =
+        new Scanner()
+            .at(SHA, mavenGolden("2026.1020.204038"), eventstreamContracts("2026.1031.1"))
+            .at("main", mavenGolden("2026.1020.204038"), eventstreamContracts("2026.1031.1"));
+
+    Plan plan =
+        maven.plan(subject(new Host().blob("pom.xml", POM_WITH_PROPERTY).pacts(EVENTSTREAM_PACT)));
+
+    assertEquals(Plan.Kind.FRESH, plan.kind(), plan.reason());
+    assertTrue(plan.reason().contains("library-kit"), plan.reason());
+  }
+
+  @Test
+  void aMovedLibraryPinWithNoThreePartPactIsFreshAndReadsNoProducers() {
+    Graph graph = new Graph(EVENTSTREAM_PRODUCERS);
+    maven.graph = graph;
+    maven.scanner =
+        new Scanner()
+            .at(SHA, mavenGolden("2026.1020.204038"), eventstreamContracts("2026.1031.2"))
+            .at("main", mavenGolden("2026.1020.204038"), eventstreamContracts("2026.1031.1"));
+
+    Plan plan =
+        maven.plan(
+            subject(
+                new Host()
+                    .blob("pom.xml", POM_WITH_PROPERTY)
+                    .pacts("x_qits-githost-service.json")));
+
+    assertEquals(Plan.Kind.FRESH, plan.kind(), plan.reason());
+    assertEquals(0, graph.reads);
+  }
+
+  @Test
+  void aFoldWhosePactsCannotBeListedRuns() {
+    maven.graph = new Graph(EVENTSTREAM_PRODUCERS);
+    maven.scanner =
+        new Scanner()
+            .at(SHA, mavenGolden("2026.1020.204038"))
+            .at("main", mavenGolden("2026.1020.204038"));
+
+    assertEquals(
+        Plan.Kind.RUN,
+        maven
+            .plan(subject(new Host().blob("pom.xml", POM_WITH_PROPERTY).pactsUnreachable()))
+            .kind());
+  }
+
+  @Test
+  void aReactorWithNoGoldenMastersButALibraryKitPactApplies() {
+    AutomationSubject subject =
+        subject(
+            new Host()
+                .blob("pom.xml", POM_WITHOUT)
+                .blob("service/pom.xml", "<project/>")
+                .pacts(EVENTSTREAM_PACT));
+
+    assertTrue(maven.applicability(subject).applied());
+  }
+
+  @Test
+  void aReactorWithNoGoldenMastersAndNoPactsDirectoryIsNotApplicable() {
+    AutomationSubject subject =
+        subject(new Host().blob("pom.xml", POM_WITHOUT).blob("service/pom.xml", "<project/>"));
+
+    Applicability answer = maven.applicability(subject);
+    assertEquals(Applicability.State.NOT_APPLICABLE, answer.state());
+    assertTrue(answer.reason().contains("library-kit"), answer.reason());
+  }
+
+  @Test
+  void aReactorWithNoGoldenMastersAndOnlyTwoPartPactsIsNotApplicable() {
+    AutomationSubject subject =
+        subject(
+            new Host()
+                .blob("pom.xml", POM_WITHOUT)
+                .blob("service/pom.xml", "<project/>")
+                .pacts("x_qits-githost-service.json", "x__y.json", "a_b_c_d.json", "a_b_c.txt"));
+
+    assertEquals(Applicability.State.NOT_APPLICABLE, maven.applicability(subject).state());
+  }
+
+  @Test
+  void anUnreadablePactsListingIsUnknownUnlessGoldenMastersAlreadyApply() {
+    AutomationSubject without =
+        subject(
+            new Host()
+                .blob("pom.xml", POM_WITHOUT)
+                .blob("service/pom.xml", "<project/>")
+                .pactsUnreachable());
+    assertEquals(Applicability.State.UNKNOWN, maven.applicability(without).state());
+
+    AutomationSubject with =
+        subject(new Host().blob("pom.xml", POM_WITH_PROPERTY).pactsUnreachable());
+    assertTrue(maven.applicability(with).applied());
+  }
+
+  @Test
+  void npmAppliesAndRunsOnAMovedUiComponentsPinWithALibraryKitPact() {
+    AutomationSubject subject =
+        subject(
+            new Host()
+                .blob("package.json", PACKAGE_WITHOUT)
+                .pacts("qits-ci-frontend_qits-ui-components-jslib_qits-ci-service.json"));
+    assertTrue(npm.applicability(subject).applied());
+
+    npm.scanner =
+        new Scanner()
+            .at(SHA, npmUiComponents("2026.1031.2"))
+            .at("main", npmUiComponents("2026.1031.1"));
+    npm.graph =
+        new Graph(
+            Map.of(
+                ArtifactGraph.producerKey("npm", "@qits/ui-components"),
+                "qits-ui-components-jslib"));
+    assertEquals(Plan.Kind.RUN, npm.plan(subject).kind());
+
+    npm.graph = new Graph(Map.of());
+    assertEquals(Plan.Kind.RUN, npm.plan(subject).kind(), "by the name rule, @qits/ restored");
+  }
+
+  @Test
+  void theNameRuleIsTheComponentOrTheComponentAndADash() {
+    String library = "qits-eventstream-javalib";
+    String jslib = "qits-ui-components-jslib";
+    assertTrue(fromComponent("eu.wohlben.qits:qits-eventstream", library));
+    assertTrue(fromComponent("eu.wohlben.qits:qits-eventstream-contracts", library));
+    assertFalse(fromComponent("eu.wohlben.qits:qits-eventstreams", library));
+    assertFalse(fromComponent("eu.wohlben.qits:qits-events", library));
+    assertTrue(fromComponent("@qits/ui-components", jslib));
+    assertFalse(fromComponent("@other/ui-components", jslib));
+  }
+
+  private static boolean fromComponent(String pinName, String library) {
+    return GoldenRecordingsAutomation.fromComponent(pinName, library);
   }
 }
