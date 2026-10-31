@@ -32,11 +32,14 @@ import java.util.UUID;
  *
  * <h2>What is deliberately NOT armed</h2>
  *
- * <p>{@link #SECOND_REPOSITORY} carries no {@code .config/qits/maintenance.yml}, and that absence is
- * a fixture doing work: a 404 on a blob is followed by a read of the ROOT TREE at the same sha,
- * because the git host spells "no such revision" and "no such path" identically. Both calls are in
- * the diagram, which makes "a 404 is not an answer until it has been asked twice" a shape a reader
- * can see rather than a sentence in a README.
+ * <p>{@link #SECOND_REPOSITORY} carries neither {@code .config/qits/maintenance.yml} nor {@code
+ * .config/qits/repository.yml} (the latter is qits-1784's), and that double absence is a fixture
+ * doing work: a 404 on a blob is followed by a read of the ROOT TREE at the same sha, because the
+ * git host spells "no such revision" and "no such path" identically — so each of the two files 404s
+ * once and the root tree is read once in reply to each. All four calls are in the diagram, which
+ * makes "a 404 is not an answer until it has been asked twice" a shape a reader can see rather than
+ * a sentence in a README. {@link #REPOSITORY} carries both files, so its own reads of them are
+ * ordinary 200s.
  *
  * <p>Nothing arms a branch here either. {@code maintenance/dependencies} does not exist until a
  * bump story says it does, and an unregistered path is a 404 — which is exactly what the git host
@@ -382,6 +385,20 @@ public final class StoryCatalog {
       """;
 
   /**
+   * The repository's own {@code .config/qits/repository.yml} (qits-1784) — present and saying
+   * {@code archived: false}, which is the same verdict the fallback for an absent file would reach.
+   * It is armed here anyway, rather than left absent like {@link #SECOND_REPOSITORY}'s, so this
+   * repository demonstrates the FOUND path for both config files while the second one demonstrates
+   * the double-404 path.
+   */
+  private static final String REPOSITORY_YML =
+      """
+      version: 1
+      repository:
+        archived: false
+      """;
+
+  /**
    * The second repository: one EXTERNAL pin behind a property, and nothing else at all — so its
    * whole pending list belongs to the external half of the fallback, which is the branch the second
    * bump story writes.
@@ -467,12 +484,14 @@ public final class StoryCatalog {
     githost.text(blob(REPOSITORY, HEAD_SHA, "package-lock.json"), PACKAGE_LOCK, sha);
     githost.text(blob(REPOSITORY, HEAD_SHA, "Dockerfile"), DOCKERFILE, sha);
     githost.text(blob(REPOSITORY, HEAD_SHA, ".config/qits/maintenance.yml"), MAINTENANCE_YML, sha);
+    githost.text(blob(REPOSITORY, HEAD_SHA, ".config/qits/repository.yml"), REPOSITORY_YML, sha);
 
     Map<String, String> secondSha = Map.of("Git-Commit-Sha", SECOND_HEAD_SHA);
     githost.json(tree(SECOND_REPOSITORY, "main"), SECOND_ROOT_TREE, secondSha);
     githost.json(tree(SECOND_REPOSITORY, SECOND_HEAD_SHA), SECOND_ROOT_TREE, secondSha);
     githost.text(blob(SECOND_REPOSITORY, SECOND_HEAD_SHA, "pom.xml"), SECOND_POM, secondSha);
-    // …and NO .config/qits/maintenance.yml, deliberately. See the class comment.
+    // …and NO .config/qits/maintenance.yml and NO .config/qits/repository.yml, deliberately. See
+    // the class comment.
 
     // THE INTERNAL REGISTRIES. Which address answers is decided by the pin's KIND, not by the
     // ecosystem alone: `eu.wohlben.qits` and `@qits` and `qits/` are this platform's own, so they go
