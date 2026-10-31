@@ -107,7 +107,10 @@ public class ScanService {
    */
   @Inject MainHeadLatest mainHead;
 
-  /** The main-only requests this service opened on an UNDECLARED row, withdrawn (qits-1695). */
+  /**
+   * The main-only requests this service opened on an UNDECLARED row (qits-1695), or on one whose
+   * dependency bumps are off (qits-1784), withdrawn.
+   */
   @Inject eu.wohlben.qits.maintenance.automation.UndeclaredRequestWithdrawal undeclaredRequests;
 
   /**
@@ -212,6 +215,7 @@ public class ScanService {
     // BEFORE the registry half, so no ghost's pins are looked up: a dropped repository's rows are
     // gone by the time refreshLatest reads the inventory back out of the store.
     reconcile(read, repository, what, now);
+    withdrawBumpsOff(repository, scanned, what);
     refreshLatest(scope, repository);
 
     LOG.infof("%s finished over %d repositories", what, scanned);
@@ -322,6 +326,7 @@ public class ScanService {
         read.groupSource(),
         config::kindOf,
         gitlinkPins,
+        read.bumps(),
         now);
     if (atMain && read.headSha() != null && !read.headSha().isBlank()) {
       keepMain(entry, read, gitlinkPins);
@@ -474,6 +479,35 @@ public class ScanService {
       undeclaredRequests.sweep();
     } catch (RuntimeException e) {
       LOG.warnf("%s could not withdraw the requests of undeclared repositories: %s", what,
+          e.toString());
+    }
+  }
+
+  /**
+   * <b>The main-only requests of every repository whose bumps are off, withdrawn</b> (qits-1784).
+   *
+   * <p>A full scan sweeps every such row, a scan of one repository only that one — and only once it
+   * actually read it, because a skipped repository's row says nothing new. That is what makes a
+   * push to main that archives a repository withdraw its open bump within minutes: the push queues
+   * a scan of exactly that repository, the scan writes the row off, and this runs on the same
+   * worker. The sweep filters the rows itself (OK, bumps off), so a repository whose bumps are on is
+   * a store read and nothing else.
+   *
+   * <p>It never fails the scan: the sweep logs and swallows its own failures, and this is the belt
+   * to that brace, as it is for the undeclared sweep.
+   */
+  private void withdrawBumpsOff(String repository, int scanned, String what) {
+    if (scanned == 0) {
+      return;
+    }
+    try {
+      List<String> withdrawn = undeclaredRequests.sweepBumpsOff(repository);
+      if (!withdrawn.isEmpty()) {
+        LOG.infof("%s withdrew %d requests of repositories whose bumps are off: %s", what,
+            withdrawn.size(), withdrawn);
+      }
+    } catch (RuntimeException e) {
+      LOG.warnf("%s could not withdraw the requests of repositories whose bumps are off: %s", what,
           e.toString());
     }
   }

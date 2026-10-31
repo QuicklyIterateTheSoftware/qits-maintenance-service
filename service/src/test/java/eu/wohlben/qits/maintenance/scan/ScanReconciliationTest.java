@@ -219,6 +219,84 @@ class ScanReconciliationTest {
   }
 
   /**
+   * <b>A push that archives a repository withdraws its open bump</b> (qits-1784): the scan of that
+   * one repository reads {@code repository.archived: true}, keeps the row OK with its pins, and
+   * withdraws the main-only request this service opened — under the same guard as an undeclared
+   * row's, so a request carrying a person's branch stays.
+   */
+  @Test
+  void aScanOfOneRepositoryThatFindsItArchivedWithdrawsItsMaintenanceOnlyRequest() {
+    seedTheGhost("2026.811.1");
+    String requests = "/projects/api/repositories/r-" + GHOST + "/release-requests";
+    String ours = "rr-ours-" + UUID.randomUUID();
+    String shared = "rr-shared-" + UUID.randomUUID();
+    java.time.Instant now = java.time.Instant.now();
+    store.recordOpenedRequest(ours, GHOST, "main", MtReleaseRequest.MAIN_ONLY, null, now);
+    store.recordOpenedRequest(shared, GHOST, "main", MtReleaseRequest.MAIN_ONLY, null, now);
+    peers.answer(
+        PeerTarget.PROJECTS,
+        requests,
+        FakePeers.Scripted.ok(
+            "{\"requests\":[{\"id\":\"" + ours + "\",\"state\":\"PENDING\"},"
+                + "{\"id\":\"" + shared + "\",\"state\":\"PENDING\"}]}"));
+    requestCarries(requests, ours, "main", "maintenance/automations/dependency-bump");
+    requestCarries(requests, shared, "main", "feature/somebodys-work");
+    peers.answer(
+        PeerTarget.PROJECTS,
+        requests + "/" + ours + "/withdraw",
+        FakePeers.Scripted.ok("{\"request\":{\"id\":\"" + ours + "\",\"state\":\"WITHDRAWN\"}}"));
+    assertFalse(
+        peers.called(PeerTarget.PROJECTS, requests + "/" + ours + "/withdraw"),
+        "the control: a full scan of a live repository withdraws nothing");
+
+    scriptTheGhostsFile(
+        eu.wohlben.qits.maintenance.manifest.RepositoryConfig.PATH,
+        "version: 1\nrepository:\n  archived: true\n");
+    scans.request(ScanScope.INTERNAL, GHOST, ScanTrigger.EVENT);
+    queue.awaitIdle(Duration.ofSeconds(60));
+
+    MtRepository ghost = row(GHOST);
+    assertEquals(RepositoryStatus.OK.name(), ghost.status, ghost.message);
+    assertFalse(ghost.dependencyBumps);
+    assertFalse(store.pins(GHOST).isEmpty(), "an archived repository keeps its pins");
+    assertEquals(1, peers.bodiesFor(requests + "/" + ours + "/withdraw").size(), "ours withdrawn");
+    String reason = peers.bodiesFor(requests + "/" + ours + "/withdraw").getFirst();
+    assertTrue(reason.contains("qits-1784") && reason.contains("archived"), reason);
+    assertNotNull(store.releaseRequest(ours).orElseThrow().withdrawnAt);
+    assertFalse(
+        peers.called(PeerTarget.PROJECTS, requests + "/" + shared + "/withdraw"),
+        "a request carrying a person's branch is left alone");
+  }
+
+  /** A full scan sweeps every row whose switch is off, and the reason names the switch. */
+  @Test
+  void aFullScanWithdrawsTheRequestOfARowThatSwitchedItsBumpsOff() {
+    seedTheGhost("2026.811.1");
+    String requests = "/projects/api/repositories/r-" + GHOST + "/release-requests";
+    String ours = "rr-ours-" + UUID.randomUUID();
+    store.recordOpenedRequest(
+        ours, GHOST, "main", MtReleaseRequest.MAIN_ONLY, null, java.time.Instant.now());
+    peers.answer(
+        PeerTarget.PROJECTS,
+        requests,
+        FakePeers.Scripted.ok(
+            "{\"requests\":[{\"id\":\"" + ours + "\",\"state\":\"PENDING\"}]}"));
+    requestCarries(requests, ours, "main");
+    peers.answer(
+        PeerTarget.PROJECTS,
+        requests + "/" + ours + "/withdraw",
+        FakePeers.Scripted.ok("{\"request\":{\"id\":\"" + ours + "\",\"state\":\"WITHDRAWN\"}}"));
+
+    scriptTheGhostsFile(
+        eu.wohlben.qits.maintenance.manifest.GroupConfig.PATH, "dependency-bumps: false\n");
+    fullScan(ScanStatus.SUCCEEDED);
+
+    assertFalse(row(GHOST).dependencyBumps);
+    String reason = peers.bodiesFor(requests + "/" + ours + "/withdraw").getFirst();
+    assertTrue(reason.contains("qits-1784") && reason.contains("dependency-bumps: false"), reason);
+  }
+
+  /**
    * <b>A listing that cannot be read fails nothing</b>: the scan still SUCCEEDS, the row is still
    * marked, and the next scan asks again.
    */
@@ -435,6 +513,14 @@ class ScanReconciliationTest {
     }
     peers.answer(
         PeerTarget.PROJECTS, CatalogReader.PATH, FakePeers.Scripted.ok(json.append("]}").toString()));
+  }
+
+  /** One more file in the ghost's tree at its head. */
+  private void scriptTheGhostsFile(String path, String content) {
+    peers.answer(
+        PeerTarget.GITHOST,
+        "/git/" + Fixture.PROJECT + "/" + GHOST + "/blob/" + GHOST_SHA + "/" + path,
+        FakePeers.Scripted.ok(content, Map.of("Git-Commit-Sha", GHOST_SHA)));
   }
 
   /**

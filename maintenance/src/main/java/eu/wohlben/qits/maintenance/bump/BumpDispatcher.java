@@ -662,8 +662,8 @@ public class BumpDispatcher {
   }
 
   /**
-   * The walk: every OK repository whose INTERNAL group has something pending, flagged held when a
-   * request already carries it, with the refused ones set aside.
+   * The walk: every OK repository whose bumps are on and whose INTERNAL group has something
+   * pending, flagged held when a request already carries it, with the refused ones set aside.
    *
    * <p><b>Held is a flag rather than a skip</b>: a held repository is still owed, and dropping it
    * would let its consumers go before the release they are waiting for.
@@ -677,6 +677,12 @@ public class BumpDispatcher {
     Set<String> reofferOwed = new LinkedHashSet<>();
     for (MtRepository row : store.repositories()) {
       if (!RepositoryStatus.OK.name().equals(row.status)) {
+        continue;
+      }
+      if (!row.dependencyBumps) {
+        // OWED NOTHING, NOT HELD (qits-1784): archived, or `dependency-bumps: false`. Skipped before
+        // its pending changes are even computed, so it never stands, is never picked and no
+        // main-only request is opened for it — while its pins stay on the inventory for the GC.
         continue;
       }
       List<MtGroup> groups = store.groups(row.name);

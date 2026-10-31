@@ -205,6 +205,8 @@ erDiagram
     string name PK "not null, length 255"
     text archetype
     string catalog_id "length 64"
+    boolean dependency_bumps "not null"
+    string dependency_bumps_reason "length 16"
     string head_sha "length 64"
     instant last_scan_at
     string main_branch "length 255"

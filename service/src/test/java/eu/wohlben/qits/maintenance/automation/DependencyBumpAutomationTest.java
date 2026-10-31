@@ -492,6 +492,50 @@ class DependencyBumpAutomationTest {
         "the source is fresh, so the derived kinds go in the same ask");
   }
 
+  /**
+   * <b>A fold whose own files switch the bumps off plans no bump</b> (qits-1784): archived in its
+   * {@code repository.yml}, with a pin behind its latest. FRESH, so the automation settles green
+   * with no branch and the derived kinds go in the same ask.
+   */
+  @Test
+  void anArchivedFoldPlansNoBump() {
+    AutomationFixture.scriptManifests(peers, FOLD_A, STALE_POM, null);
+    AutomationFixture.scriptRepositoryYml(
+        peers, FOLD_A, "version: 1\nrepository:\n  archived: true\n");
+
+    ReleaseRequestAutomationsDto answer = trigger(FOLD_A, null, null, ACCEPTS);
+
+    AutomationDto bump = AutomationFixture.entry(answer, DependencyBumpAutomation.KIND);
+    assertEquals(AutomationState.FRESH.name(), bump.state(), bump.detail());
+    assertTrue(bump.detail().contains("archived"), bump.detail());
+    assertTrue(triggers().stream().noneMatch(body -> body.contains(DependencyBumpAutomation.KIND)));
+  }
+
+  /** {@code dependency-bumps:} at the fold decides both ways, over the archive. */
+  @Test
+  void theFoldsSwitchDecidesOverTheArchive() {
+    MtRepository repository = store.repository(Fixture.REPOSITORY).orElseThrow();
+
+    AutomationFixture.scriptManifests(peers, FOLD_A, STALE_POM, "dependency-bumps: false\n");
+    Plan off = dependencyBump.plan(automations.subject(repository, REQUEST, FOLD_A, null, null));
+    assertEquals(Plan.Kind.FRESH, off.kind(), off.reason());
+    assertTrue(off.reason().contains("dependency-bumps: false"), off.reason());
+
+    AutomationFixture.scriptManifests(peers, FOLD_B, STALE_POM, "dependency-bumps: true\n");
+    AutomationFixture.scriptRepositoryYml(peers, FOLD_B, "repository:\n  archived: true\n");
+    Plan on = dependencyBump.plan(automations.subject(repository, REQUEST, FOLD_B, null, null));
+    assertEquals(Plan.Kind.RUN, on.kind(), on.reason());
+
+    // A repository.yml that does not parse is an invalid maintenance.yml's twin: FRESH, saying why.
+    AutomationFixture.scriptManifests(peers, FOLD_C, STALE_POM, null);
+    AutomationFixture.scriptRepositoryYml(peers, FOLD_C, "repository:\n  archived: soon\n");
+    Plan invalid = dependencyBump.plan(automations.subject(repository, REQUEST, FOLD_C, null, null));
+    assertEquals(Plan.Kind.FRESH, invalid.kind(), invalid.reason());
+    assertTrue(
+        invalid.reason().contains(eu.wohlben.qits.maintenance.manifest.RepositoryConfig.PATH),
+        invalid.reason());
+  }
+
   /** {@code ignore:} takes the ecosystem off the fold altogether — and so off the plan. */
   @Test
   void anIgnoredEcosystemIsNeverBumped() {

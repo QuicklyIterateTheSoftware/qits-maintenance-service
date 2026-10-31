@@ -22,8 +22,10 @@ import eu.wohlben.qits.maintenance.bump.ReleaseRequestClient;
 import eu.wohlben.qits.maintenance.bump.SystemClient;
 import eu.wohlben.qits.maintenance.entity.MtReleaseRequest;
 import eu.wohlben.qits.maintenance.latest.GitlinkSha;
+import eu.wohlben.qits.maintenance.manifest.DependencyBumps;
 import eu.wohlben.qits.maintenance.manifest.GroupConfig;
 import eu.wohlben.qits.maintenance.manifest.ParsedPin;
+import eu.wohlben.qits.maintenance.manifest.RepositoryConfig;
 import eu.wohlben.qits.maintenance.model.BumpMode;
 import eu.wohlben.qits.maintenance.model.BumpStatus;
 import eu.wohlben.qits.maintenance.model.BumpTrigger;
@@ -516,6 +518,91 @@ class BumpDispatchTest {
     assertTrue(dispatcher.assess().candidates().isEmpty(), "not a candidate");
     assertTrue(dispatcher.tick().isEmpty());
     assertEquals(0, asks("catalog-" + repository), "no release ask was posted");
+  }
+
+  // --- bumps switched off (qits-1784) -----------------------------------------------------------
+
+  /**
+   * Re-reads {@link Fixture#REPOSITORY} with these two files at its head — null leaves a file absent
+   * — by a scan of that one repository, the push path's scan.
+   */
+  private void rescanWith(String maintenanceYml, String repositoryYml) {
+    String blob = "/git/" + Fixture.PROJECT + "/" + Fixture.REPOSITORY + "/blob/" + Fixture.HEAD_SHA;
+    Map<String, String> sha = Map.of("Git-Commit-Sha", Fixture.HEAD_SHA);
+    peers.answer(
+        PeerTarget.GITHOST,
+        blob + "/" + GroupConfig.PATH,
+        maintenanceYml == null
+            ? FakePeers.Scripted.status(404, "")
+            : FakePeers.Scripted.ok(maintenanceYml, sha));
+    peers.answer(
+        PeerTarget.GITHOST,
+        blob + "/" + RepositoryConfig.PATH,
+        repositoryYml == null
+            ? FakePeers.Scripted.status(404, "")
+            : FakePeers.Scripted.ok(repositoryYml, sha));
+    scans.request(ScanScope.INTERNAL, Fixture.REPOSITORY, ScanTrigger.EVENT);
+    queue.awaitIdle(Duration.ofSeconds(60));
+  }
+
+  private static final String ARCHIVED = "version: 1\nrepository:\n  archived: true\n";
+
+  /**
+   * <b>An ARCHIVED repository is never dispatched and never stands</b> (qits-1784), with pins a
+   * release has moved past and a free queue. Unlike an undeclared one it stays OK and keeps every
+   * pin — it is the row's own {@code dependency_bumps} that keeps the dispatcher away.
+   */
+  @Test
+  void anArchivedRepositoryIsNeverDispatchedAndIsAbsentFromStanding() {
+    assertFalse(dispatcher.assess().candidates().isEmpty(), "the control: it is owed a bump");
+    rescanWith(null, ARCHIVED);
+    Fixture.scriptCiQueueEmpty(peers);
+
+    var row = store.repository(Fixture.REPOSITORY).orElseThrow();
+    assertEquals(RepositoryStatus.OK.name(), row.status, row.message);
+    assertFalse(row.dependencyBumps);
+    assertEquals(DependencyBumps.ARCHIVED, row.dependencyBumpsReason);
+    assertFalse(store.pins(Fixture.REPOSITORY).isEmpty(), "its pins are kept");
+
+    assertTrue(dispatcher.assess().candidates().isEmpty(), "not a candidate");
+    given()
+        .header("X-Qits-User", "dyn-workspace-agent")
+        .header("X-Qits-Roles", "qits:agent")
+        .get("/maintenance/api/bumps/standing")
+        .then()
+        .statusCode(200)
+        .body("owed", is(0))
+        .body("standing", empty())
+        .body("picks", empty());
+    assertTrue(dispatcher.tick().isEmpty());
+    assertEquals(0, asks(Fixture.CATALOG_ID), "no release ask was posted");
+  }
+
+  /** {@code dependency-bumps: true} keeps an archived repository's bumps coming. */
+  @Test
+  void dependencyBumpsTrueOverridesTheArchive() {
+    rescanWith("dependency-bumps: true\n", ARCHIVED);
+    Fixture.scriptCiQueueEmpty(peers);
+
+    var row = store.repository(Fixture.REPOSITORY).orElseThrow();
+    assertTrue(row.dependencyBumps);
+    assertNull(row.dependencyBumpsReason);
+    assertEquals(requestIdOf(Fixture.REPOSITORY), only(dispatcher.tick()).toString());
+  }
+
+  /** {@code dependency-bumps: false} stops a repository nothing archived. */
+  @Test
+  void dependencyBumpsFalseStopsALiveRepository() {
+    rescanWith("dependency-bumps: false\n", null);
+    Fixture.scriptCiQueueEmpty(peers);
+
+    var row = store.repository(Fixture.REPOSITORY).orElseThrow();
+    assertEquals(RepositoryStatus.OK.name(), row.status, row.message);
+    assertFalse(row.dependencyBumps);
+    assertEquals(DependencyBumps.SWITCH, row.dependencyBumpsReason);
+    assertTrue(dispatcher.assess().candidates().isEmpty());
+    assertTrue(dispatcher.tick().isEmpty());
+    assertEquals(0, asks(Fixture.CATALOG_ID));
   }
 
   // --- the capacity gate (qits-1769: the room is READ from qits-system's targets) --------------

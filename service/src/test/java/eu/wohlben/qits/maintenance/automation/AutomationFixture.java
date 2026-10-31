@@ -101,6 +101,14 @@ final class AutomationFixture {
     }
   }
 
+  /** The fold's {@code .config/qits/repository.yml} (qits-1784), beside what scriptManifests armed. */
+  static void scriptRepositoryYml(FakePeers peers, String fold, String repositoryYml) {
+    peers.answer(
+        PeerTarget.GITHOST,
+        BLOB + fold + "/" + eu.wohlben.qits.maintenance.manifest.RepositoryConfig.PATH,
+        FakePeers.Scripted.ok(repositoryYml, Map.of("Git-Commit-Sha", fold)));
+  }
+
   /** A fold whose root holds a {@code .gitmodules} and the {@code webui} gitlink at this sha. */
   static void scriptGitlinkFold(FakePeers peers, String fold, String gitlinkSha) {
     Map<String, String> sha = Map.of("Git-Commit-Sha", fold);

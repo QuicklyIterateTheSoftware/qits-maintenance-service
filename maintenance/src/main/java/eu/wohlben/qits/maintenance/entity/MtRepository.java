@@ -106,6 +106,24 @@ public class MtRepository extends PanacheEntityBase {
   @Column(name = "reoffer_owed_at")
   public Instant reofferOwedAt;
 
+  /**
+   * Whether this repository is owed dependency bumps (qits-1784, V29): false when its own {@code
+   * .config/qits/maintenance.yml} sets {@code dependency-bumps: false}, or when its {@code
+   * .config/qits/repository.yml} says {@code repository.archived: true} and the switch is not set.
+   * Written by every scan that reads the tree, and kept by one that could not. <b>Not a status</b>:
+   * the row stays OK and its pins are read and kept; only the dispatcher and the withdrawal of this
+   * service's own main-only requests read it. True on every row before the column.
+   */
+  @Column(name = "dependency_bumps", nullable = false)
+  public boolean dependencyBumps = true;
+
+  /**
+   * Why {@link #dependencyBumps} is false — {@code archived} or {@code switch}, the words of {@code
+   * manifest.DependencyBumps}. Null while the bumps are on.
+   */
+  @Column(name = "dependency_bumps_reason", length = 16)
+  public String dependencyBumpsReason;
+
   /** {@link #mainBranch}, or {@code main} for a row that carries none. */
   public String mainBranchOrDefault() {
     return mainBranch == null || mainBranch.isBlank() ? "main" : mainBranch;
