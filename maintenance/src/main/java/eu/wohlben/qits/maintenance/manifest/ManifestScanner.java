@@ -91,6 +91,9 @@ public class ManifestScanner {
    * @param pins every direct pin found, in discovery order — an ignored ecosystem contributes none
    * @param groups the repository's grouping, empty when the status is CONFIG_ERROR
    * @param message the sentence for the row, null when the status is OK
+   * @param bumps whether the repository is owed dependency bumps (qits-1784) — decided only on an OK
+   *     read, and {@link DependencyBumps#ON} on every other, where the status already keeps the
+   *     dispatcher away
    */
   public record Read(
       RepositoryStatus status,
@@ -98,7 +101,24 @@ public class ManifestScanner {
       List<ParsedPin> pins,
       List<GroupConfig.Group> groups,
       eu.wohlben.qits.maintenance.model.GroupSource groupSource,
-      String message) {}
+      String message,
+      DependencyBumps bumps) {
+
+    public Read {
+      bumps = bumps == null ? DependencyBumps.ON : bumps;
+    }
+
+    /** Every read that does not get as far as deciding the bumps. */
+    public Read(
+        RepositoryStatus status,
+        String headSha,
+        List<ParsedPin> pins,
+        List<GroupConfig.Group> groups,
+        eu.wohlben.qits.maintenance.model.GroupSource groupSource,
+        String message) {
+      this(status, headSha, pins, groups, groupSource, message, DependencyBumps.ON);
+    }
+  }
 
   /** Reads one repository at its default branch — what every scheduled scan asks for. */
   public Read read(CatalogEntry entry) {
@@ -180,13 +200,58 @@ public class ManifestScanner {
       return new Read(
           RepositoryStatus.CONFIG_ERROR, headSha, List.copyOf(pins), List.of(), null, config.error());
     }
+    // AT THE SAME SHA, AND ONLY HERE (qits-1784). Whether the repository is owed bumps is a fact
+    // about its current tree, which is what a scan writes the row from; the ledger's read of a
+    // released tree (pinsAt) has no row to put it on.
+    FileLookup repositoryFile = gitHost.blob(project, name, headSha, RepositoryConfig.PATH);
+    RepositoryConfig.Parsed repositoryConfig =
+        switch (repositoryFile.status()) {
+          case FOUND -> RepositoryConfig.parse(repositoryFile.content());
+          // GONE is how a 404 on a blob reads when the listing at the sha did not answer either; the
+          // sha was resolved a moment ago, so it is the file that is missing, which is "not
+          // archived".
+          case ABSENT, GONE -> RepositoryConfig.fallback();
+          default -> null;
+        };
+    if (repositoryConfig == null) {
+      // NOT READ IS NOT "NOT ARCHIVED". Falling back, as an unreadable maintenance.yml does, would
+      // switch an archived repository's bumps back on for one scan — long enough for the dispatcher
+      // to open a request against it. UNREACHABLE keeps the row's pins and its last decision, and
+      // the next scan reads the file again.
+      String unread =
+          name + " has " + RepositoryConfig.PATH + " and the git host did not serve it ("
+              + repositoryFile.status()
+              + (repositoryFile.message() == null ? "" : ": " + repositoryFile.message()) + ")";
+      LOG.warnf("At %s: %s", headSha, unread);
+      return new Read(RepositoryStatus.UNREACHABLE, null, List.of(), List.of(), null, unread);
+    }
+    if (!repositoryConfig.ok()) {
+      return new Read(
+          RepositoryStatus.CONFIG_ERROR,
+          headSha,
+          List.copyOf(pins),
+          List.of(),
+          null,
+          repositoryConfig.error());
+    }
     if (!config.ignored().isEmpty()) {
       LOG.debugf(
           "%s asks not to be scanned for %s",
           name, config.ignored().stream().map(Ecosystem::wireName).toList());
     }
+    DependencyBumps bumps =
+        DependencyBumps.of(config.dependencyBumps(), repositoryConfig.archived());
+    if (!bumps.on()) {
+      LOG.debugf("%s is owed no dependency bumps: %s", name, bumps.sentence());
+    }
     return new Read(
-        RepositoryStatus.OK, headSha, List.copyOf(pins), config.groups(), config.source(), null);
+        RepositoryStatus.OK,
+        headSha,
+        List.copyOf(pins),
+        config.groups(),
+        config.source(),
+        null,
+        bumps);
   }
 
   /**

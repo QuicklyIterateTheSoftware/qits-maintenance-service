@@ -27,6 +27,7 @@ import eu.wohlben.qits.maintenance.entity.MtScan;
 import eu.wohlben.qits.maintenance.error.BumpAlreadyActiveException;
 import eu.wohlben.qits.maintenance.latest.LatestLookup;
 import eu.wohlben.qits.maintenance.latest.VersionOrder;
+import eu.wohlben.qits.maintenance.manifest.DependencyBumps;
 import eu.wohlben.qits.maintenance.manifest.GroupConfig;
 import eu.wohlben.qits.maintenance.manifest.ParsedPin;
 import eu.wohlben.qits.maintenance.model.BranchState;
@@ -157,6 +158,41 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
       java.util.function.Function<ParsedPin, PinKind> kindOf,
       List<GitlinkPin> gitlinkPins,
       Instant now) {
+    replaceInventory(
+        name, project, catalogId, archetype, mainBranch, status, headSha, message, pins, groups,
+        groupSource, kindOf, gitlinkPins, DependencyBumps.ON, now);
+  }
+
+  /**
+   * The same replacement, with whether the repository is owed dependency bumps (qits-1784) written
+   * on the row in the same transaction — so the dispatcher never reads fresh pins beside a stale
+   * decision about them.
+   *
+   * <p><b>Off is not a status and costs no pin.</b> The row keeps the status the read gave it and
+   * every pin is written as usual: unlike an UNDECLARED row, an archived repository is still a
+   * repository whose pins the artifact GC must keep. Only {@code BumpDispatcher} and the withdrawal
+   * read the two columns.
+   *
+   * @param bumps the read's decision; null reads as on
+   */
+  @ActivateRequestContext
+  public void replaceInventory(
+      String name,
+      String project,
+      String catalogId,
+      String archetype,
+      String mainBranch,
+      RepositoryStatus status,
+      String headSha,
+      String message,
+      List<ParsedPin> pins,
+      List<GroupConfig.Group> groups,
+      GroupSource groupSource,
+      java.util.function.Function<ParsedPin, PinKind> kindOf,
+      List<GitlinkPin> gitlinkPins,
+      DependencyBumps bumps,
+      Instant now) {
+    DependencyBumps decided = bumps == null ? DependencyBumps.ON : bumps;
     DbRetry.runInNewTx(
         "replace the inventory of " + name,
         () -> {
@@ -188,6 +224,8 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
           row.headSha = headSha;
           row.message = message;
           row.lastScanAt = now;
+          row.dependencyBumps = decided.on();
+          row.dependencyBumpsReason = decided.reason();
           if (fresh) {
             persist(row);
           }

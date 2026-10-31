@@ -2,6 +2,7 @@ package eu.wohlben.qits.maintenance.manifest;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.maintenance.model.Ecosystem;
@@ -210,5 +211,48 @@ class GroupConfigTest {
     assertFalse(GroupConfig.parse("hold: angular\n").ok());
     assertFalse(GroupConfig.parse("hold: [\"\"]\n").ok());
     assertFalse(GroupConfig.parse("hold: [{name: x}]\n").ok());
+  }
+
+  // --- dependency-bumps (qits-1784) ---------------------------------------------------------------
+
+  @Test
+  void dependencyBumpsTrueAndFalseAreCarried() {
+    GroupConfig.Parsed on = GroupConfig.parse("dependency-bumps: true\n");
+    assertTrue(on.ok(), on.error());
+    assertEquals(Boolean.TRUE, on.dependencyBumps());
+
+    GroupConfig.Parsed off = GroupConfig.parse("dependency-bumps: false\nhold: [\"x:y\"]\n");
+    assertTrue(off.ok(), off.error());
+    assertEquals(Boolean.FALSE, off.dependencyBumps());
+    assertTrue(off.holds("x:y"), "the switch sits beside the other keys");
+  }
+
+  /** Absent is UNSET, not false: the archive flag decides then. */
+  @Test
+  void anAbsentSwitchIsUnsetNotFalse() {
+    assertNull(GroupConfig.parse("hold: [\"x:y\"]\n").dependencyBumps());
+    assertNull(GroupConfig.parse("").dependencyBumps());
+    assertNull(GroupConfig.fallback().dependencyBumps());
+  }
+
+  /** A switch that does not parse is not a switch: the whole file is refused, as a bad hold is. */
+  @Test
+  void aSwitchThatIsNotABooleanRefusesTheFile() {
+    for (String yaml :
+        List.of(
+            "dependency-bumps: never\n",
+            "dependency-bumps: \"false\"\n",
+            "dependency-bumps: 0\n",
+            "dependency-bumps: [false]\n")) {
+      GroupConfig.Parsed parsed = GroupConfig.parse(yaml);
+      assertFalse(parsed.ok(), yaml);
+      assertTrue(parsed.error().contains("dependency-bumps"), parsed.error());
+      assertEquals(GroupSource.CONFIG, parsed.source());
+    }
+  }
+
+  @Test
+  void aRootThatIsNotAMappingNamesTheSwitchAmongTheKeys() {
+    assertTrue(GroupConfig.parse("- false\n").error().contains("`dependency-bumps`"));
   }
 }

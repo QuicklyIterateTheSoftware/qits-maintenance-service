@@ -6,10 +6,12 @@ import eu.wohlben.qits.maintenance.entity.MtLatest;
 import eu.wohlben.qits.maintenance.entity.MtPin;
 import eu.wohlben.qits.maintenance.githost.FileLookup;
 import eu.wohlben.qits.maintenance.latest.LatestResolver;
+import eu.wohlben.qits.maintenance.manifest.DependencyBumps;
 import eu.wohlben.qits.maintenance.manifest.GitmodulesParser;
 import eu.wohlben.qits.maintenance.manifest.GroupConfig;
 import eu.wohlben.qits.maintenance.manifest.ManifestScanner;
 import eu.wohlben.qits.maintenance.manifest.ParsedPin;
+import eu.wohlben.qits.maintenance.manifest.RepositoryConfig;
 import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.PinKind;
 import eu.wohlben.qits.maintenance.model.RepositoryArchetype;
@@ -24,6 +26,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
+import org.jboss.logging.Logger;
 
 /**
  * <b>Dependency bump</b> (qits-1133): every pin a release request's FOLD carries that is behind its
@@ -183,8 +186,9 @@ public class DependencyBumpAutomation implements ReleaseRequestAutomation {
   }
 
   /**
-   * What the plan reads: its own manifests, the {@code .gitmodules} that names the gitlinks and the
-   * config that says what is ignored and held. A fold that touched none of them carries; one that
+   * What the plan reads: its own manifests, the {@code .gitmodules} that names the gitlinks, the
+   * config that says what is ignored and held, and the {@code repository.yml} whose {@code archived}
+   * may switch the bumps off (qits-1784). A fold that touched none of them carries; one that
    * did — this kind's own commit included — is planned again, and the plan is what ends the loop.
    */
   @Override
@@ -192,6 +196,7 @@ public class DependencyBumpAutomation implements ReleaseRequestAutomation {
     List<String> paths = new ArrayList<>(committablePaths(subject));
     paths.add(GitmodulesParser.PATH);
     paths.add(GroupConfig.PATH);
+    paths.add(RepositoryConfig.PATH);
     return List.copyOf(paths);
   }
 
@@ -200,6 +205,7 @@ public class DependencyBumpAutomation implements ReleaseRequestAutomation {
     List<String> paths = new ArrayList<>(MANIFESTS);
     paths.add(GitmodulesParser.PATH);
     paths.add(GroupConfig.PATH);
+    paths.add(RepositoryConfig.PATH);
     return List.copyOf(paths);
   }
 
@@ -237,6 +243,35 @@ public class DependencyBumpAutomation implements ReleaseRequestAutomation {
       // The scan's own rule: an invalid file is a CONFIG_ERROR and nothing is bumped for it. FRESH
       // rather than FAILED, because a person's request must not hold on a file that is theirs to fix.
       return Plan.fresh(declared.error() + " — nothing is bumped until it parses");
+    }
+    // THE FOLD'S OWN WORD ON WHETHER IT IS OWED BUMPS AT ALL (qits-1784), read at the same sha as
+    // maintenance.yml. The dispatcher already skips a row the last scan found off, but a request
+    // opened before that scan — or by a person, or re-planned by an upstream release — reaches here
+    // regardless, and it is the fold, not the inventory, that says what this request would ship.
+    FileLookup repositoryFile = fold.file(RepositoryConfig.PATH);
+    RepositoryConfig.Parsed repository =
+        switch (repositoryFile.status()) {
+          case FOUND -> RepositoryConfig.parse(repositoryFile.content());
+          case ABSENT -> RepositoryConfig.fallback();
+          default -> null;
+        };
+    if (repository == null) {
+      return Plan.unknown(
+          RepositoryConfig.PATH + " could not be read at the fold: "
+              + (repositoryFile.message() == null
+                  ? repositoryFile.status().name()
+                  : repositoryFile.message()));
+    }
+    if (!repository.ok()) {
+      // The same rule as an invalid maintenance.yml, and for the same reason.
+      return Plan.fresh(repository.error() + " — nothing is bumped until it parses");
+    }
+    DependencyBumps bumps = DependencyBumps.of(declared.dependencyBumps(), repository.archived());
+    if (!bumps.on()) {
+      // FRESH, the green that writes no branch: nothing is owed, so nothing is stale either.
+      String reason = "dependency bumps are off at the fold: " + bumps.sentence();
+      LOG.infof("%s plans no bump at %s: %s", subject.repository().name, fold.sha(), reason);
+      return Plan.fresh(reason);
     }
 
     ManifestScanner.Pins read =
@@ -281,6 +316,8 @@ public class DependencyBumpAutomation implements ReleaseRequestAutomation {
 
   /** The payload field naming the files a run may stage, as the engine and qits-ci both read it. */
   public static final String COMMIT_PATHS = "commitPaths";
+
+  private static final Logger LOG = Logger.getLogger(DependencyBumpAutomation.class);
 
   /**
    * The files a change list touches: each change's manifest, and beside an npm manifest its lock,

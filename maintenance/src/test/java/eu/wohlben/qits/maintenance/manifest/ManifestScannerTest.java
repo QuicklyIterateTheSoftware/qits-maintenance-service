@@ -348,6 +348,70 @@ class ManifestScannerTest {
     assertTrue(read.groups().isEmpty(), "and nothing is bumped for it");
   }
 
+  // --- whether the repository is owed bumps (qits-1784) ------------------------------------------
+
+  /** The control: no repository.yml and no switch read as bumps ON, and the absence costs one read. */
+  @Test
+  void aRepositoryThatSaysNothingIsOwedBumps() {
+    Host host = mixed(null);
+
+    ManifestScanner.Read read = read(host);
+
+    assertEquals(RepositoryStatus.OK, read.status());
+    assertEquals(DependencyBumps.ON, read.bumps());
+    assertTrue(host.read.contains("blob " + RepositoryConfig.PATH));
+  }
+
+  /**
+   * AN ARCHIVED REPOSITORY IS OWED NO BUMPS, AND KEEPS EVERY PIN. Off is not a status: the row is OK
+   * and the inventory is what it would be otherwise, because the GC still keeps what it pins.
+   */
+  @Test
+  void anArchivedRepositoryIsOkWithItsPinsAndItsBumpsOff() {
+    ManifestScanner.Read read =
+        read(mixed(null).blob(RepositoryConfig.PATH, "version: 1\nrepository:\n  archived: true\n"));
+
+    assertEquals(RepositoryStatus.OK, read.status());
+    assertEquals(new DependencyBumps(false, DependencyBumps.ARCHIVED), read.bumps());
+    assertEquals(2, read.pins().size(), "every pin is still read");
+  }
+
+  @Test
+  void theSwitchOverridesTheArchiveInBothDirections() {
+    String archived = "version: 1\nrepository:\n  archived: true\n";
+    assertEquals(
+        DependencyBumps.ON,
+        read(mixed("dependency-bumps: true\n").blob(RepositoryConfig.PATH, archived)).bumps());
+    assertEquals(
+        new DependencyBumps(false, DependencyBumps.SWITCH),
+        read(mixed("dependency-bumps: false\n")).bumps());
+  }
+
+  /** An archive flag that does not parse is the row's CONFIG_ERROR, naming the file. */
+  @Test
+  void anInvalidRepositoryYmlIsAConfigErrorOnTheRow() {
+    ManifestScanner.Read read =
+        read(mixed(null).blob(RepositoryConfig.PATH, "repository:\n  archived: soon\n"));
+
+    assertEquals(RepositoryStatus.CONFIG_ERROR, read.status());
+    assertTrue(read.message().contains(RepositoryConfig.PATH), read.message());
+    assertTrue(read.groups().isEmpty(), "nothing is bumped for it");
+  }
+
+  /**
+   * NOT READ IS NOT "NOT ARCHIVED". A repository.yml the host would not serve leaves the row
+   * UNREACHABLE — which keeps the stored pins and the last decision — rather than switching an
+   * archived repository's bumps back on for a scan.
+   */
+  @Test
+  void anUnservedRepositoryYmlIsUnreachableNotUnarchived() {
+    ManifestScanner.Read read =
+        read(mixed(null).unserved(RepositoryConfig.PATH, FileLookup.unreachable("timed out")));
+
+    assertEquals(RepositoryStatus.UNREACHABLE, read.status());
+    assertTrue(read.message().contains(RepositoryConfig.PATH), read.message());
+  }
+
   /** A file git wrote is not this service's configuration: an unreadable one is not CONFIG_ERROR. */
   @Test
   void anUnparseableGitmodulesLeavesTheRepositoryOK() {

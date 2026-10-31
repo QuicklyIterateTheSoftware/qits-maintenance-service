@@ -296,13 +296,15 @@ says its `Stage`: SOURCE (`estate-pins`, `dependency-bump` — build inputs) is 
 until every applicable SOURCE kind is FRESH at the fold, and answers WAITING until then. Carry-over is
 per stage: a DERIVED kind's union is its own stage's paths, so a SOURCE commit (a pom the bump moved)
 re-runs it, and a kind that declares `inputPaths()` (`entity-diagram`: `**/*.java`, `**/pom.xml`;
-`dependency-bump`: its manifests, `.gitmodules`, `maintenance.yml`; `estate-pins`: `.gitmodules` and
+`dependency-bump`: its manifests, `.gitmodules`, `maintenance.yml`, `repository.yml`; `estate-pins`: `.gitmodules` and
 its gitlinks) carries exactly when the fold
 touched none of them. `committablePaths` stay pairwise disjoint across ALL kinds; "no output is
 another's input" holds within a stage and from DERIVED to SOURCE (`AutomationRegistryTest`), and a
 RUN plan naming another applicable kind's path is refused FAILED at run time (`AutomationService.clash`).
 `dependency-bump` plans AT THE FOLD through `ManifestScanner.pinsAt` and the pending rule, minus
-`ignore:` and the new `hold:`, never a wrapper's gitlinks (estate-pins' own), and INTERNAL pins only
+`ignore:` and the new `hold:`, never a wrapper's gitlinks (estate-pins' own), nothing at all (FRESH)
+when the fold's own `dependency-bumps` / `repository.archived` turn the bumps off (qits-1784, see
+below), and INTERNAL pins only
 — EXTERNAL ones solely in a MAIN-ONLY request the dispatcher opened (`mt_release_request.purpose =
 MAIN_ONLY`, V21); a person's request, and a legacy group bump's, get internal pins only. Its
 payload carries `changes` in the `MaintenanceBump` entry shape
@@ -365,7 +367,11 @@ any other unreadable answer keeps it, and a branch with a REQUESTED or RUNNING r
 touched. A failed delete is a WARN and the next pass's retry; an already-gone branch is success.
 
 **THE DISPATCHER OPENS A MAIN-ONLY REQUEST WHERE A REPOSITORY HAS NONE (`bump/BumpDispatcher`).**
-Every 15 seconds (`BumpDispatchSchedule`) it walks the inventory: a repository is OWED when an
+Every 15 seconds (`BumpDispatchSchedule`) it walks the inventory: a repository is OWED when it is
+OK, its bumps are on (`mt_repository.dependency_bumps`, V29, qits-1784 — off for `dependency-bumps:
+false` in its `maintenance.yml`, or for `repository.archived: true` in its `repository.yml` with no
+switch set; the row stays OK and keeps its pins, and `UndeclaredRequestWithdrawal.sweepBumpsOff`
+withdraws its open main-only requests on a full scan and on a scan of that one repository) and an
 INTERNAL pin is behind its latest (the `dependencies` group of `PendingChanges`, read off main), and
 HELD when it has any open release request (its pre-run carries the bump, and `UpstreamReplan`
 re-plans it) or when the main-only request this service last opened for the exact same pending set

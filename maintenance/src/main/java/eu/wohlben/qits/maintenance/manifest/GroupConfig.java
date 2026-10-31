@@ -60,6 +60,15 @@ import org.yaml.snakeyaml.constructor.SafeConstructor;
  * leaves a held one where it is. Each entry is a dependency name in its own ecosystem's spelling,
  * globs allowed ({@code @angular/*}).
  *
+ * <p><b>And {@code dependency-bumps:} (qits-1784) switches the repository's dependency bumps off, or
+ * back on, as a whole.</b> Unlike {@code hold}, it is not about any one dependency: {@code false}
+ * means no bump is dispatched for this repository and the {@code dependency-bump} automation plans
+ * nothing at its folds, while every pin is still read, stored and shown. Absent, it decides nothing
+ * — the {@link Parsed#dependencyBumps()} is null and {@link RepositoryConfig}'s {@code
+ * repository.archived} decides instead (see {@link DependencyBumps}). A value that is not a boolean
+ * is invalid, for the reason below: {@code dependency-bumps: never} read as "unset" would bump a
+ * repository whose author meant to stop it.
+ *
  * <p><b>An unknown ecosystem name is invalid.</b> This file is this
  * service's OWN configuration surface, unlike {@code .gitmodules}, so strictness is right here: a
  * typo silently ignored would read as a working opt-out and bump the very ecosystem the author
@@ -111,6 +120,8 @@ public final class GroupConfig {
    * @param source DEFAULT, or CONFIG for a file that did not parse
    * @param ignored the ecosystems this repository is not scanned for at all — empty by default
    * @param held the dependencies no bump moves, as names or globs — empty by default
+   * @param dependencyBumps the {@code dependency-bumps} switch, or null when the file does not set
+   *     it — which is NOT false: an unset switch leaves the decision to {@code repository.archived}
    * @param error the sentence for the repository row, or null
    */
   public record Parsed(
@@ -118,15 +129,23 @@ public final class GroupConfig {
       GroupSource source,
       Set<Ecosystem> ignored,
       List<String> held,
+      Boolean dependencyBumps,
       String error) {
 
     public Parsed {
       held = held == null ? List.of() : List.copyOf(held);
     }
 
+    /** The shape before {@code dependency-bumps:} existed: the switch unset. */
+    public Parsed(
+        List<Group> groups, GroupSource source, Set<Ecosystem> ignored, List<String> held,
+        String error) {
+      this(groups, source, ignored, held, null, error);
+    }
+
     /** The shape before {@code hold:} existed: nothing held. */
     public Parsed(List<Group> groups, GroupSource source, Set<Ecosystem> ignored, String error) {
-      this(groups, source, ignored, List.of(), error);
+      this(groups, source, ignored, List.of(), null, error);
     }
 
     /** Whether no bump may move this dependency. */
@@ -181,7 +200,8 @@ public final class GroupConfig {
       return fallback();
     }
     if (!(document instanceof Map<?, ?> root)) {
-      return invalid(PATH + " must be a mapping with an `ignore` or `hold` key");
+      return invalid(
+          PATH + " must be a mapping with an `ignore`, `hold` or `dependency-bumps` key");
     }
     Set<Ecosystem> ignored = EnumSet.noneOf(Ecosystem.class);
     Object rawIgnore = root.get("ignore");
@@ -218,6 +238,16 @@ public final class GroupConfig {
         held.add(dependency.trim());
       }
     }
+    Boolean dependencyBumps = null;
+    Object rawSwitch = root.get("dependency-bumps");
+    if (rawSwitch != null) {
+      if (!(rawSwitch instanceof Boolean value)) {
+        // A SWITCH THAT DOES NOT PARSE IS NOT A SWITCH (qits-1784). `dependency-bumps: never` read as
+        // unset would leave the bumps on for a repository whose author wrote down to stop them.
+        return invalid("`dependency-bumps` must be true or false, not `" + rawSwitch + "`");
+      }
+      dependencyBumps = value;
+    }
     if (root.containsKey("groups")) {
       // RETIRED, NOT REFUSED (qits-1133 R5). A file written for the group branches must not turn its
       // repository into a CONFIG_ERROR: that would hide every pin it has over a key that no longer
@@ -228,15 +258,17 @@ public final class GroupConfig {
               + " and `hold` still apply.",
           PATH);
     }
-    return defaults(ignored, held);
+    return defaults(ignored, held, dependencyBumps);
   }
 
   /**
    * The default grouping, carrying whatever the file's {@code ignore} took off the repository and
-   * whatever its {@code hold} kept where it is.
+   * whatever its {@code hold} kept where it is, and its {@code dependency-bumps} switch, unset
+   * included.
    */
-  private static Parsed defaults(Set<Ecosystem> ignored, List<String> held) {
-    return new Parsed(kindTail(), GroupSource.DEFAULT, Set.copyOf(ignored), List.copyOf(held), null);
+  private static Parsed defaults(Set<Ecosystem> ignored, List<String> held, Boolean bumps) {
+    return new Parsed(
+        kindTail(), GroupSource.DEFAULT, Set.copyOf(ignored), List.copyOf(held), bumps, null);
   }
 
   /** The four spellings {@code ignore} accepts, for the sentence a broken file is told. */
