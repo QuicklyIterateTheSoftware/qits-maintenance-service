@@ -74,7 +74,7 @@ import java.util.Set;
  * </ul>
  *
  * <p><b>The credential is the one every catalog read already uses</b> — {@link
- * PeerTarget#PROJECTS}, audience {@code qits-projects}. The route admits {@code qits:admin} and
+ * PeerTarget#PROJECTS}, audience {@code qits-platform}. The route admits {@code qits:admin} and
  * {@code qits:system}, and {@link PeerClient} presents {@code qits:system} on every call, so no
  * person's role and no sixth oidc client is needed. That is the whole of what the door cost and this
  * does not.
