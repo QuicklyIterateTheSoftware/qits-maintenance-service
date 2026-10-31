@@ -21,6 +21,7 @@ The contract — routes, model, config keys, schedules and the bump payload — 
 |---|---|---|
 | the catalog | qits-projects | `GET /projects/api/repositories`; a row with no `name` has no address and is skipped. The row's `id` is kept as `mt_repository.catalog_id` — never an address here, and the only way another context's spelling of a repository is read back as a name. Its nullable `archetype` (SERVICE, DAEMON, LIBRARY, FRONTEND, CLI, IMAGE, PROJECT, SERVICE_TEMPLATE, FORK) is kept beside it as `mt_repository.archetype` (V6) and served on both repository DTOs, so what a repository IS is a column rather than a read per row; the vocabulary is qits-projects' own, so it is stored **verbatim, unvalidated and with no check constraint**, and an unrecognised word costs a repository nothing but a typed reading — the one archetype anything acts on is `PROJECT`, which the downstream closure excludes. **The listing is authoritative in both directions**: what it stops naming goes ABSENT — see below |
 | manifests at `main` | qits-githost | `GET /git/<project>/<repo>/tree/<rev>[/<path>]` and `…/blob/<rev>/<path>` |
+| whether a repository is owed bumps | qits-githost | `.config/qits/maintenance.yml` (`dependency-bumps`) and `.config/qits/repository.yml` (`repository.archived`), read at the same sha as the manifests on a scan and at the fold by the `dependency-bump` automation; see **Switching the bumps off** (qits-1784) |
 | internal latest | qits-artifacts | maven `maven-metadata.xml`, npm packument, OCI `/<name>/tags/list` |
 | external latest | qits-mirror | `central` maven-metadata, `npmjs` packument |
 | applying a bump | qits-ci | `POST /ci/api/events/trigger`, event `MaintenanceBump` |
@@ -166,6 +167,47 @@ A held pin is still read, stored, shown and reported behind; the `dependency-bum
 never plans it. It is the escape hatch for a breaking upstream. A `hold` entry that is not a
 non-empty string is `CONFIG_ERROR`, for `ignore`'s reason: a hold quietly skipped is the very
 dependency somebody wrote down to protect, bumped.
+
+### Switching the bumps off — `dependency-bumps`, and `repository.archived` (qits-1784)
+
+A repository can stop being bumped as a whole without leaving the inventory. Two keys, both in its
+own `.config/qits/`, both read at the same sha:
+
+```yaml
+# .config/qits/maintenance.yml
+dependency-bumps: false     # true | false; absent decides nothing
+```
+
+```yaml
+# .config/qits/repository.yml — the workspace tooling's file; only this key is read here
+version: 1
+repository:
+  archived: true            # true | false; absent is false
+```
+
+**The effective rule: `dependency-bumps`, when present, decides. Absent, bumps are on unless
+`repository.archived` is true.** So `dependency-bumps: true` keeps an archived repository's bumps
+coming, and `dependency-bumps: false` stops a live one's.
+
+- **A scan writes the decision on the row** — `mt_repository.dependency_bumps` and
+  `dependency_bumps_reason` (`archived` | `switch` | null), V29 — every scan that reads the tree,
+  the push-to-main scan of one repository included. **Off is not a status**: the row stays `OK`,
+  every pin is still read, stored, served to the GC and shown. The dispatcher skips the row, so it
+  never stands, is never picked and no main-only request is opened for it.
+- **The `dependency-bump` automation reads both files at the FOLD** and plans nothing (FRESH, no
+  branch) when they turn the bumps off — whatever the inventory last said. `repository.yml` is one of
+  its input paths, so archiving a repository inside a request re-plans it.
+- **Requests already open are withdrawn**: a full scan sweeps every OK row whose bumps are off, and a
+  scan of one repository that found them off sweeps that one — under the undeclared withdrawal's
+  guard (the store remembers opening it as `MAIN_ONLY` AND it carries only main plus this service's
+  own automation branches). The reason names the archive or the switch, and qits-1784.
+- **Strict where it reads.** `dependency-bumps` that is not a boolean is `CONFIG_ERROR`, as any other
+  mistake in `maintenance.yml` is. In `repository.yml`, yaml that does not parse, a root or
+  `repository` section that is not a mapping, or an `archived` that is not a boolean is
+  `CONFIG_ERROR` naming that file; **every other key in it is ignored** — it belongs to the
+  workspace tooling. An absent or empty `repository.yml` is not archived; one the git host would not
+  serve leaves the row `UNREACHABLE` (pins and last decision kept) rather than reading as "not
+  archived" for a scan.
 
 The case `ignore` was built for is the **qits-qits wrapper**, whose forty-seven submodule gitlinks are
 deliberately lagging bank markers rather than version pins — its own README says they exist so
