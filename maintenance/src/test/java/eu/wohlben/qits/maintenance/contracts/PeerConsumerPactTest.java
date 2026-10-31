@@ -49,7 +49,8 @@ class PeerConsumerPactTest {
           "qits-deployments-service", DeploymentsContract.CONTRACT,
           "qits-artifacts-service", ArtifactsContract.CONTRACT,
           "qits-githost-service", GitHostContract.CONTRACT,
-          "qits-mirror-service", MirrorContract.CONTRACT);
+          "qits-mirror-service", MirrorContract.CONTRACT,
+          "qits-system-service", SystemContract.CONTRACT);
 
   @TestFactory
   Stream<DynamicNode> everyRowIsWhatTheClientAsksAndUnderstands() {

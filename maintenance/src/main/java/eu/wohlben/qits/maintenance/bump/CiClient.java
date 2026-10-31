@@ -25,7 +25,7 @@ import java.util.regex.Pattern;
 
 /**
  * The calls this service makes to qits-ci: apply a bump, read the run that applies it (and the
- * automatic retry qits-ci re-fired it as), and ask how much room qits-ci has.
+ * automatic retry qits-ci re-fired it as), and read what is waiting in qits-ci's queue.
  *
  * <p><b>{@code eventId} is the bump's row id and that is the dedupe key.</b> qits-ci records at most
  * one run per (event id, repository, config path), so a dispatch whose ANSWER this service lost —
@@ -76,8 +76,8 @@ public class CiClient {
    * repository. <b>It carries no capacity any more</b> (epic qits-1481): a run is a CI lease, and
    * how many run at once is qits-system's {@code SlotAllocator} to grant, never a number qits-ci
    * reports — a lease it cannot grant yet simply sits {@code QUEUED} rather than being refused. So
-   * the dispatch gate reads this for whether qits-ci could be asked at all, never for how much room
-   * it has.
+   * the dispatch gate reads this for its {@code queued} half only, the runs already waiting for the
+   * room qits-system reports (qits-1769); a running run's lease is in qits-system's count already.
    */
   public static final String QUEUE_PATH = "/ci/api/runs/queue";
 
@@ -603,43 +603,43 @@ public class CiClient {
   }
 
   /**
-   * Whether qits-ci could be asked at all right now.
+   * What qits-ci holds right now, its two halves apart.
    *
-   * @param active how many runs it has accepted and not finished, or null when the snapshot could
-   *     not be read
+   * @param running how many runs it is running, or null when the snapshot could not be read
+   * @param queued how many runs wait for a lease, or null likewise
    * @param error why it could not be read
    */
-  public record QueueState(Integer active, String error) {
+  public record QueueState(Integer running, Integer queued, String error) {
 
     /**
      * Whether the snapshot answered at all. <b>An unreadable queue is not an empty one</b>: a
-     * dispatch gate that read "could not ask" as "nothing is going" would fire the whole owed set
+     * dispatch gate that read "could not ask" as "nothing is waiting" would fire the whole owed set
      * at the one moment qits-ci is least able to say so.
      */
     public boolean readable() {
-      return active != null;
+      return queued != null;
     }
 
     static QueueState unreadable(String error) {
-      return new QueueState(null, error);
+      return new QueueState(null, null, error);
     }
   }
 
   /**
-   * What is already using qits-ci's queue, from one read of {@code GET /ci/api/runs/queue}.
+   * What is already in qits-ci's queue, from one read of {@code GET /ci/api/runs/queue}.
    *
    * <p><b>There is no {@code slots} any more</b> (epic qits-1481): a run is a CI lease, how many
    * run at once is qits-system's to grant, and qits-ci itself holds no runner, no connection and no
-   * quarantine state to report one from. A lease the estate cannot grant yet does not make qits-ci
-   * refuse the trigger — it queues the run and grants the lease later — so the dispatch gate no
-   * longer rations how many bumps it sends by a number read here; see {@link
-   * eu.wohlben.qits.maintenance.bump.BumpDispatcher}'s class doc for what replaced it.
+   * quarantine state to report one from. The dispatcher reads the room from qits-system ({@link
+   * SystemClient#targets()}, qits-1769) and takes only {@code queued} from here: those runs claim
+   * that room before any bump sent now, while a {@code running} run's lease is already counted in
+   * a target's {@code used}. Both halves are still exposed, since a reader of the snapshot is owed
+   * the whole of it.
    *
-   * <p><b>{@code active} is every entry of {@code running} and {@code queued}, whatever its status
-   * says.</b> qits-ci partitions QUEUED from everything else, so the honest reading of "how much is
-   * going" is the SIZE of both halves, not a filter over a vocabulary. A third non-terminal status
-   * qits-ci invents tomorrow is still work in flight, and a gate matching on a status would quietly
-   * stop seeing it.
+   * <p><b>Each half is the SIZE of its array, whatever its entries' status says.</b> qits-ci
+   * partitions QUEUED from everything else, so a third non-terminal status qits-ci invents
+   * tomorrow is still counted in the half it puts it in, and a gate matching on a status would
+   * quietly stop seeing it.
    *
    * <p>A snapshot missing either array is UNREADABLE rather than empty, for the reason {@link
    * QueueState#readable()} gives.
@@ -655,7 +655,7 @@ public class CiClient {
         return QueueState.unreadable("the queue snapshot carried no `" + field + "` array");
       }
     }
-    return new QueueState(body.get("running").size() + body.get("queued").size(), null);
+    return new QueueState(body.get("running").size(), body.get("queued").size(), null);
   }
 
   private static List<String> runIds(JsonNode result) {

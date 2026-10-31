@@ -1,6 +1,7 @@
 package eu.wohlben.qits.maintenance.contracts;
 
 import eu.wohlben.qits.maintenance.bump.CiClient;
+import eu.wohlben.qits.maintenance.bump.SystemClient;
 import eu.wohlben.qits.maintenance.bump.changelog.ChangelogClient;
 import eu.wohlben.qits.maintenance.control.DeployedVersions;
 import eu.wohlben.qits.maintenance.githost.GitHostReader;
@@ -59,6 +60,7 @@ record PeerRow(GoldenInteraction interaction, Call call, List<GoldenInteraction>
   /** Every peer client this service has, each over one {@link PeerClient}. */
   record Peers(
       CiClient ci,
+      SystemClient system,
       DeployedVersions deployed,
       SbomClient sboms,
       ChangelogClient changelogs,
@@ -70,6 +72,7 @@ record PeerRow(GoldenInteraction interaction, Call call, List<GoldenInteraction>
     static Peers over(PeerClient peers) {
       return new Peers(
           Clients.wire(new CiClient(), peers),
+          Clients.wire(new SystemClient(), peers),
           Clients.wire(new DeployedVersions(), peers),
           Clients.wire(new SbomClient(), peers),
           Clients.wire(new ChangelogClient(), peers),
