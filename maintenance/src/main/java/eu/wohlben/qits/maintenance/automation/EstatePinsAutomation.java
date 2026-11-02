@@ -61,13 +61,19 @@ import org.jboss.logging.Logger;
  * that rewind; this is the second guard. A gitlink the fold holds is LABELLED with the member's
  * ledger, by the rule {@link MainHeadLatest#releaseAt(Iterable, String)} labels a head with (the
  * release whose sha it is, the highest where two tags name one commit), and one that labels NEWER
- * than the member's row is left as it is: whatever the row says, the fold already pins past it. An
- * unlabelled gitlink, or one at an older or equal release, is a change as before. A store read per
- * differing entry and no git-host read, so a settle stays at the fold's two reads.
+ * than the member's row AND whose ledger row is {@link MtRelease#onMain} is left as it is: main
+ * already carries it, so whatever the row says, the fold pins a finalized release past it. An
+ * unlabelled gitlink, one at an older or equal release, or one at a newer release that is not on
+ * main is a change as before. A store read per differing entry and no git-host read, so a settle
+ * stays at the fold's two reads.
  *
- * <p>The price is the one this rule accepts: a fold somebody pinned by hand at a newer release that
- * never finalized is no longer moved back by this kind. This kind pins only what a member's {@code
- * main} carried, so such a pin is never one it made; it is a person's, for a person to review.
+ * <p><b>Why {@code onMain}, and not "newer" alone.</b> The ledger also holds releases that were CUT
+ * and never finalized — the qits-qits-rr-137 shape — and a fold pinned at one of those must still
+ * be moved back to what main carries. {@code onMain} is set by a main scan ({@code
+ * ScanService.keepMain}) only when the git host says main contains the release's commit, and it is
+ * never undone; a stale head read cannot set it falsely, because an older head contains fewer
+ * commits, not more. So it separates the two newer pins exactly: finalized and kept, or cut and
+ * moved back.
  *
  * <h2>Why its own branch, and why the fold (qits-1258)</h2>
  *
@@ -328,8 +334,8 @@ public class EstatePinsAutomation implements ReleaseRequestAutomation {
       Optional<MtRelease> pinnedAt = newerPin(candidate, sha);
       if (pinnedAt.isPresent()) {
         LOG.infof(
-            "%s of %s pins %s (%s), newer than %s (%s), the release its member's main head is"
-                + " recorded at; it is not moved back (qits-1823)",
+            "%s of %s pins %s (%s), on main and newer than %s (%s), the release its member's main"
+                + " head is recorded at; it is not moved back (qits-1823)",
             candidate.path(), wrapper.name, pinnedAt.get().version, sha, candidate.version(),
             candidate.releasedSha());
         ahead++;
@@ -353,8 +359,9 @@ public class EstatePinsAutomation implements ReleaseRequestAutomation {
 
   /**
    * The member's release the fold's gitlink {@code sha} is the commit of, when it is NEWER than the
-   * candidate's — a pin this plan must not move back (qits-1823) — or empty: no gitlink, a commit
-   * the ledger has no release at, or one at an older or equal release, all of which are changes.
+   * candidate's and already on main ({@link MtRelease#onMain}) — a pin this plan must not move back
+   * (qits-1823) — or empty: no gitlink, a commit the ledger has no release at, one at an older or
+   * equal release, or a newer one main does not carry (rr-137), all of which are changes.
    */
   private Optional<MtRelease> newerPin(Candidate candidate, String sha) {
     if (sha == null || sha.isBlank()) {
@@ -362,7 +369,9 @@ public class EstatePinsAutomation implements ReleaseRequestAutomation {
     }
     return MainHeadLatest.releaseAt(store.releasesOf(candidate.name()), sha)
         .filter(
-            release -> VersionOrder.newer(Ecosystem.GITLINK, candidate.version(), release.version));
+            release ->
+                release.onMain
+                    && VersionOrder.newer(Ecosystem.GITLINK, candidate.version(), release.version));
   }
 
   /**

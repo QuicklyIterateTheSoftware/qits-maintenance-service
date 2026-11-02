@@ -409,15 +409,18 @@ class EstatePinsAutomationTest {
 
   /**
    * <b>qits-1823: never a downgrade.</b> The fold pins member-a at the commit of a NEWER ledger
-   * release than its GITLINK latest row names — the row a stale head read rewound, as
-   * qits-platform-access-cli's was on 2026-11-02 — so moving the pin to the row would move it
-   * backwards. The entry is skipped and, with member-c current, the plan is FRESH.
+   * release than its GITLINK latest row names, one a main scan found on main — the row a stale head
+   * read rewound, as qits-platform-access-cli's was on 2026-11-02 — so moving the pin to the row
+   * would move it backwards. The entry is skipped and, with member-c current, the plan is FRESH.
    */
   @Test
-  void aPinAtANewerReleaseThanTheMembersRowIsNotMovedBack() {
+  void aPinAtANewerReleaseMainCarriesIsNotMovedBack() {
     String newerSha = "0ff0ff0ff0ff0ff0ff0ff0ff0ff0ff0ff0ff0ff0";
-    store.recordRelease(
-        "member-a", "2026.1102.160004", newerSha, Instant.parse("2026-11-02T16:00:04Z"), List.of());
+    UUID newer =
+        store.recordRelease(
+            "member-a", "2026.1102.160004", newerSha, Instant.parse("2026-11-02T16:00:04Z"),
+            List.of());
+    store.markReleasesOnMain(List.of(newer));
     fold(FOLD, newerSha, MEMBER_C_RELEASED_SHA, true);
 
     Plan plan = plan();
@@ -425,6 +428,29 @@ class EstatePinsAutomationTest {
     assertEquals(Plan.Kind.FRESH, plan.kind(), plan.reason());
     assertTrue(plan.runs().isEmpty());
     assertTrue(plan.reason().contains("at or ahead"), plan.reason());
+  }
+
+  /**
+   * <b>The rr-137 shape through the guard.</b> The fold pins member-a at a NEWER ledger release
+   * that was cut and never reached main ({@code onMain} false): it is no finalized release, so the
+   * pin is still moved back to what main carries.
+   */
+  @Test
+  void aPinAtANewerReleaseMainDoesNotCarryIsStillAChange() {
+    String cutSha = "0ff0ff0ff0ff0ff0ff0ff0ff0ff0ff0ff0ff0ff0";
+    store.recordRelease(
+        "member-a", "2026.1102.160004", cutSha, Instant.parse("2026-11-02T16:00:04Z"), List.of());
+    fold(FOLD, cutSha, MEMBER_C_RELEASED_SHA, true);
+
+    Plan plan = plan();
+
+    assertEquals(Plan.Kind.RUN, plan.kind(), plan.reason());
+    assertEquals(
+        List.of(
+            new Change(
+                "gitlink", MEMBER_PATH, "member-a", cutSha, MEMBER_VERSION,
+                "gitlink:" + MEMBER_PATH)),
+        plan.runs().getFirst().changes());
   }
 
   /**
