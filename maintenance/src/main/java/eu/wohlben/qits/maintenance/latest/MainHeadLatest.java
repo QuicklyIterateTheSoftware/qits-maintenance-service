@@ -68,10 +68,31 @@ import org.jboss.logging.Logger;
  *       than at the next night.
  * </ul>
  *
- * <p>All three OVERWRITE ({@link MaintenanceStore#recordGitlinkLatest}) rather than move forward:
- * each resolves the CURRENT head at the moment it runs, so a late caller cannot rewind anything,
- * and repairing a row that names an unfinalized tag is a move backwards in version order. A row
- * that changed tells both re-plan hooks — {@link UpstreamReplan#latestMoved} for the gitlink bump's
+ * <p>All three OVERWRITE ({@link MaintenanceStore#recordGitlinkLatest}) rather than move forward,
+ * because repairing a row that names an unfinalized tag is a move backwards in version order. Each
+ * resolves the head at the moment it runs, which is why the overwrite was once thought unable to
+ * rewind anything — but the head is only as current as the git host's answer, and that answer can
+ * be stale.
+ *
+ * <h2>A backwards move whose row main already contains is a stale head (qits-1823)</h2>
+ *
+ * <p>Measured on 2026-11-02: one second after a finalize push moved {@code main} of {@code
+ * qits-platform-access-cli} to {@code cda4a98} ({@code 2026.1102.202916}), qits-githost answered
+ * {@code main} with the two-day-old {@code 607b7ca} ({@code 2026.1031.231711}) — a pack-catalog
+ * race, fixed there. A scan labelled that commit and overwrote the row, rewinding it, and an hour
+ * later estate pins planned the wrapper's gitlink DOWN to a release whose tag had been
+ * garbage-collected, so the CI step failed.
+ *
+ * <p>So a head that labels OLDER than the row is asked one more question before it overwrites:
+ * does the repository's {@code main} contain the row's commit ({@link GitHostReader#contains}, with
+ * {@code in} the BRANCH NAME, so the git host resolves {@code main} afresh rather than trusting the
+ * head just read)? Yes: the row's release is finalized and on {@code main}, the head read was
+ * stale, and the row is kept ({@link Outcome#STALE_HEAD}). No: the row names a release that never
+ * reached {@code main} — the rr-137 shape — and is overwritten as before. No answer, or no catalog
+ * id to ask it under: the row is kept, the conservative way, and the next scan or push decides
+ * again. A forward move, or the same version, never asks: the normal path costs no extra read.
+ *
+ * <p>A row that changed tells both re-plan hooks — {@link UpstreamReplan#latestMoved} for the gitlink bump's
  * consumers, {@link UpstreamReplan#released} for every open wrapper request's estate pins
  * (qits-1224) — exactly as {@code SCMRelease} used to.
  */
@@ -87,7 +108,13 @@ public class MainHeadLatest {
     /** The row already named the head's release. */
     UNCHANGED,
     /** The head carries no release the ledger knows; the row is left as it was. */
-    NO_RELEASE
+    NO_RELEASE,
+    /**
+     * The head labels OLDER than the row, and the row was kept: {@code main} contains the row's
+     * commit, so the head read was stale — or containment could not be asked, and the row is kept
+     * until a read can decide (qits-1823).
+     */
+    STALE_HEAD
   }
 
   @Inject public MaintenanceStore store;
@@ -106,8 +133,20 @@ public class MainHeadLatest {
     if (repository == null || sha == null || sha.isBlank()) {
       return Optional.empty();
     }
+    return releaseAt(store.releasesOf(repository), sha);
+  }
+
+  /**
+   * The release among {@code releases} whose tag is {@code sha} — the highest version where two
+   * tags name one commit. The ledger rule itself, without the store: estate pins labels a fold's
+   * gitlink by it (qits-1823) from the ledger rows it already read.
+   */
+  public static Optional<MtRelease> releaseAt(Iterable<MtRelease> releases, String sha) {
+    if (releases == null || sha == null || sha.isBlank()) {
+      return Optional.empty();
+    }
     MtRelease found = null;
-    for (MtRelease release : store.releasesOf(repository)) {
+    for (MtRelease release : releases) {
       if (release.version == null || !GitlinkSha.same(release.sha, sha)) {
         continue;
       }
@@ -133,6 +172,9 @@ public class MainHeadLatest {
       return Outcome.NO_RELEASE;
     }
     String version = release.get().version;
+    if (staleHead(repository, headSha, version)) {
+      return Outcome.STALE_HEAD;
+    }
     // The head as resolved, not the ledger's spelling: it is the full name the git host answered.
     if (!store.recordGitlinkLatest(repository, version, GitlinkSha.of(headSha), now)) {
       return Outcome.UNCHANGED;
@@ -144,6 +186,61 @@ public class MainHeadLatest {
     upstream.latestMoved(Ecosystem.GITLINK, repository);
     upstream.released(repository);
     return Outcome.MOVED;
+  }
+
+  /**
+   * <b>Whether a head that labels OLDER than the row is a stale read, and the row stays</b>
+   * (qits-1823): see the class javadoc. False — overwrite — for a new row, a forward move or the
+   * same version (no read at all), for a row with no commit, and for a row whose commit {@code
+   * main} does not contain (the rr-137 repair, qits-1257). True when {@code main} contains it, and
+   * when the question cannot be asked or answered: keeping the row is the conservative half, and
+   * the next scan or push asks again.
+   */
+  private boolean staleHead(String repository, String headSha, String headVersion) {
+    Optional<MtLatest> existing = store.latest(Ecosystem.GITLINK, repository);
+    if (existing.isEmpty()
+        || existing.get().latest == null
+        || !VersionOrder.newer(Ecosystem.GITLINK, headVersion, existing.get().latest)) {
+      return false;
+    }
+    MtLatest row = existing.get();
+    Optional<String> rowSha = GitlinkSha.read(row.sourceUrl);
+    if (rowSha.isEmpty()) {
+      return false;
+    }
+    Optional<MtRepository> inventory = store.repository(repository);
+    if (inventory.isEmpty()
+        || inventory.get().catalogId == null
+        || inventory.get().catalogId.isBlank()) {
+      LOG.warnf(
+          "The main head %s of %s labels %s, older than its gitlink latest %s (%s), and %s has no"
+              + " catalog id to ask the git host whether main contains %s; the row is kept",
+          headSha, repository, headVersion, row.latest, rowSha.get(), repository, rowSha.get());
+      return true;
+    }
+    String main = inventory.get().mainBranchOrDefault();
+    GitHostReader.Containment contained =
+        gitHost.contains(inventory.get().catalogId, rowSha.get(), main);
+    if (!contained.readable()) {
+      LOG.warnf(
+          "The main head %s of %s labels %s, older than its gitlink latest %s (%s), and whether %s"
+              + " contains %s could not be read (%s); the row is kept",
+          headSha, repository, headVersion, row.latest, rowSha.get(), main, rowSha.get(),
+          contained.error());
+      return true;
+    }
+    if (contained.contains()) {
+      LOG.warnf(
+          "The main head %s of %s labels %s, older than its gitlink latest %s (%s), which %s"
+              + " already contains: the head read was stale and the row is kept",
+          headSha, repository, headVersion, row.latest, rowSha.get(), main);
+      return true;
+    }
+    LOG.infof(
+        "The gitlink latest %s (%s) of %s is not on %s; it moves back to %s (%s), the release the"
+            + " main head carries",
+        row.latest, rowSha.get(), repository, main, headVersion, headSha);
+    return false;
   }
 
   /** Queued after every boot, behind the release ledger backfill that may label more heads. */

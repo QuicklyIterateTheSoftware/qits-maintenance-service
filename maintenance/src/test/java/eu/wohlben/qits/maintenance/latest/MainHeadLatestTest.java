@@ -46,14 +46,28 @@ class MainHeadLatestTest {
 
   @Inject MaintenanceStore store;
 
-  /** A git host that answers main's head for the repositories it is told about, gone otherwise. */
+  /**
+   * A git host that answers main's head for the repositories it is told about, gone otherwise —
+   * and containment for the {@code "<catalog id> <commit> <in>"} questions it is told about,
+   * unanswered otherwise, recording every one it was asked.
+   */
   private static final class RecordingGitHost extends GitHostReader {
 
     final Map<String, TreeLookup> heads = new LinkedHashMap<>();
+    final Map<String, Boolean> containment = new LinkedHashMap<>();
+    final List<String> asked = new ArrayList<>();
 
     @Override
     public TreeLookup head(String project, String repository, String revision) {
       return heads.getOrDefault(repository + " " + revision, TreeLookup.gone());
+    }
+
+    @Override
+    public Containment contains(String repoId, String commit, String in) {
+      String question = repoId + " " + commit + " " + in;
+      asked.add(question);
+      Boolean answer = containment.get(question);
+      return new Containment(answer, answer == null ? "the git host is not there" : null);
     }
   }
 
@@ -90,9 +104,14 @@ class MainHeadLatestTest {
     mainHead.upstream = upstream;
   }
 
+  /** The catalog id a repository is scanned under: what containment is asked by. */
+  private static String catalogId(String repository) {
+    return "id-" + repository;
+  }
+
   private void scanned(String repository) {
     store.replaceInventory(
-        repository, "qits", null, null, "main", RepositoryStatus.OK, "sha", null, List.of(),
+        repository, "qits", catalogId(repository), null, "main", RepositoryStatus.OK, "sha", null, List.of(),
         List.of(), GroupSource.DEFAULT, candidate -> PinKind.INTERNAL, Instant.now());
   }
 
@@ -123,6 +142,8 @@ class MainHeadLatestTest {
     store.recordLatestIfNewer(
         Ecosystem.GITLINK, edge, UNFINALIZED, GitlinkSha.of(UNFINALIZED_SHA), Instant.now());
     gitHost.heads.put(edge + " main", TreeLookup.found(FINALIZED_SHA, List.of()));
+    // Asked since qits-1823, because the move is backwards: main does not contain the cut tag.
+    gitHost.containment.put(catalogId(edge) + " " + UNFINALIZED_SHA + " main", false);
 
     mainHead.reconcile();
 
@@ -131,6 +152,106 @@ class MainHeadLatestTest {
     assertEquals(FINALIZED_SHA, GitlinkSha.read(healed.sourceUrl).orElseThrow());
     assertTrue(upstream.moved.contains("gitlink:" + edge), upstream.moved.toString());
     assertTrue(upstream.released.contains(edge), upstream.released.toString());
+    assertEquals(List.of(catalogId(edge) + " " + UNFINALIZED_SHA + " main"), asked(edge));
+  }
+
+  /** The containment questions asked about one repository of this run. */
+  private List<String> asked(String repository) {
+    return gitHost.asked.stream()
+        .filter(question -> question.startsWith(catalogId(repository) + " "))
+        .toList();
+  }
+
+  /**
+   * <b>qits-1823: a stale head does not rewind a finalized row.</b> The row names the newer release
+   * — finalized, its commit on main — and the git host answers main with the older one's commit, as
+   * qits-githost did for qits-platform-access-cli one second after a finalize push. Main contains
+   * the row's commit, so the head read was stale: the row stays, and nothing is re-planned.
+   */
+  @Test
+  void aHeadOlderThanARowMainAlreadyContainsLeavesTheRow() {
+    String cli = "qits-platform-access-cli" + run;
+    scanned(cli);
+    bothReleasesCut(cli);
+    store.recordGitlinkLatest(cli, UNFINALIZED, GitlinkSha.of(UNFINALIZED_SHA), Instant.now());
+    gitHost.containment.put(catalogId(cli) + " " + UNFINALIZED_SHA + " main", true);
+
+    assertEquals(
+        MainHeadLatest.Outcome.STALE_HEAD, mainHead.record(cli, FINALIZED_SHA, Instant.now()));
+
+    assertEquals(UNFINALIZED, row(cli).latest, "the release main contains, not the stale head's");
+    assertEquals(UNFINALIZED_SHA, GitlinkSha.read(row(cli).sourceUrl).orElseThrow());
+    assertEquals(List.of(catalogId(cli) + " " + UNFINALIZED_SHA + " main"), asked(cli),
+        "asked of main by NAME, so the git host resolves it afresh");
+    assertTrue(upstream.released.stream().noneMatch(cli::equals), upstream.released.toString());
+    assertTrue(upstream.moved.stream().noneMatch(moved -> moved.endsWith(cli)));
+  }
+
+  /**
+   * The rr-137 shape through {@link MainHeadLatest#record} itself: the row names a cut tag main does
+   * NOT contain, so the older head is the truth and overwrites it, exactly as before qits-1823.
+   */
+  @Test
+  void aHeadOlderThanARowMainDoesNotContainStillOverwritesIt() {
+    String edge = "qits-unfinalized-row" + run;
+    scanned(edge);
+    bothReleasesCut(edge);
+    store.recordGitlinkLatest(edge, UNFINALIZED, GitlinkSha.of(UNFINALIZED_SHA), Instant.now());
+    gitHost.containment.put(catalogId(edge) + " " + UNFINALIZED_SHA + " main", false);
+
+    assertEquals(
+        MainHeadLatest.Outcome.MOVED, mainHead.record(edge, FINALIZED_SHA, Instant.now()));
+
+    assertEquals(FINALIZED, row(edge).latest);
+    assertEquals(FINALIZED_SHA, GitlinkSha.read(row(edge).sourceUrl).orElseThrow());
+    assertTrue(upstream.released.contains(edge), upstream.released.toString());
+  }
+
+  /**
+   * Containment that cannot be read — the git host is not there, or the repository has no catalog
+   * id to ask it under — keeps the row: the conservative half, and the next scan or push asks
+   * again.
+   */
+  @Test
+  void anUnreadableContainmentKeepsTheRow() {
+    String dark = "qits-dark-containment" + run;
+    String unaddressed = "qits-no-catalog-id" + run;
+    scanned(dark);
+    store.replaceInventory(
+        unaddressed, "qits", null, null, "main", RepositoryStatus.OK, "sha", null, List.of(),
+        List.of(), GroupSource.DEFAULT, candidate -> PinKind.INTERNAL, Instant.now());
+    for (String repository : List.of(dark, unaddressed)) {
+      bothReleasesCut(repository);
+      store.recordGitlinkLatest(
+          repository, UNFINALIZED, GitlinkSha.of(UNFINALIZED_SHA), Instant.now());
+
+      assertEquals(
+          MainHeadLatest.Outcome.STALE_HEAD,
+          mainHead.record(repository, FINALIZED_SHA, Instant.now()),
+          repository);
+      assertEquals(UNFINALIZED, row(repository).latest, repository);
+    }
+    assertEquals(1, asked(dark).size(), "the unanswered question was asked once");
+    assertTrue(
+        gitHost.asked.stream().noneMatch(question -> question.contains(unaddressed)),
+        "no catalog id, nothing to ask");
+  }
+
+  /** A forward move, and the same version again, never ask the git host anything. */
+  @Test
+  void aForwardMoveAsksNoContainment() {
+    String member = "qits-moving-forward" + run;
+    scanned(member);
+    bothReleasesCut(member);
+    store.recordGitlinkLatest(member, FINALIZED, GitlinkSha.of(FINALIZED_SHA), Instant.now());
+
+    assertEquals(
+        MainHeadLatest.Outcome.MOVED, mainHead.record(member, UNFINALIZED_SHA, Instant.now()));
+    assertEquals(
+        MainHeadLatest.Outcome.UNCHANGED, mainHead.record(member, UNFINALIZED_SHA, Instant.now()));
+
+    assertEquals(UNFINALIZED, row(member).latest);
+    assertTrue(asked(member).isEmpty(), asked(member).toString());
   }
 
   /** A row already at main's release is a read and nothing else: no write, no re-plan. */
