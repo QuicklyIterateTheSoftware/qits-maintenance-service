@@ -2,10 +2,13 @@ package eu.wohlben.qits.maintenance.automation;
 
 import eu.wohlben.qits.maintenance.bump.CiClient;
 import eu.wohlben.qits.maintenance.entity.MtLatest;
+import eu.wohlben.qits.maintenance.entity.MtRelease;
 import eu.wohlben.qits.maintenance.entity.MtRepository;
 import eu.wohlben.qits.maintenance.githost.FileLookup;
 import eu.wohlben.qits.maintenance.githost.TreeLookup;
 import eu.wohlben.qits.maintenance.latest.GitlinkSha;
+import eu.wohlben.qits.maintenance.latest.MainHeadLatest;
+import eu.wohlben.qits.maintenance.latest.VersionOrder;
 import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.RepositoryArchetype;
 import eu.wohlben.qits.maintenance.pending.Change;
@@ -20,6 +23,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import org.jboss.logging.Logger;
 
 /**
  * <b>Estate pins</b>: a wrapper's gitlinks, moved to what each member released, as ONE commit on
@@ -46,6 +50,24 @@ import java.util.Set;
  * after every boot), and this plan reads that row — one store read per member, no git-host read, so
  * a settle stays at the fold's two reads (qits-1258). A member with no row is not in the estate,
  * exactly as one with no release was.
+ *
+ * <h2>Never a downgrade (qits-1823)</h2>
+ *
+ * <p>The row is a head READ, and a head read can be stale: on 2026-11-02 qits-githost answered
+ * {@code main} of {@code qits-platform-access-cli} with a two-day-old commit one second after a
+ * finalize push, the row was rewound to {@code 2026.1031.231711}, and an hour later this plan moved
+ * the wrapper's gitlink from {@code 718c6a70} ({@code 2026.1102.160004}) DOWN to it — a release
+ * whose tag had been garbage-collected, so the CI step failed. {@code MainHeadLatest} now refuses
+ * that rewind; this is the second guard. A gitlink the fold holds is LABELLED with the member's
+ * ledger, by the rule {@link MainHeadLatest#releaseAt(Iterable, String)} labels a head with (the
+ * release whose sha it is, the highest where two tags name one commit), and one that labels NEWER
+ * than the member's row is left as it is: whatever the row says, the fold already pins past it. An
+ * unlabelled gitlink, or one at an older or equal release, is a change as before. A store read per
+ * differing entry and no git-host read, so a settle stays at the fold's two reads.
+ *
+ * <p>The price is the one this rule accepts: a fold somebody pinned by hand at a newer release that
+ * never finalized is no longer moved back by this kind. This kind pins only what a member's {@code
+ * main} carried, so such a pin is never one it made; it is a person's, for a person to review.
  *
  * <h2>Why its own branch, and why the fold (qits-1258)</h2>
  *
@@ -110,6 +132,8 @@ import java.util.Set;
 public class EstatePinsAutomation implements ReleaseRequestAutomation {
 
   public static final String KIND = "estate-pins";
+
+  private static final Logger LOG = Logger.getLogger(EstatePinsAutomation.class);
 
   /**
    * The payload's {@code group} on a SOURCE-BRANCH run — a sentinel rather than a real group, kept
@@ -295,9 +319,20 @@ public class EstatePinsAutomation implements ReleaseRequestAutomation {
     }
     List<Change> changes = new ArrayList<>();
     List<String> paths = new ArrayList<>();
+    int ahead = 0;
     for (Candidate candidate : candidates) {
       String sha = pinned.shas().get(candidate.path());
       if (Objects.equals(sha, candidate.releasedSha())) {
+        continue;
+      }
+      Optional<MtRelease> pinnedAt = newerPin(candidate, sha);
+      if (pinnedAt.isPresent()) {
+        LOG.infof(
+            "%s of %s pins %s (%s), newer than %s (%s), the release its member's main head is"
+                + " recorded at; it is not moved back (qits-1823)",
+            candidate.path(), wrapper.name, pinnedAt.get().version, sha, candidate.version(),
+            candidate.releasedSha());
+        ahead++;
         continue;
       }
       changes.add(change(candidate.path(), candidate.name(), sha, candidate.version()));
@@ -305,12 +340,29 @@ public class EstatePinsAutomation implements ReleaseRequestAutomation {
     }
     // The terminating case: never a run with an empty change list.
     if (changes.isEmpty()) {
-      return Plan.fresh("the estate pins already name what the members released");
+      return Plan.fresh(
+          ahead == 0
+              ? "the estate pins already name what the members released"
+              : "the estate pins are at or ahead of what the members' main heads carry");
     }
     return Plan.runs(
         List.of(
             new Plan.Run(
                 null, changes, Map.of(DependencyBumpAutomation.COMMIT_PATHS, List.copyOf(paths)))));
+  }
+
+  /**
+   * The member's release the fold's gitlink {@code sha} is the commit of, when it is NEWER than the
+   * candidate's — a pin this plan must not move back (qits-1823) — or empty: no gitlink, a commit
+   * the ledger has no release at, or one at an older or equal release, all of which are changes.
+   */
+  private Optional<MtRelease> newerPin(Candidate candidate, String sha) {
+    if (sha == null || sha.isBlank()) {
+      return Optional.empty();
+    }
+    return MainHeadLatest.releaseAt(store.releasesOf(candidate.name()), sha)
+        .filter(
+            release -> VersionOrder.newer(Ecosystem.GITLINK, candidate.version(), release.version));
   }
 
   /**

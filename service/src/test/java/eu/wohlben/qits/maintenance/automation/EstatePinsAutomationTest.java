@@ -408,6 +408,51 @@ class EstatePinsAutomationTest {
   }
 
   /**
+   * <b>qits-1823: never a downgrade.</b> The fold pins member-a at the commit of a NEWER ledger
+   * release than its GITLINK latest row names — the row a stale head read rewound, as
+   * qits-platform-access-cli's was on 2026-11-02 — so moving the pin to the row would move it
+   * backwards. The entry is skipped and, with member-c current, the plan is FRESH.
+   */
+  @Test
+  void aPinAtANewerReleaseThanTheMembersRowIsNotMovedBack() {
+    String newerSha = "0ff0ff0ff0ff0ff0ff0ff0ff0ff0ff0ff0ff0ff0";
+    store.recordRelease(
+        "member-a", "2026.1102.160004", newerSha, Instant.parse("2026-11-02T16:00:04Z"), List.of());
+    fold(FOLD, newerSha, MEMBER_C_RELEASED_SHA, true);
+
+    Plan plan = plan();
+
+    assertEquals(Plan.Kind.FRESH, plan.kind(), plan.reason());
+    assertTrue(plan.runs().isEmpty());
+    assertTrue(plan.reason().contains("at or ahead"), plan.reason());
+  }
+
+  /**
+   * A pin the ledger cannot label — no release was cut at that commit — is still a change, and so is
+   * one at an OLDER release than the row: only a provably newer pin is left where it is.
+   */
+  @Test
+  void anUnlabelledOrOlderPinIsStillAChange() {
+    fold(FOLD, STALE_PIN, "0bb0bb0bb0bb0bb0bb0bb0bb0bb0bb0bb0bb0bb0", true);
+    store.recordRelease(
+        "member-c", "2026.901.1", "0bb0bb0bb0bb0bb0bb0bb0bb0bb0bb0bb0bb0bb0",
+        Instant.parse("2026-09-01T00:00:00Z"), List.of());
+
+    Plan plan = plan();
+
+    assertEquals(Plan.Kind.RUN, plan.kind(), plan.reason());
+    assertEquals(
+        List.of(
+            new Change(
+                "gitlink", MEMBER_PATH, "member-a", STALE_PIN, MEMBER_VERSION,
+                "gitlink:" + MEMBER_PATH),
+            new Change(
+                "gitlink", MEMBER_C_PATH, "member-c", "0bb0bb0bb0bb0bb0bb0bb0bb0bb0bb0bb0bb0bb0",
+                MEMBER_C_VERSION, "gitlink:" + MEMBER_C_PATH)),
+        plan.runs().getFirst().changes());
+  }
+
+  /**
    * A member released into the ledger whose main head carries no release this service knows has no
    * GITLINK latest row, and is not in the estate — exactly as one with no release at all.
    */
