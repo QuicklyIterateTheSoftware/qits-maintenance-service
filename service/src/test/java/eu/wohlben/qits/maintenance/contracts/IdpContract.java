@@ -17,6 +17,13 @@ import eu.wohlben.qits.pact.consumer.Trigger;
  *
  * <p>qits-idp records it as {@code issueToken} in {@value #A_SERVICE_CLIENT_CALLING_ITS_PEERS}
  * (golden masters 2026.1018.142635): the Basic credential and the audience are the state's params.
+ *
+ * <p>And the two reads the quarkus-oidc TENANT makes at startup (qits-708, the qits-1149 pattern):
+ * the discovery document read from {@code quarkus.oidc.auth-server-url}, whose {@code issuer} is
+ * what every bearer's {@code iss} is checked against and is therefore bound by value, and the JWKS
+ * at the {@code jwks_uri} it names. No class of this source tree makes either call, so they are
+ * framework rows: {@code IdpTenantReadsPactTest} reads them as quarkus-oidc does and holds them to
+ * the shipped tenant configuration.
  */
 final class IdpContract {
 
@@ -32,7 +39,29 @@ final class IdpContract {
           .header("Authorization", "{authorization}")
           .consumes("access_token", "expires_in");
 
-  static final ConsumerPact PACT = ConsumerPact.of("qits-maintenance-service", IDP, MINT);
+  /** The qits-idp state that records the discovery document and the JWKS. */
+  static final String A_PUBLISHED_SIGNING_KEY = "a published signing key";
+
+  /** The quarkus-oidc tenant's startup reads, as qits-idp's consumers trigger them. */
+  private static final Trigger STARTUP = Trigger.event("StartupEvent");
+
+  /**
+   * The discovery document: the issuer the tenant checks every bearer's {@code iss} against, and
+   * where the keys are. The issuer is bound BY VALUE ({@code exact}): an idp answering another
+   * issuer refuses every token this service accepts, so its type alone is not the contract.
+   */
+  static final GoldenInteraction DISCOVERY =
+      GoldenInteraction.of(STARTUP, A_PUBLISHED_SIGNING_KEY, "getOpenIdConfiguration")
+          .consumes("issuer", "jwks_uri", "token_endpoint")
+          .exact("issuer");
+
+  /** The JWKS: each key with what quarkus-oidc needs to build it and to pick it by {@code kid}. */
+  static final GoldenInteraction JWKS =
+      GoldenInteraction.of(STARTUP, A_PUBLISHED_SIGNING_KEY, "getJwks")
+          .consumes("keys[].kid", "keys[].kty", "keys[].n", "keys[].e", "keys[].alg", "keys[].use");
+
+  static final ConsumerPact PACT =
+      ConsumerPact.of("qits-maintenance-service", IDP, MINT, DISCOVERY, JWKS);
 
   private IdpContract() {}
 }

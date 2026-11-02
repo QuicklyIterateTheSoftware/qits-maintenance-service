@@ -801,6 +801,15 @@ gate off there is no OIDC tenant, nothing fetches a JWKS, and a clone-alone buil
 There is no third state. A packaged IT runs in normal mode, so `PackagedSurfaceIT` turns the pair
 off by hand and `StoryProfile` turns it back on.
 
+**THE ISSUER IS PINNED BY DISCOVERY, NEVER BY CONFIGURATION** (qits-708). Discovery is on (the
+default): the tenant reads `<auth-server-url>/.well-known/openid-configuration` at startup, fetches
+the JWKS its `jwks_uri` names, and checks every bearer's `iss` against the `issuer` that document
+publishes. There is no `quarkus.oidc.token.issuer` and there must never be one (qits-730). Before
+qits-708 discovery was off with no issuer set, and quarkus-oidc then checks no `iss` at all. The
+idp pact carries both reads as framework rows (`IdpContract.DISCOVERY`, issuer bound by value, and
+`IdpContract.JWKS`); `IdpTenantReadsPactTest` holds them to the shipped config, and
+`api/BearerIssuerTest` proves a correctly signed bearer with a foreign `iss` is a 401.
+
 **ONE AUDIENCE AND IT IS A LITERAL**: `quarkus.oidc.token.audience=qits-platform`. qits-idp
 stamps that value onto every token it mints whatever the client asked for, so the tenant admits
 every caller there is and the ROLES above are the whole of what separates them. Nothing here

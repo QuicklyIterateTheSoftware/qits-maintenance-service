@@ -43,9 +43,12 @@ import org.junit.jupiter.api.TestMethodOrder;
  * suite in this repository turns that gate on at all</b> — the @QuarkusTest suites run under {@code
  * %test} and {@link PackagedSurfaceIT} turns the pair off by hand, which is what keeps a clone-alone
  * {@code ./mvnw verify} free of an issuer. The consequence is that the entire shipped {@code
- * quarkus.oidc.*} block — auth-server-url with {@code discovery-enabled=false} and {@code jwks-path=jwks} joined
- * onto it, the boot-time fetch that {@code connection-delay} retries, audience enforcement,
- * groups→roles mapping — is exercised NOWHERE else. This is the one place it runs. The far side is
+ * quarkus.oidc.*} block — auth-server-url, the discovery document read from it and the JWKS that
+ * document names (qits-708), the boot-time fetch that {@code connection-delay} retries, audience
+ * enforcement, groups→roles mapping — is exercised on the packaged artifact NOWHERE else. This is
+ * the one place it runs; in-JVM, {@code BearerIssuerTest} points the same discovery-on tenant at
+ * {@link MockIdp} and holds the issuer pin: a bearer whose {@code iss} is not the published issuer
+ * is a 401 however well it is signed. The far side is
  * {@link MockIdp}, whose recordings make the interaction assertable on <b>both ends</b>.
  *
  * <p><b>It is the first class of this repository's story catalogue</b>, and the one the rest of it
@@ -152,9 +155,9 @@ public class TokenValidationBootstrapIT {
   @UserStoryDescription(
       """
       A freshly deployed qits-platform-maintenance must validate service bearers before any
-      caller arrives: at startup it fetches the signing keys (JWKS) from qits-idp —
-      discovery stays off, the path is configured — so the very first machine request is
-      accepted. What that bearer then buys is this service's whole surface, and the read it
+      caller arrives: at startup it reads qits-idp's discovery document and fetches the
+      signing keys (JWKS) it names, so the very first machine request is judged on the
+      platform's own keys and issuer. What that bearer then buys is this service's whole surface, and the read it
       opens here is the inventory itself: every repository on the platform with what each has
       pending. That answer is rows out of this service's own store, which is the point of
       keeping an inventory at all — the question "who is still on last month's release" has to
@@ -179,6 +182,10 @@ public class TokenValidationBootstrapIT {
     // that it happened, and the note carries the one thing a method, a path and a status cannot —
     // WHEN. This is also the story that owns it: the cursor gives pre-story traffic to whichever
     // story drains first, which is why this class runs first and pins its method order.
+    assertTrue(
+        idp.recordedRequests().stream()
+            .anyMatch(r -> "/idp/.well-known/openid-configuration".equals(r.path())),
+        "the packaged service never read the idp's discovery document at startup");
     assertTrue(
         idp.recordedRequests().stream().anyMatch(r -> "/idp/jwks".equals(r.path())),
         "the packaged service never fetched /idp/jwks at startup");
@@ -363,6 +370,15 @@ public class TokenValidationBootstrapIT {
         StoryTarget.SERVICE,
         MockIdp.SERVICE_NAME,
         "GET /idp/jwks -> 200");
+    // And the discovery read before it (qits-708): the issuer every bearer's iss is checked
+    // against comes from that document, so it is a boot edge of its own.
+    ReportAssertions.assertEdge(
+        CATEGORY,
+        ACCEPTED_SLUG,
+        NetworkEdge.HTTP,
+        StoryTarget.SERVICE,
+        MockIdp.SERVICE_NAME,
+        "GET /idp/.well-known/openid-configuration -> 200");
     // Observed on the near side, by the framework's shipped tap, with the actor this story set.
     ReportAssertions.assertEdge(
         CATEGORY,
@@ -382,10 +398,10 @@ public class TokenValidationBootstrapIT {
         StoryTarget.STORE,
         "the listing is read from the inventory tables");
     // "It reads THIS service's own store and no peer" is the story's own promise, and this is where
-    // it is checkable rather than described: three edges and no fourth, plus a directed negative
-    // per peer. Every one of those five is UP and answering in this catalogue, which is what makes
+    // it is checkable rather than described: four edges and no fifth (the two boot reads of the
+    // idp, the listing, the store), plus a directed negative per peer. Every one of those five is UP and answering in this catalogue, which is what makes
     // the absence a decision rather than a limitation.
-    ReportAssertions.assertEdgeCount(CATEGORY, ACCEPTED_SLUG, 3);
+    ReportAssertions.assertEdgeCount(CATEGORY, ACCEPTED_SLUG, 4);
     ReportAssertions.assertNoEdgesTo(CATEGORY, ACCEPTED_SLUG, StoryTarget.PROJECTS);
     ReportAssertions.assertNoEdgesTo(CATEGORY, ACCEPTED_SLUG, StoryTarget.GITHOST);
     ReportAssertions.assertNoEdgesTo(CATEGORY, ACCEPTED_SLUG, StoryTarget.CI);

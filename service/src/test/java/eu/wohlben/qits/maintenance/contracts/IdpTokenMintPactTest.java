@@ -32,7 +32,9 @@ import org.junit.jupiter.api.Test;
  * config at boot, so the mock runs on a port this profile picks before the application starts.
  *
  * <p>The committed {@code pacts/qits-maintenance-service_qits-idp-service.json} is compared here
- * too, or rewritten under {@code -Dgolden.update=true}.
+ * too, or rewritten under {@code -Dgolden.update=true} — every row of {@link IdpContract#PACT},
+ * including the oidc tenant's discovery and JWKS reads, which {@code IdpTenantReadsPactTest} runs
+ * (qits-708).
  */
 @QuarkusTest
 @TestProfile(IdpTokenMintPactTest.MockIdp.class)

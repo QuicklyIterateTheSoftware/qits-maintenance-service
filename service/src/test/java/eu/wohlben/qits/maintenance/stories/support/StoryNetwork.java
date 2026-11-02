@@ -28,8 +28,8 @@ import eu.wohlben.qits.userflows.NetworkTaps;
  *       half. Each is <b>cumulative</b>: the supplier hands over the whole recording every time it
  *       is asked and the framework remembers how much of it earlier stories consumed, so each peer
  *       call is attributed to exactly one story.
- *   <li>The idp's own request log, for the one call a BOOT makes — the JWKS fetch that happened
- *       before any story existed.
+ *   <li>The idp's own request log, for the two calls a BOOT makes — the discovery read and the
+ *       JWKS fetch that happened before any story existed.
  * </ul>
  *
  * <h2>Story order IS load-bearing, and this is why</h2>
@@ -95,7 +95,8 @@ public final class StoryNetwork {
   }
 
   /**
-   * The idp, whose whole contribution is one call this service made before any story ran.
+   * The idp, whose whole contribution is the two calls this service made before any story ran:
+   * the discovery document and the JWKS it names (qits-708).
    *
    * <p>The label carries the status the mock <i>answered</i> with, which is the half a method and a
    * path cannot supply: {@code "GET /idp/jwks -> 200"} is evidence that the keys were served, not

@@ -56,9 +56,9 @@ import java.util.Map;
  *       no other suite in this repository turns them on at all. No audience travels with it any more:
  *       qits-auth-core's {@code MachineAuth} ships its own
  *       {@code qits.auth.machine.platform-audience=qits-platform} default.
- *   <li><b>{@code quarkus.oidc.auth-server-url}</b> — where the idp is. Discovery stays off and
- *       {@code jwks-path} stays {@code jwks}, joined onto this URL, so the packaged artifact is
- *       otherwise exactly what ships.
+ *   <li><b>{@code quarkus.oidc.auth-server-url}</b> — where the idp is. Discovery stays on, as it
+ *       ships (qits-708): the issuer and the JWKS address are taken from the mock's discovery
+ *       document, so the packaged artifact is otherwise exactly what ships.
  *   <li><b>{@code qits.maintenance.call-timeout}</b>, bounded. A stand-in answers in microseconds
  *       and the outage arm closes the connection outright, so nothing here waits — but the shipped
  *       minute would turn a wrong assumption into a hung IT rather than a failed one.
