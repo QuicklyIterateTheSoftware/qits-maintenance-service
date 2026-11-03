@@ -2,17 +2,27 @@ package eu.wohlben.qits.maintenance.automation;
 
 import eu.wohlben.qits.maintenance.bump.CiClient;
 import eu.wohlben.qits.maintenance.control.ArtifactGraph;
+import eu.wohlben.qits.maintenance.entity.MtRepository;
 import eu.wohlben.qits.maintenance.githost.FileLookup;
+import eu.wohlben.qits.maintenance.githost.GitHostReader;
 import eu.wohlben.qits.maintenance.githost.TreeLookup;
 import eu.wohlben.qits.maintenance.manifest.ManifestScanner;
 import eu.wohlben.qits.maintenance.manifest.ParsedPin;
 import eu.wohlben.qits.maintenance.model.Ecosystem;
+import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import jakarta.inject.Inject;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import org.jboss.logging.Logger;
+import org.yaml.snakeyaml.LoaderOptions;
+import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.constructor.SafeConstructor;
 
 /**
  * <b>Golden recordings</b> (qits-1516): re-record a CONSUMER's pacts — {@code pacts/*.json}, flat
@@ -37,10 +47,12 @@ import java.util.TreeSet;
  * <b>recording input</b> when it is a golden-masters pin OR the library a committed three-part pact
  * names produced it. "Produced" is {@link ArtifactGraph#producers()} — the released artifact's own
  * claim, keyed {@code "<ecosystem wire name> <pin name>"} exactly as the bump dispatcher reads it —
- * and, for an artifact no release has announced yet, the name rule {@link #fromComponent}: the
- * artifact is the library's component ({@code qits-eventstream} for {@code
- * qits-eventstream-javalib}) or starts with it and a dash. The producers are one query, read once
- * per plan and not at all for a fold with no three-part pact.
+ * and, for an artifact no release has announced yet, the library's own declaration: the
+ * coordinate is listed in the {@code artifacts:} of the library repository's {@code
+ * .config/qits/release.yml} at its {@code main} (qits-1834). Never its name: a repository's role
+ * suffix decides nothing (owner ruling 2026-11-03). The producers are one query, read once per plan
+ * and not at all for a fold with no three-part pact; each library's {@code release.yml} is read at
+ * most once per plan, and only for a pin the producers do not know.
  *
  * <h2>Two kinds, split by build shape</h2>
  *
@@ -85,7 +97,8 @@ import java.util.TreeSet;
  * pacts are its output and not its input, so the re-fold its own commit causes touches none of its
  * inputs and carries over with no second run. The {@code pacts/} LISTING it also reads (qits-1782)
  * only says which libraries' pins count; a re-record rewrites the files that listing names, it does
- * not rename them, so that stays true.
+ * not rename them, so that stays true. Neither does a library's {@code release.yml} (qits-1834): it
+ * sits in the library's own repository, read at that repository's {@code main}, never at the fold.
  *
  * <p><b>Its static {@link #committablePaths()} is empty</b>, as {@code estate-pins}' is: both kinds
  * write {@code pacts/*.json}, so the all-kind disjointness the registry holds can only stand with
@@ -108,13 +121,22 @@ public abstract class GoldenRecordingsAutomation implements ReleaseRequestAutoma
   /** The directory the recorded pacts sit in, flat at the root. */
   static final String PACTS_DIRECTORY = "pacts";
 
-  /** The role suffixes a library repository's name ends in; what is left is its component. */
-  static final List<String> LIBRARY_ROLES = List.of("-javalib", "-jslib");
+  private static final Logger LOG = Logger.getLogger(GoldenRecordingsAutomation.class);
+
+  /** The {@code artifacts:} types a library-kit pin can be: this service's two ecosystems. */
+  private static final Set<String> KIT_TYPES =
+      Set.of(Ecosystem.MAVEN.wireName(), Ecosystem.NPM.wireName());
 
   @Inject ManifestScanner scanner;
 
   /** Who released which coordinate: what makes a pin a library kit's (qits-1782). */
   @Inject ArtifactGraph graph;
+
+  /** Where a library repository lives and what its {@code main} is called. */
+  @Inject MaintenanceStore store;
+
+  /** Reads a library's {@code release.yml}, for a coordinate the producers do not know. */
+  @Inject GitHostReader gitHost;
 
   /** The ecosystem whose golden-masters pins this kind follows. */
   abstract Ecosystem ecosystem();
@@ -235,8 +257,9 @@ public abstract class GoldenRecordingsAutomation implements ReleaseRequestAutoma
     }
     Set<String> libraries = pacts.found() ? libraries(pacts) : Set.of();
     Map<String, String> producers = libraries.isEmpty() ? Map.of() : graph.producers();
-    if (inputs(atFold.pins(), libraries, producers)
-        .equals(inputs(atMain.pins(), libraries, producers))) {
+    Map<String, Set<String>> declared = new HashMap<>();
+    if (inputs(atFold.pins(), libraries, producers, declared)
+        .equals(inputs(atMain.pins(), libraries, producers, declared))) {
       return Plan.fresh(
           "every " + ecosystem().wireName() + " golden-masters and library-kit pin at the fold is "
               + main + "'s, so the recorded pacts stand");
@@ -249,11 +272,14 @@ public abstract class GoldenRecordingsAutomation implements ReleaseRequestAutoma
    * library-kit pact's library produced — by the line that sets them, to the version they name.
    */
   private Map<String, String> inputs(
-      List<ParsedPin> pins, Set<String> libraries, Map<String, String> producers) {
+      List<ParsedPin> pins,
+      Set<String> libraries,
+      Map<String, String> producers,
+      Map<String, Set<String>> declared) {
     Map<String, String> out = new TreeMap<>();
     for (ParsedPin pin : pins) {
       if (pin.ecosystem() == ecosystem()
-          && (goldenMasters(pin) || libraryKit(pin, libraries, producers))) {
+          && (goldenMasters(pin) || libraryKit(pin, libraries, producers, declared))) {
         out.put(pin.manifestPath() + " " + pin.location() + " " + pin.name(), pin.version());
       }
     }
@@ -262,18 +288,25 @@ public abstract class GoldenRecordingsAutomation implements ReleaseRequestAutoma
 
   /**
    * Whether a pin is one of those libraries' releases: the producers say so, or — for a coordinate
-   * no release has announced, so absent from them — its name is the library's component's.
+   * no release has announced, so absent from them — a library's {@code release.yml} lists it among
+   * its {@code artifacts:}. {@code declared} is this plan's memory of what each library declares,
+   * so each file is read at most once however many pins ask.
    */
-  private boolean libraryKit(ParsedPin pin, Set<String> libraries, Map<String, String> producers) {
+  private boolean libraryKit(
+      ParsedPin pin,
+      Set<String> libraries,
+      Map<String, String> producers,
+      Map<String, Set<String>> declared) {
     if (libraries.isEmpty() || pin.name() == null) {
       return false;
     }
-    String producer = producers.get(ArtifactGraph.producerKey(ecosystem().wireName(), pin.name()));
+    String key = ArtifactGraph.producerKey(ecosystem().wireName(), pin.name());
+    String producer = producers.get(key);
     if (producer != null) {
       return libraries.contains(producer);
     }
     for (String library : libraries) {
-      if (fromComponent(pin.name(), library)) {
+      if (declared.computeIfAbsent(library, this::declaredArtifacts).contains(key)) {
         return true;
       }
     }
@@ -281,37 +314,54 @@ public abstract class GoldenRecordingsAutomation implements ReleaseRequestAutoma
   }
 
   /**
-   * The name rule: the pin's artifact — a maven pin's {@code artifactId}, an npm pin's name without
-   * its scope — is the library repository's component (its name less {@link #LIBRARY_ROLES}) or
-   * starts with it and a dash. An {@code @qits/} package drops the {@code qits-} its repository
-   * carries ({@code @qits/ui-components} is {@code qits-ui-components-jslib}'s), so it is compared
-   * with that prefix restored. Equal-or-dash, never a bare prefix: {@code qits-eventstream} must not
-   * claim a {@code qits-eventstreams}.
+   * What a library repository says it publishes: every maven and npm entry of the {@code
+   * artifacts:} list in its {@code .config/qits/release.yml} at its {@code main}, keyed as {@link
+   * ArtifactGraph#producerKey} keys a pin — a maven {@code name} is {@code groupId:artifactId}, the
+   * spelling a maven pin carries, and an npm {@code name} is the package's. Other types ({@code
+   * docker}, {@code docs}, ...) are no pin of a library kit. A repository the inventory does not
+   * hold, a file that cannot be read or parsed, or one listing no artifacts declares nothing, so it
+   * claims no pin.
    */
-  static boolean fromComponent(String pinName, String library) {
-    String component = library;
-    for (String role : LIBRARY_ROLES) {
-      if (component.endsWith(role)) {
-        component = component.substring(0, component.length() - role.length());
-        break;
+  private Set<String> declaredArtifacts(String library) {
+    Optional<MtRepository> row = store.repository(library);
+    if (row.isEmpty()) {
+      LOG.debugf("%s is not in the inventory; it claims no library-kit pin", library);
+      return Set.of();
+    }
+    String path = QaChecks.RELEASE_YML;
+    FileLookup file =
+        gitHost.blob(row.get().project, library, row.get().mainBranchOrDefault(), path);
+    if (file.status() != FileLookup.Status.FOUND) {
+      LOG.debugf("%s: %s could not be read (%s); it claims no library-kit pin", library, path,
+          file.status());
+      return Set.of();
+    }
+    Object document;
+    try {
+      LoaderOptions options = new LoaderOptions();
+      options.setAllowDuplicateKeys(false);
+      document = new Yaml(new SafeConstructor(options)).load(file.content());
+    } catch (RuntimeException e) {
+      LOG.debugf("%s: %s is not valid yaml; it claims no library-kit pin", library, path);
+      return Set.of();
+    }
+    Set<String> out = new HashSet<>();
+    if (document instanceof Map<?, ?> slots && slots.get("artifacts") instanceof List<?> artifacts) {
+      for (Object artifact : artifacts) {
+        if (artifact instanceof Map<?, ?> fields
+            && fields.get("type") instanceof String type
+            && KIT_TYPES.contains(type.trim())
+            && fields.get("name") instanceof String name
+            && !name.isBlank()) {
+          out.add(ArtifactGraph.producerKey(type.trim(), name.trim()));
+        }
       }
     }
-    if (component.isEmpty()) {
-      return false;
+    if (out.isEmpty()) {
+      LOG.debugf("%s: %s lists no maven or npm artifacts; it claims no library-kit pin", library,
+          path);
     }
-    String artifact = pinName.substring(pinName.lastIndexOf(':') + 1);
-    String scope = "";
-    int slash = artifact.indexOf('/');
-    if (artifact.startsWith("@") && slash > 0) {
-      scope = artifact.substring(1, slash);
-      artifact = artifact.substring(slash + 1);
-    }
-    return names(artifact, component)
-        || ("qits".equals(scope) && names("qits-" + artifact, component));
-  }
-
-  private static boolean names(String artifact, String component) {
-    return artifact.equals(component) || artifact.startsWith(component + "-");
+    return out;
   }
 
   /**

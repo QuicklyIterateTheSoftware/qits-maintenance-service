@@ -1,7 +1,6 @@
 package eu.wohlben.qits.maintenance.automation;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.maintenance.control.ArtifactGraph;
@@ -12,11 +11,15 @@ import eu.wohlben.qits.maintenance.githost.TreeLookup;
 import eu.wohlben.qits.maintenance.manifest.ManifestScanner;
 import eu.wohlben.qits.maintenance.manifest.ParsedPin;
 import eu.wohlben.qits.maintenance.model.Ecosystem;
+import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -110,8 +113,28 @@ class GoldenRecordingsAutomationTest {
       return this;
     }
 
+    /** Each library repository's {@code release.yml} at its {@code main}, by repository. */
+    private final Map<String, FileLookup> releaseYmls = new LinkedHashMap<>();
+
+    /** Every {@code release.yml} read, as {@code "<project> <repository> <revision>"}. */
+    final List<String> releaseYmlReads = new ArrayList<>();
+
+    Host releaseYml(String repository, String content) {
+      releaseYmls.put(repository, FileLookup.found(content));
+      return this;
+    }
+
+    Host releaseYmlUnreachable(String repository) {
+      releaseYmls.put(repository, FileLookup.unreachable("connection refused"));
+      return this;
+    }
+
     @Override
     public FileLookup blob(String project, String repository, String revision, String path) {
+      if (QaChecks.RELEASE_YML.equals(path) && !REPOSITORY.equals(repository)) {
+        releaseYmlReads.add(project + " " + repository + " " + revision);
+        return releaseYmls.getOrDefault(repository, FileLookup.absent());
+      }
       return blobs.getOrDefault(path, FileLookup.absent());
     }
 
@@ -136,6 +159,52 @@ class GoldenRecordingsAutomationTest {
     public Map<String, String> producers() {
       reads++;
       return producers;
+    }
+  }
+
+  /** The inventory, holding just the library repositories it is told about. */
+  private static final class Store extends MaintenanceStore {
+
+    private final Map<String, MtRepository> rows = new HashMap<>();
+
+    Store with(String name, String mainBranch) {
+      MtRepository row = new MtRepository();
+      row.name = name;
+      row.project = PROJECT;
+      row.mainBranch = mainBranch;
+      rows.put(name, row);
+      return this;
+    }
+
+    @Override
+    public Optional<MtRepository> repository(String name) {
+      return Optional.ofNullable(rows.get(name));
+    }
+  }
+
+  /** qits-eventstream-javalib's declaration: the library and its pact kit, plus its docs. */
+  private static final String EVENTSTREAM_RELEASE_YML =
+      """
+      archetype: maven-library
+      artifacts:
+        - { type: maven, name: "eu.wohlben.qits:qits-eventstream", path: qits-eventstream }
+        - { type: maven, name: "eu.wohlben.qits:qits-eventstream-contracts", path: contracts }
+        - { type: docs, name: "eu.wohlben.qits:qits-eventstream-docs" }
+      """;
+
+  private static final String UI_COMPONENTS_RELEASE_YML =
+      """
+      artifacts:
+        - { type: npm, name: "@qits/ui-components", path: dist/ui-components, sbom: sbom.json }
+        - { type: docs, name: "@qits/ui-components" }
+      """;
+
+  /** Nothing in the inventory and nothing on the host, unless a test says otherwise. */
+  @BeforeEach
+  void noLibraryDeclaresAnything() {
+    for (GoldenRecordingsAutomation kind : List.of(maven, npm)) {
+      kind.store = new Store();
+      kind.gitHost = new Host();
     }
   }
 
@@ -430,8 +499,40 @@ class GoldenRecordingsAutomationTest {
   }
 
   @Test
-  void aMovedLibraryKitPinNoReleaseAnnouncedRunsByTheComponentName() {
+  void aMovedLibraryKitPinNoReleaseAnnouncedRunsByTheLibrarysReleaseYml() {
+    Host host = new Host().releaseYml("qits-eventstream-javalib", EVENTSTREAM_RELEASE_YML);
     maven.graph = new Graph(Map.of());
+    maven.store = new Store().with("qits-eventstream-javalib", "trunk");
+    maven.gitHost = host;
+    maven.scanner =
+        new Scanner()
+            .at(SHA, eventstreamContracts("2026.1031.2"), mavenOther("2026.1031.2"))
+            .at("main", eventstreamContracts("2026.1031.1"), mavenOther("2026.1031.1"));
+
+    Plan plan =
+        maven.plan(subject(new Host().blob("pom.xml", POM_WITHOUT).pacts(EVENTSTREAM_PACT)));
+
+    assertEquals(Plan.Kind.RUN, plan.kind(), plan.reason());
+    assertEquals(
+        List.of(PROJECT + " qits-eventstream-javalib trunk"),
+        host.releaseYmlReads,
+        "read at the library's own main, and once per plan however many pins ask");
+  }
+
+  @Test
+  void aCoordinateTheReleaseYmlDoesNotListIsNotClaimedEvenSharingTheName() {
+    maven.graph = new Graph(Map.of());
+    maven.store = new Store().with("qits-eventstream-javalib", "main");
+    maven.gitHost =
+        new Host()
+            .releaseYml(
+                "qits-eventstream-javalib",
+                """
+                artifacts:
+                  - { type: maven, name: "eu.wohlben.qits:qits-eventstream" }
+                  - { type: docker, name: "eu.wohlben.qits:qits-eventstream-contracts" }
+                  - { type: npm, name: "eu.wohlben.qits:qits-eventstream-contracts" }
+                """);
     maven.scanner =
         new Scanner()
             .at(SHA, eventstreamContracts("2026.1031.2"))
@@ -440,11 +541,42 @@ class GoldenRecordingsAutomationTest {
     Plan plan =
         maven.plan(subject(new Host().blob("pom.xml", POM_WITHOUT).pacts(EVENTSTREAM_PACT)));
 
-    assertEquals(Plan.Kind.RUN, plan.kind(), plan.reason());
+    assertEquals(Plan.Kind.FRESH, plan.kind(), plan.reason());
   }
 
   @Test
-  void aProducerNamingAnotherRepositoryOverridesTheNameRule() {
+  void aLibraryWhoseReleaseYmlCannotBeReadClaimsNothing() {
+    maven.graph = new Graph(Map.of());
+    maven.scanner =
+        new Scanner()
+            .at(SHA, eventstreamContracts("2026.1031.2"))
+            .at("main", eventstreamContracts("2026.1031.1"));
+    AutomationSubject subject =
+        subject(new Host().blob("pom.xml", POM_WITHOUT).pacts(EVENTSTREAM_PACT));
+
+    maven.store = new Store().with("qits-eventstream-javalib", "main");
+    maven.gitHost = new Host().releaseYmlUnreachable("qits-eventstream-javalib");
+    assertEquals(Plan.Kind.FRESH, maven.plan(subject).kind(), "unreadable");
+
+    maven.gitHost = new Host();
+    assertEquals(Plan.Kind.FRESH, maven.plan(subject).kind(), "absent");
+
+    maven.gitHost = new Host().releaseYml("qits-eventstream-javalib", "archetype: maven-library\n");
+    assertEquals(Plan.Kind.FRESH, maven.plan(subject).kind(), "no artifacts");
+
+    maven.gitHost = new Host().releaseYml("qits-eventstream-javalib", "artifacts: [ {");
+    assertEquals(Plan.Kind.FRESH, maven.plan(subject).kind(), "not yaml");
+
+    maven.store = new Store();
+    maven.gitHost = new Host().releaseYml("qits-eventstream-javalib", EVENTSTREAM_RELEASE_YML);
+    assertEquals(Plan.Kind.FRESH, maven.plan(subject).kind(), "not in the inventory");
+  }
+
+  @Test
+  void aProducerNamingAnotherRepositoryOverridesTheReleaseYml() {
+    Host host = new Host().releaseYml("qits-eventstream-javalib", EVENTSTREAM_RELEASE_YML);
+    maven.store = new Store().with("qits-eventstream-javalib", "main");
+    maven.gitHost = host;
     maven.graph =
         new Graph(
             Map.of(
@@ -459,6 +591,7 @@ class GoldenRecordingsAutomationTest {
         maven.plan(subject(new Host().blob("pom.xml", POM_WITHOUT).pacts(EVENTSTREAM_PACT)));
 
     assertEquals(Plan.Kind.FRESH, plan.kind(), plan.reason());
+    assertEquals(List.of(), host.releaseYmlReads, "the producers answered first");
   }
 
   @Test
@@ -581,22 +714,11 @@ class GoldenRecordingsAutomationTest {
     assertEquals(Plan.Kind.RUN, npm.plan(subject).kind());
 
     npm.graph = new Graph(Map.of());
-    assertEquals(Plan.Kind.RUN, npm.plan(subject).kind(), "by the name rule, @qits/ restored");
-  }
+    assertEquals(
+        Plan.Kind.FRESH, npm.plan(subject).kind(), "no producer and no release.yml claims it");
 
-  @Test
-  void theNameRuleIsTheComponentOrTheComponentAndADash() {
-    String library = "qits-eventstream-javalib";
-    String jslib = "qits-ui-components-jslib";
-    assertTrue(fromComponent("eu.wohlben.qits:qits-eventstream", library));
-    assertTrue(fromComponent("eu.wohlben.qits:qits-eventstream-contracts", library));
-    assertFalse(fromComponent("eu.wohlben.qits:qits-eventstreams", library));
-    assertFalse(fromComponent("eu.wohlben.qits:qits-events", library));
-    assertTrue(fromComponent("@qits/ui-components", jslib));
-    assertFalse(fromComponent("@other/ui-components", jslib));
-  }
-
-  private static boolean fromComponent(String pinName, String library) {
-    return GoldenRecordingsAutomation.fromComponent(pinName, library);
+    npm.store = new Store().with("qits-ui-components-jslib", "main");
+    npm.gitHost = new Host().releaseYml("qits-ui-components-jslib", UI_COMPONENTS_RELEASE_YML);
+    assertEquals(Plan.Kind.RUN, npm.plan(subject).kind(), "by the npm name its release.yml lists");
   }
 }
