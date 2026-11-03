@@ -53,7 +53,7 @@ public final class StoryTarget {
   public static final String ARTIFACTS = "qits-artifacts";
 
   /** Maven Central and npmjs, cached — where an EXTERNAL pin's latest is asked. */
-  public static final String MIRROR = "qits-platform-mirror";
+  public static final String MIRROR = "qits-mirror";
 
   // --- the wire surface --------------------------------------------------------------------------
 
@@ -105,7 +105,7 @@ public final class StoryTarget {
   /** …and its OCI registry, which is mounted at the Distribution spec's own root. */
   public static final String OCI_REGISTRY_PREFIX = "/v2";
 
-  /** qits-platform-mirror's Maven Central pull-through. */
+  /** qits-mirror's Maven Central pull-through. */
   public static final String MAVEN_MIRROR_PREFIX = "/artifacts/maven/central";
 
   /** …and its npmjs pull-through. */

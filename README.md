@@ -900,7 +900,7 @@ broken. Remove it from the deployment's extras at the next edit of that file.
 
 **One tier service by configured url.** qits-ci is per environment (`dev-qits-ci`) while this
 service is platform tier, so a live platform injects the qualified name. Known debt, the same one
-qits-configuration and qits-platform-orchestrator carry.
+qits-configuration and qits-orchestrator carry.
 
 **Outbound credentials are one named oidc client, `qits`** (epic qits-540 dossier, 'Plan (as of
 2026-09-13)', C4). It used to be five — a token was cut for one service's own audience, so a
@@ -926,7 +926,7 @@ deployer's extras file stops stating them (qits-375) — not before.
 **One toggle reaches every peer.** With the client off, calls go out with the forward-auth pair
 alone (`X-Qits-User: qits-platform-maintenance`, `X-Qits-Roles: qits:system`), which every call
 carries regardless; with it on, all five peers — qits-projects, qits-githost, qits-ci,
-qits-platform-artifacts and qits-platform-mirror — are called with a bearer. There is no per-peer
+qits-artifacts and qits-mirror — are called with a bearer. There is no per-peer
 arming, and every one of the five accepts `qits-platform`.
 
 **There was a sixth, `configuration`, and it went with the release trains** — as did
@@ -968,14 +968,14 @@ claim is not optional — it is a route this service cannot use without it.
 
 | what | why |
 |---|---|
-| role `qits:system` | the machine role qits-platform-orchestrator's client carries. It covers qits-projects' catalog, qits-githost's content policy, qits-ci's trigger and — since qits-ci a3ecce2 — the read-only run and repository routes the bump poller follows. |
+| role `qits:system` | the machine role qits-orchestrator's client carries. It covers qits-projects' catalog, qits-githost's content policy, qits-ci's trigger and — since qits-ci a3ecce2 — the read-only run and repository routes the bump poller follows. |
 | a qits-projects serving `POST /repositories/{repoId}/release-requests` | **The release ask, and it needs nothing new here.** That route admits `qits:system` beside `qits:admin`, so the `qits` client's bearer already opens it and no `qits:admin` lands on a service — the bootstrap's "qits:admin is a person's role" doctrine stands. Until that qits-projects release is deployed the ask is a 404, recorded as a refusal and asked again after `bump.dispatch.refusal-ttl`. |
-| claim `project` = `*` | qits-ci's trigger calls `machineAuth.requireProject("*")`, which passes only for a token literally granted every project. The bump names one repository but the trigger route demands them all. Today the only such grant is qits-platform-artifacts'; this service needs its own. |
+| claim `project` = `*` | qits-ci's trigger calls `machineAuth.requireProject("*")`, which passes only for a token literally granted every project. The bump names one repository but the trigger route demands them all. Today the only such grant is qits-artifacts'; this service needs its own. |
 | audience `qits-platform` | **The only audience the `qits` client asks for now** (C4) — one platform audience for every peer, not one per service. Nothing to grant beyond it: C2 makes `qits-platform` always allowed for any client, so the per-service audience list below is no longer needed for this service's own calls. |
 
 In `qits-configuration` / `.qits-bootstrap.env` terms that is a client with `_ROLES` carrying
 `qits:system` and `_CLAIMS_PROJECT: "*"`. The `_AUDIENCES` list that used to name `<env>-qits-ci`, `qits-projects`, `qits-githost`,
-`qits-platform-artifacts` and `qits-platform-mirror` is inert now — every call asks for
+`qits-artifacts` and `qits-mirror` is inert now — every call asks for
 `qits-platform` alone — and is removed once this repository's C5 cutover lands (C9).
 
 **Gitlinks need the git host to report a tree entry's sha — written (qits-githost 33b0ccf), not

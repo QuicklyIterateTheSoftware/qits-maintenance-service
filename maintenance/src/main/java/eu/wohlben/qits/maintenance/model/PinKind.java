@@ -12,7 +12,7 @@ public enum PinKind {
   /** Published by this platform, into qits-artifacts. */
   INTERNAL,
 
-  /** Everybody else's, read through qits-platform-mirror. */
+  /** Everybody else's, read through qits-mirror. */
   EXTERNAL,
 
   /**

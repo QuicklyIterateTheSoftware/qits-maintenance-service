@@ -3,7 +3,6 @@ package eu.wohlben.qits.maintenance.stories.support;
 import eu.wohlben.qits.maintenance.api.PackagedSurfaceIT;
 import eu.wohlben.qits.maintenance.testdb.EmbeddedPg;
 import eu.wohlben.qits.servicemock.idp.MockIdp;
-import java.net.URI;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -47,7 +46,7 @@ import java.util.Map;
  *       stand-ins that RECORD, because the outgoing half is where a scan's evidence is: what a
  *       manifest read looked like, which registry answered which pin, and what qits-ci was handed.
  *       Three of the eight are one stand-in behind three prefixes and two more behind two, exactly
- *       as {@code qits-artifacts} and {@code qits-platform-mirror} really mount them — which is what
+ *       as {@code qits-artifacts} and {@code qits-mirror} really mount them — which is what
  *       keeps a maven lookup from being answerable by the mirror's route.
  *   <li><b>{@code qits.auth.machine.required}</b> and {@code quarkus.oidc.tenant-enabled} — THE
  *       GATE, as a pair. Both ship ON in normal mode, but {@link PackagedSurfaceIT.PackagedUnderTarget}
@@ -159,19 +158,14 @@ public class StoryProfile extends PackagedSurfaceIT.PackagedUnderTarget {
     overrides.put(
         "qits.maintenance.mirror.maven-url",
         url(StoryTarget.MIRROR, StoryTarget.MAVEN_MIRROR_PREFIX));
+    overrides.put(
+        "qits.maintenance.mirror.npm-url",
+        url(StoryTarget.MIRROR, StoryTarget.NPM_MIRROR_PREFIX));
     // qits-artifacts' own API — the docs store a bump reads its changelog listings from (qits-893),
-    // and the SBOM route beside it — is a bare host. Left at its default it would leave through the
-    // mirror's proxy below and be drawn as an arrow into the wrong peer.
+    // and the SBOM route beside it — is a bare host. Overridden like every other peer above, so the
+    // stand-in that answers it is the one armed under this diagram's name rather than whatever the
+    // shipped default would reach.
     overrides.put("qits.maintenance.targets.artifacts-url", url(StoryTarget.ARTIFACTS));
-    // THE npm MIRROR HAS NO KEY TO POINT (qits-472): the launched process derives
-    // http://dev-qits-platform-mirror:8080/npm/npmjs itself. So the stand-in is reached the way the
-    // derived address really goes out — as the JVM's plain-http proxy, which the JDK HttpClient
-    // honours by default. Every other peer above is on 127.0.0.1, which the default
-    // http.nonProxyHosts exempts, so only the one host no loopback stub could answer as is
-    // proxied, and the request the stub records is the absolute-form one the derivation produced.
-    URI mirror = URI.create(url(StoryTarget.MIRROR));
-    overrides.put("http.proxyHost", mirror.getHost());
-    overrides.put("http.proxyPort", String.valueOf(mirror.getPort()));
     overrides.put("qits.maintenance.call-timeout", "PT5S");
 
     // The clock. See the class comment: the sweep is what closes a bump, so the scheduler is on and
