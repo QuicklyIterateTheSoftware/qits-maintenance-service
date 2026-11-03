@@ -86,6 +86,7 @@ class MaintenanceApiTest {
   private String scan() {
     String id =
         given()
+            .header("Authorization", SuiteBearers.platform())
             .contentType(ContentType.JSON)
             .body("{\"scope\":\"ALL\"}")
             .when()
@@ -103,7 +104,14 @@ class MaintenanceApiTest {
     Instant deadline = Instant.now().plus(Duration.ofSeconds(60));
     while (Instant.now().isBefore(deadline)) {
       String status =
-          given().when().get(BASE + path).then().statusCode(200).extract().path("status");
+          given()
+              .header("Authorization", SuiteBearers.operator())
+              .when()
+              .get(BASE + path)
+              .then()
+              .statusCode(200)
+              .extract()
+              .path("status");
       for (String candidate : terminal) {
         if (candidate.equals(status)) {
           return status;
@@ -118,7 +126,15 @@ class MaintenanceApiTest {
   private void awaitField(String path, String field) {
     Instant deadline = Instant.now().plus(Duration.ofSeconds(60));
     while (Instant.now().isBefore(deadline)) {
-      Object value = given().when().get(BASE + path).then().statusCode(200).extract().path(field);
+      Object value =
+          given()
+              .header("Authorization", SuiteBearers.operator())
+              .when()
+              .get(BASE + path)
+              .then()
+              .statusCode(200)
+              .extract()
+              .path(field);
       if (value != null) {
         return;
       }
@@ -142,6 +158,7 @@ class MaintenanceApiTest {
   void aScanIsAcceptedWithAnIdAndItsRowSaysWhatItCovered() {
     String id = scan();
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/scans/" + id)
         .then()
@@ -158,6 +175,7 @@ class MaintenanceApiTest {
   @Test
   void anUnknownScopeIsRefusedRatherThanTreatedAsEverything() {
     given()
+        .header("Authorization", SuiteBearers.platform())
         .contentType(ContentType.JSON)
         .body("{\"scope\":\"SOMETIMES\"}")
         .when()
@@ -176,6 +194,7 @@ class MaintenanceApiTest {
   void aScanFillsTheInventoryAndARetiredGroupsKeyIsIgnored() {
     scan();
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/repositories")
         .then()
@@ -196,6 +215,7 @@ class MaintenanceApiTest {
     scan();
     String repository = BASE + "/repositories/" + Fixture.REPOSITORY;
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(repository)
         .then()
@@ -239,7 +259,12 @@ class MaintenanceApiTest {
   @Test
   void aCatalogRowWithNoNameHasNoAddressAndIsSkipped() {
     scan();
-    given().when().get(BASE + "/repositories").then().statusCode(200).body("name", not(hasItem(nullValue())));
+    given()
+        .header("Authorization", SuiteBearers.operator())
+        .when()
+        .get(BASE + "/repositories")
+        .then()
+        .statusCode(200).body("name", not(hasItem(nullValue())));
   }
 
   @Test
@@ -247,6 +272,7 @@ class MaintenanceApiTest {
     scan();
     String repository = BASE + "/repositories/" + Fixture.REPOSITORY;
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(repository)
         .then()
@@ -281,6 +307,7 @@ class MaintenanceApiTest {
   void anExpressionInTheGroupIdIsResolvedAndTheArtifactIsInternal() {
     scan();
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/repositories/" + Fixture.REPOSITORY)
         .then()
@@ -305,6 +332,7 @@ class MaintenanceApiTest {
   void aSiblingModuleIsTheRepositorysOwnAndIsNeverPending() {
     scan();
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/repositories/" + Fixture.REPOSITORY)
         .then()
@@ -320,6 +348,7 @@ class MaintenanceApiTest {
   void theRepositorysOwnRootPomIsNotADependencyButAnOutsideParentIs() {
     scan();
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/repositories/" + Fixture.REPOSITORY)
         .then()
@@ -337,6 +366,7 @@ class MaintenanceApiTest {
   void anExpressionNobodyDeclaredIsVisibleAndIsNeverAskedAboutOrBumped() {
     scan();
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/repositories/" + Fixture.REPOSITORY)
         .then()
@@ -358,6 +388,7 @@ class MaintenanceApiTest {
   void anExternalBaseImageIsRecordedAndNeverLookedUp() {
     scan();
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/repositories/" + Fixture.REPOSITORY)
         .then()
@@ -378,6 +409,7 @@ class MaintenanceApiTest {
     // what the pin is offered.
     scan();
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/repositories/" + Fixture.REPOSITORY)
         .then()
@@ -390,6 +422,7 @@ class MaintenanceApiTest {
   void whoPinsThisDependencyIsAnswerableAcrossTheWholeInventory() {
     scan();
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/dependencies?name=eu.wohlben.qits:*")
         .then()
@@ -416,6 +449,7 @@ class MaintenanceApiTest {
   void thePinSourceAnswersEveryInternalRegistryPinAndNothingTheGcCouldNotUse() {
     scan();
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/pins")
         .then()
@@ -471,6 +505,7 @@ class MaintenanceApiTest {
     // …and the gitlink really is in the inventory, so the absence above is a filter rather than a
     // fixture that never produced one.
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/repositories/" + Fixture.REPOSITORY)
         .then()
@@ -490,6 +525,7 @@ class MaintenanceApiTest {
   void anInventoryThatWasNeverFilledRefusesRatherThanAnsweringAnEmptyKeepSet() {
     // No scan: the reset in @BeforeEach left the store with no repository row at all.
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/pins")
         .then()
@@ -506,9 +542,23 @@ class MaintenanceApiTest {
   void twoReadsOfAnUnchangedStoreAnswerTheSamePinsInTheSameOrder() {
     scan();
     List<java.util.Map<String, Object>> first =
-        given().when().get(BASE + "/pins").then().statusCode(200).extract().path("pins");
+        given()
+            .header("Authorization", SuiteBearers.operator())
+            .when()
+            .get(BASE + "/pins")
+            .then()
+            .statusCode(200)
+            .extract()
+            .path("pins");
     List<java.util.Map<String, Object>> second =
-        given().when().get(BASE + "/pins").then().statusCode(200).extract().path("pins");
+        given()
+            .header("Authorization", SuiteBearers.operator())
+            .when()
+            .get(BASE + "/pins")
+            .then()
+            .statusCode(200)
+            .extract()
+            .path("pins");
     assertFalse(first.isEmpty(), "the scan must have left something to order");
     assertEquals(first, second, "the pins are served in one order, element for element");
 
@@ -532,6 +582,7 @@ class MaintenanceApiTest {
   @Test
   void anUnknownRepositoryIsAFourOhFourWithTheMessageEnvelope() {
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/repositories/nothing-like-this")
         .then()
@@ -544,8 +595,20 @@ class MaintenanceApiTest {
 
   @Test
   void anIdThatIsNotAUuidIsAnUnknownRowRatherThanAnError() {
-    given().when().get(BASE + "/bumps/not-a-uuid").then().statusCode(404).body("message", notNullValue());
-    given().when().get(BASE + "/scans/not-a-uuid").then().statusCode(404).body("message", notNullValue());
+    given()
+        .header("Authorization", SuiteBearers.operator())
+        .when()
+        .get(BASE + "/bumps/not-a-uuid")
+        .then()
+        .statusCode(404)
+        .body("message", notNullValue());
+    given()
+        .header("Authorization", SuiteBearers.operator())
+        .when()
+        .get(BASE + "/scans/not-a-uuid")
+        .then()
+        .statusCode(404)
+        .body("message", notNullValue());
   }
 
   /**
@@ -559,6 +622,7 @@ class MaintenanceApiTest {
   void theRetiredBranchesBumpsAndScreenshotBaselinesDoorsAnswer404() {
     scan();
     given()
+        .header("Authorization", SuiteBearers.operator())
         .contentType(ContentType.JSON)
         .body("{\"branch\":\"workspace/ws-7\",\"changes\":[]}")
         .when()
@@ -566,6 +630,7 @@ class MaintenanceApiTest {
         .then()
         .statusCode(404);
     given()
+        .header("Authorization", SuiteBearers.operator())
         .contentType(ContentType.JSON)
         .body("{}")
         .when()
