@@ -143,8 +143,11 @@ import org.jboss.logging.Logger;
  * the fold the run fetched (the core refuses a fold that is no longer {@code foldSha} before it
  * starts), the gate only ever reads the rows of the sha it is about to release, and carry-over onto
  * the newer fold still demands that every changed path is automation output, so a person's push is
- * never carried. <b>Only a RED run on a fold that moved on is SUPERSEDED</b>: the core's own "superseded
- * before start" refusal is red, and a red verdict about a fold nobody will release must not hold
+ * never carried. <b>Except a fold that is GONE</b> (qits-1850): a green push whose fold the
+ * request's current fold no longer contains — the request re-folded without it — is not joined,
+ * since it would bring the old fold's history back in; it is SUPERSEDED and its branch deleted (see
+ * {@code foldGone}). <b>Only a RED run on a fold that moved on is SUPERSEDED</b>: the core's own
+ * "superseded before start" refusal is red, and a red verdict about a fold nobody will release must not hold
  * the request. <b>So is a red run, and a waiting row, whose request CLOSED</b> (qits-1578): a
  * RELEASED, FINALIZED, WITHDRAWN or OBSOLETE request takes no commit, so the dispatch asks again
  * before it sends a row and the ending asks before it fails one; a {@code dependency-bump} ended that
@@ -1712,8 +1715,9 @@ public class AutomationService {
 
   /**
    * The verdict, once every run is terminal: what the TARGET says a green run means — against the
-   * run's own fold, whether or not the request has moved on (see the class javadoc) — and for a red
-   * one SUPERSEDED when the fold moved on, FAILED when it did not.
+   * run's own fold, whether or not the request has moved on (see the class javadoc), unless the fold
+   * is gone (qits-1850, {@code foldGone}) — and for a red one SUPERSEDED when the fold moved on,
+   * FAILED when it did not.
    *
    * <p>A red run says why (qits-1116): the failing step, its exit code and the first line of its
    * excerpt go into the sentence, and the whole failure onto the row's own columns, where {@code
@@ -1837,6 +1841,18 @@ public class AutomationService {
       }
       return;
     }
+    String gone = foldGone(row, repository, after);
+    if (gone != null) {
+      store.bumpFinished(row.id, BumpStatus.SUPERSEDED, ciRunStatus, gone, after, now);
+      LOG.infof("The %s automation %s was %s", row.automationKind, row.id, gone);
+      if (door(row)) {
+        // The same carry as a red run's on a fold that moved on (qits-1726): a FOLD row is asked
+        // for again by the current fold's own settle — usually already waiting behind this run —
+        // and a door's is opened again there through its own route.
+        rerunOnTheCurrentFold(row, "its run on fold " + abbreviate(row.foldSha) + " was replaced");
+      }
+      return;
+    }
     String tripped = breaker(row);
     if (tripped != null) {
       // Not joined: a fourth commit of a loop that is not converging is exactly what must not be
@@ -1892,6 +1908,68 @@ public class AutomationService {
     }
     LOG.infof("The %s automation %s of %s: %s", row.automationKind, row.id, row.repository,
         joined.message());
+  }
+
+  /**
+   * <b>A green own-branch push onto a fold that is GONE is not joined</b> (qits-1850): the sentence
+   * the row is SUPERSEDED with, or null when it is joined as ever.
+   *
+   * <p>The core checks the fold only when the run starts, and its push is plain, so a run that
+   * outlives a re-fold still lands its commit — on the old fold's history. When the request moved
+   * on by re-folding from main without that history (a person's source moved out, the request
+   * dropped its automation branches and refolded, qits-1764), joining the push brings the old fold
+   * back in beside the new one: measured live on qits-projects-service-rr-427, a golden-recordings
+   * push on 19cc4221 joined after the request had re-folded to 9661f022, conflicted on pom.xml with
+   * the dependency bump recut there, and wedged the request.
+   *
+   * <p><b>The rule: the fold is gone when the request's current fold is not the run's {@code
+   * foldSha} AND does not contain it.</b> A fold that merely ADVANCED — a person's push, or the
+   * run's own push re-folding a branch already joined (see the class javadoc) — still contains the
+   * run's fold, and the commit, made on top of that fold, stands on the request's history: joined,
+   * the ordinary case. Only a fold that no longer descends from the run's has lost the history the
+   * commit was made on. The containment read is the one {@link #recut} makes, and is asked only when
+   * the fold differs, so the ordinary ending costs one request read and no git-host read.
+   *
+   * <p>The branch is deleted, through the same door and on the same condition as {@link #recut}:
+   * only when the request no longer names it, so a branch still joined is never touched. Then the
+   * current fold's row starts it afresh on that fold instead of being held behind a head the fold
+   * lacks (qits-1839). A delete the git host refuses only logs: that row's own recut asks again.
+   *
+   * <p>An answer that cannot be read — the request, or the containment — says nothing, and the run
+   * is joined as before; so is a request that closed, whose join qits-projects refuses itself.
+   */
+  private String foldGone(MtBump row, Optional<MtRepository> repository, String after) {
+    if (row.releaseRequestId == null || row.foldSha == null || repository.isEmpty()) {
+      return null;
+    }
+    MtRepository repo = repository.get();
+    ReleaseRequestClient.ReleaseState state = requestState(row, repository);
+    if (state == null || !state.readable() || !state.open() || state.mergedSha() == null
+        || state.mergedSha().equals(row.foldSha)) {
+      return null;
+    }
+    GitHostReader.Containment contained =
+        gitHost.contains(repo.catalogId, row.foldSha, state.mergedSha());
+    if (!contained.readable() || contained.contains()) {
+      return null;
+    }
+    String deleted;
+    if (state.branches().contains(row.branch)) {
+      deleted = "; " + row.branch + " is still joined and is kept";
+    } else {
+      GitHostRefs.Deletion deletion =
+          refs.delete(repo.catalogId, repo.project, repo.name, row.branch);
+      if (deletion.outcome() == GitHostRefs.Deleted.FAILED) {
+        LOG.warnf("The automation %s could not delete %s, whose fold is gone: %s", row.id,
+            row.branch, deletion.message());
+        deleted = "; " + row.branch + " could not be deleted, and is recut before the next run";
+      } else {
+        deleted = "; " + row.branch + " was deleted, so the next run starts it on the current fold";
+      }
+    }
+    return "superseded: release request " + requestName(row) + " moved on to fold "
+        + abbreviate(state.mergedSha()) + ", which does not contain fold " + abbreviate(row.foldSha)
+        + ", before this run's push " + abbreviate(after) + " could be joined" + deleted;
   }
 
   /**

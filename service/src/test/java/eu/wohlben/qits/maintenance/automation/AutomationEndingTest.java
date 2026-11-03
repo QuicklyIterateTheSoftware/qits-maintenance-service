@@ -406,6 +406,8 @@ class AutomationEndingTest {
     // is still RUNNING, so the new fold waits behind it rather than carrying.
     Fixture.scriptForeignBranchAt(peers, AutomationFixture.branch(REQUEST), PUSHED);
     AutomationFixture.scriptRequest(peers, REQUEST, "PENDING", FOLD_B);
+    // Fold B is A plus the run's own push, so it contains A: not a fold that is gone (qits-1850).
+    Fixture.scriptContains(peers, FOLD_A, FOLD_B, true);
     AutomationDto waiting =
         automations
             .trigger(
@@ -438,6 +440,105 @@ class AutomationEndingTest {
     assertEquals(
         AutomationState.FRESH.name(),
         automations.automations(REQUEST, FOLD_B).automations().stream().filter(AutomationFixture::screenshots).findFirst().orElseThrow().state());
+  }
+
+  /** The git host's door that deletes the screenshot kind's own branch of the request. */
+  private static String deletePath() {
+    return "/githost/api/repositories/" + Fixture.CATALOG_ID + "/branches/"
+        + AutomationFixture.branch(REQUEST) + "?projectId=" + Fixture.PROJECT + "&repoName="
+        + Fixture.REPOSITORY;
+  }
+
+  /** Fold B's settle, posted while fold A's run is still RUNNING: its row waits behind it. */
+  private AutomationDto waitingOnFoldB(List<String> sources) {
+    AutomationFixture.scriptFold(peers, FOLD_B, true);
+    AutomationDto waiting =
+        automations
+            .trigger(
+                REQUEST,
+                new AutomationService.Fold(
+                    Fixture.REPOSITORY, FOLD_B, FOLD_A, List.of("src/app/home/home.ts"), sources,
+                    null))
+            .automations()
+            .stream().filter(AutomationFixture::screenshots).findFirst().orElseThrow();
+    queue.awaitIdle(Duration.ofSeconds(30));
+    assertEquals(AutomationState.REQUESTED.name(), waiting.state(), waiting.detail());
+    return waiting;
+  }
+
+  /**
+   * <b>A GREEN RUN WHOSE FOLD IS GONE IS NOT JOINED</b> (qits-1850, qits-projects-service-rr-427).
+   * The run pushed onto fold A's history, and meanwhile the request dropped its automation branches
+   * (a person's source moved out, qits-1764) and re-folded from main to fold B, which does not
+   * contain A. Joining that push is what conflicted with fold B and wedged the request: the row is
+   * SUPERSEDED, its branch deleted, and fold B's own row — waiting behind it — is what runs next,
+   * starting the branch afresh on B.
+   */
+  @Test
+  void aGreenRunWhoseFoldWasReplacedIsSupersededAndItsBranchDeleted() {
+    UUID id = running();
+    AutomationDto waiting = waitingOnFoldB(List.of("work"));
+    Fixture.scriptForeignBranchAt(peers, AutomationFixture.branch(REQUEST), PUSHED);
+    AutomationFixture.scriptRequest(peers, REQUEST, "PENDING", FOLD_B);
+    Fixture.scriptContains(peers, FOLD_A, FOLD_B, false);
+    // The stale push is still the branch's head when fold B's row is sent: its recut finds it
+    // outside B and unjoined, exactly as the ending did.
+    Fixture.scriptContains(peers, PUSHED, FOLD_B, false);
+    peers.answerDelete(PeerTarget.GITHOST, deletePath(), FakePeers.Scripted.status(204, ""));
+
+    MtBump done = end(id, "SUCCESS");
+
+    assertEquals(BumpStatus.SUPERSEDED.name(), done.status, done.message);
+    assertTrue(
+        done.message.contains("moved on to fold " + FOLD_B.substring(0, 12)), done.message);
+    assertTrue(peers.bodiesFor(AutomationFixture.joinPath(REQUEST)).isEmpty(), "nothing joined");
+    assertTrue(peers.deleted(PeerTarget.GITHOST, deletePath()), "the stale branch is deleted");
+    assertEquals(AutomationState.SUPERSEDED.name(), entry().state());
+    MtBump next = store.bump(UUID.fromString(waiting.bumpId())).orElseThrow();
+    assertEquals(BumpStatus.RUNNING.name(), next.status, next.message);
+    assertEquals(FOLD_B, next.foldSha);
+    assertNull(next.resultSha, "fold B's run starts the branch afresh");
+    List<String> sent = peers.bodiesFor(eu.wohlben.qits.maintenance.bump.CiClient.TRIGGER_PATH);
+    assertTrue(sent.getLast().contains("\"foldSha\":\"" + FOLD_B + "\""), sent.getLast());
+  }
+
+  /**
+   * <b>A fold that merely ADVANCED is no reason to hold a green run back</b> (qits-1850): fold B
+   * contains fold A — a person pushed to a source — so the run's commit stands on B's history and
+   * is joined, which is the ordinary case.
+   */
+  @Test
+  void aGreenRunOnAFoldThatMerelyAdvancedIsStillJoined() {
+    UUID id = running();
+    Fixture.scriptForeignBranchAt(peers, AutomationFixture.branch(REQUEST), PUSHED);
+    AutomationFixture.scriptRequest(peers, REQUEST, "PENDING", FOLD_B);
+    Fixture.scriptContains(peers, FOLD_A, FOLD_B, true);
+    peers.answerDelete(PeerTarget.GITHOST, deletePath(), FakePeers.Scripted.status(204, ""));
+
+    MtBump done = end(id, "SUCCESS");
+
+    assertEquals(BumpStatus.SUCCEEDED.name(), done.status, done.message);
+    assertTrue(done.message.contains("joined to release request " + REQUEST), done.message);
+    assertEquals(1, peers.bodiesFor(AutomationFixture.joinPath(REQUEST)).size(), "joined once");
+    assertEquals(0, peers.deleteCount(), "the branch is kept");
+  }
+
+  /**
+   * A containment the git host would not answer says nothing (qits-1850): the green run is joined
+   * as it was before, exactly as {@code recut} keeps a head it could not place.
+   */
+  @Test
+  void aGreenRunWhoseFoldCannotBePlacedIsStillJoined() {
+    UUID id = running();
+    Fixture.scriptForeignBranchAt(peers, AutomationFixture.branch(REQUEST), PUSHED);
+    AutomationFixture.scriptRequest(peers, REQUEST, "PENDING", FOLD_B);
+    // Unscripted, the ancestry door answers 404: a failed answer, never a false.
+
+    MtBump done = end(id, "SUCCESS");
+
+    assertEquals(BumpStatus.SUCCEEDED.name(), done.status, done.message);
+    assertEquals(1, peers.bodiesFor(AutomationFixture.joinPath(REQUEST)).size(), "joined once");
+    assertEquals(0, peers.deleteCount());
   }
 
   /**
