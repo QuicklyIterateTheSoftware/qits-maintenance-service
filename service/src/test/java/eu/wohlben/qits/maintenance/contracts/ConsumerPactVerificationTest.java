@@ -37,7 +37,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * qits-artifacts-service-pacts-qits-maintenance-service}, the pins it reads),
  * <b>qits-orchestrator-service</b> ({@code qits-orchestrator-service-pacts-qits-maintenance-service},
  * the pins its GC schedule reads) <b>and the qits CLI</b> ({@code
- * qits-platform-access-cli-pacts-qits-maintenance-service}: bumps and release-request automations),
+ * qits-platform-access-monorepo-pacts-qits-maintenance-service}: bumps and release-request automations),
  * ticket qits-1149. {@link
  * ClasspathPactLoader#REQUIRED} is true, so a classpath that lost its pinned pacts fails rather than
  * verifying nothing.

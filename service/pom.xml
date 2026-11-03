@@ -182,7 +182,7 @@
             <!-- The qits CLI's (qits-platform-access-cli) consumer pact against this service,
                  verified by the same ConsumerPactVerificationTest. Pinned in the root pom. -->
             <groupId>${project.groupId}</groupId>
-            <artifactId>qits-platform-access-cli-pacts-qits-maintenance-service</artifactId>
+            <artifactId>qits-platform-access-monorepo-pacts-qits-maintenance-service</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
