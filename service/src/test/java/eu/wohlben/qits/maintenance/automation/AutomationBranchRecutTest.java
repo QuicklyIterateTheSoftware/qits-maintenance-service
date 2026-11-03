@@ -1,6 +1,7 @@
 package eu.wohlben.qits.maintenance.automation;
 
 import static eu.wohlben.qits.maintenance.automation.AutomationFixture.FOLD_A;
+import static eu.wohlben.qits.maintenance.automation.AutomationFixture.FOLD_B;
 import static eu.wohlben.qits.maintenance.automation.AutomationFixture.PUSHED;
 import static eu.wohlben.qits.maintenance.automation.AutomationFixture.REQUEST;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -35,6 +36,10 @@ import org.junit.jupiter.api.Test;
  * <b>A stale own branch is recut</b> (qits-1764): a branch the request no longer joins, whose head
  * the fold does not contain, is deleted before the run so the core's plain push starts it afresh on
  * the fold. A branch still joined, or a head the fold contains, is never touched.
+ *
+ * <p><b>A joined head the fold lacks is held, not sent</b> (qits-1839): the request's re-fold was
+ * deferred (qits-1570), and a run from the fold it stands on could only end in the refused push.
+ * The row waits REQUESTED until the request moves to a fold that has the head, or closes.
  */
 @QuarkusTest
 class AutomationBranchRecutTest {
@@ -76,6 +81,11 @@ class AutomationBranchRecutTest {
 
   /** The request at the fold, joining these branch sources. */
   private void scriptRequestJoining(String... branches) {
+    scriptRequest("PENDING", FOLD_A, branches);
+  }
+
+  /** The request in this state at this fold, joining these branch sources. */
+  private void scriptRequest(String state, String mergedSha, String... branches) {
     StringBuilder sources = new StringBuilder();
     for (String branch : branches) {
       if (!sources.isEmpty()) {
@@ -88,7 +98,8 @@ class AutomationBranchRecutTest {
         Fixture.RELEASE_REQUESTS_PATH + "/" + REQUEST,
         FakePeers.Scripted.ok(
             "{\"request\":{\"id\":\"" + REQUEST + "\",\"repoId\":\"" + Fixture.CATALOG_ID
-                + "\",\"state\":\"PENDING\",\"mergedSha\":\"" + FOLD_A + "\",\"sources\":["
+                + "\",\"state\":\"" + state + "\",\"mergedSha\":\"" + mergedSha
+                + "\",\"sources\":["
                 + sources + "]}}"));
   }
 
@@ -140,16 +151,92 @@ class AutomationBranchRecutTest {
     assertTrue(payload().contains("\"branch\":\"" + BRANCH + "\""), payload());
   }
 
+  /**
+   * THE LIVE CASE (qits-1839, qits-qits-rr-292): the request still joins the branch, and its fold
+   * lacks the branch's newer tip because the re-fold the push asked for was deferred. Nothing is
+   * deleted and nothing is sent; the row waits, saying for what.
+   */
   @Test
-  void aBranchTheRequestStillJoinsIsNeverDeleted() {
-    scriptRequestJoining("main", "work", BRANCH);
-    Fixture.scriptContains(peers, PUSHED, FOLD_A, false);
-
-    MtBump row = dispatched();
+  void aJoinedHeadTheFoldLacksIsHeldNotSent() {
+    MtBump row = held();
 
     assertEquals(0, peers.deleteCount(), "a joined branch is kept");
-    assertEquals(BumpStatus.RUNNING.name(), row.status, row.message);
-    assertEquals(PUSHED, row.resultSha, "the head stays the start");
+    assertTrue(peers.bodiesFor(CiClient.TRIGGER_PATH).isEmpty(), "no run was asked for");
+    assertEquals(BumpStatus.REQUESTED.name(), row.status, row.message);
+    assertNull(row.resultSha, "no start head is written for a held row");
+    assertTrue(row.message.contains("re-fold"), row.message);
+    assertTrue(row.message.contains(FOLD_A.substring(0, 12)), row.message);
+    assertTrue(row.message.contains(PUSHED.substring(0, 12)), row.message);
+    assertTrue(row.message.contains(BRANCH), row.message);
+  }
+
+  /** A row held on a joined head the fold lacks (qits-1839), asserted held. */
+  private MtBump held() {
+    scriptRequestJoining("main", "work", BRANCH);
+    Fixture.scriptContains(peers, PUSHED, FOLD_A, false);
+    MtBump row = dispatched();
+    assertEquals(BumpStatus.REQUESTED.name(), row.status, row.message);
+    return row;
+  }
+
+  /**
+   * The re-fold lands: the request moves to fold B, which contains the head. The held row is a
+   * door's, so the next offer supersedes it and opens the re-run again on B (qits-1726), where it
+   * is sent.
+   */
+  @Test
+  void aHeldRowIsSupersededOnceTheRequestReFolds() {
+    MtBump row = held();
+    AutomationFixture.scriptFold(peers, FOLD_B, true);
+    scriptRequest("PENDING", FOLD_B, "main", "work", BRANCH);
+    Fixture.scriptContains(peers, PUSHED, FOLD_B, true);
+
+    automations.dispatch(row.id);
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    MtBump old = store.bump(row.id).orElseThrow();
+    assertEquals(BumpStatus.SUPERSEDED.name(), old.status, old.message);
+    assertTrue(old.message.contains("moved on to fold " + FOLD_B.substring(0, 12)), old.message);
+    List<MtBump> again =
+        store.automations(REQUEST, FOLD_B).stream()
+            .filter(next -> ScreenshotBaselinesAutomation.KIND.equals(next.automationKind))
+            .toList();
+    assertEquals(1, again.size(), "the re-run, opened again on the fold the request is at");
+    assertEquals(BumpStatus.RUNNING.name(), again.getFirst().status, again.getFirst().message);
+    assertEquals(PUSHED, again.getFirst().resultSha, "inside fold B, the head stays the start");
+    assertEquals(0, peers.deleteCount());
+    assertEquals(1, peers.bodiesFor(CiClient.TRIGGER_PATH).size(), "sent once, on fold B");
+    assertTrue(payload().contains("\"foldSha\":\"" + FOLD_B + "\""), payload());
+  }
+
+  /** The request closes under the held row: it ends (qits-1578), and nothing is sent. */
+  @Test
+  void aHeldRowEndsWhenTheRequestCloses() {
+    MtBump row = held();
+    scriptRequest("FINALIZED", FOLD_A, "main", "work", BRANCH);
+
+    automations.dispatch(row.id);
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    MtBump ended = store.bump(row.id).orElseThrow();
+    assertEquals(BumpStatus.SUPERSEDED.name(), ended.status, ended.message);
+    assertTrue(peers.bodiesFor(CiClient.TRIGGER_PATH).isEmpty(), "nothing was sent");
+    assertEquals(0, peers.deleteCount());
+    assertTrue(store.activeAutomations(REQUEST).isEmpty(), "nothing left to run");
+  }
+
+  /** A held row offered again while the request still stands on the fold stays held, unwritten. */
+  @Test
+  void aHeldRowOfferedAgainStaysHeld() {
+    MtBump row = held();
+
+    automations.dispatch(row.id);
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    MtBump again = store.bump(row.id).orElseThrow();
+    assertEquals(BumpStatus.REQUESTED.name(), again.status, again.message);
+    assertEquals(row.message, again.message);
+    assertTrue(peers.bodiesFor(CiClient.TRIGGER_PATH).isEmpty(), "still nothing sent");
   }
 
   @Test

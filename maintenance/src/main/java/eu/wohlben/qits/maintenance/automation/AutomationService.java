@@ -1408,7 +1408,26 @@ public class AutomationService {
       return;
     }
     String startHead = start.found() ? start.headSha() : null;
-    if (startHead != null && recut(row, repository, startHead)) {
+    Recut recut = startHead == null ? Recut.KEPT : recut(row, repository, startHead);
+    if (recut == Recut.HELD) {
+      // A JOINED HEAD THE FOLD LACKS IS NOT SENT (qits-1839). qits-projects deferred the re-fold
+      // its push asked for while a fold was in flight (qits-1570), so the request stands on a fold
+      // without the branch's tip, and the core's plain push from that fold is refused — the row
+      // ends FAILED for a commit the request is about to fold. Nothing is written but the
+      // sentence: no start head, no run, so the row is exactly as re-offerable as it was. The
+      // sweep offers it again every poll-interval; a door's row is superseded and opened again
+      // once the request moves to a new fold (qits-1726), a FOLD row is superseded by the newer
+      // fold's own, and a request that closes ends it (qits-1578).
+      String held =
+          "waits for release request " + requestName(row) + " to re-fold: its fold "
+              + abbreviate(row.foldSha) + " lacks " + abbreviate(startHead) + " of " + row.branch;
+      if (!held.equals(row.message)) {
+        store.bumpFinished(row.id, BumpStatus.REQUESTED, null, held, Instant.now());
+      }
+      LOG.infof("The %s automation %s of %s %s", row.automationKind, row.id, row.repository, held);
+      return;
+    }
+    if (recut == Recut.RECUT) {
       startHead = null;
     }
     store.bumpStartHead(row.id, startHead);
@@ -1448,48 +1467,80 @@ public class AutomationService {
   }
 
   /**
-   * <b>A stale own branch is recut, not fast-forwarded</b> (qits-1764): whether the branch at
-   * {@code head} was deleted so the run starts it afresh on {@code row.foldSha}.
+   * What {@link #recut} made of an own branch's head against the row's fold (qits-1764, qits-1839).
+   */
+  private enum Recut {
+    /**
+     * The head stays the start and the run is sent: the fold contains it, either read went
+     * unanswered, or the git host refused the delete.
+     */
+    KEPT,
+    /** The branch was deleted, and the run starts it afresh on the fold. */
+    RECUT,
+    /**
+     * The fold lacks the head and the request still joins the branch: the row is held REQUESTED,
+     * nothing is sent, until the request re-folds or closes.
+     */
+    HELD
+  }
+
+  /**
+   * <b>A stale own branch is recut, not fast-forwarded</b> (qits-1764) — <b>and a joined one is
+   * held</b> (qits-1839): what to do with the branch at {@code head} before a run on {@code
+   * row.foldSha}.
    *
    * <p>The core commits onto the fold and pushes plainly, never forced, so a branch whose tip does
    * not descend from the fold refuses that push ("the fold no longer contains it"). That is the
    * branch qits-projects left behind when it DROPPED it from the request — a person's source was
    * moved out, the request refolded from main and the sources that remain, and the old tip still
    * stands on the fold that carried the moved-out source. Nothing of it reaches the request any
-   * more, so deleting it loses nothing.
+   * more, so deleting it loses nothing: {@link Recut#RECUT}.
    *
    * <p><b>Only on two facts, both read</b>: the fold does not contain the head, and the request no
    * longer names the branch as a source. A branch still joined is never touched — a run sent just
-   * before its join's refold would otherwise throw away the commit the request is folding. Either
-   * answer unreadable, or a delete the git host refuses, keeps today's behaviour: the head stays the
-   * start, and the worst that can happen is the refused push this used to end in. The containment
-   * read comes first, so the ordinary own branch — inside its own fold — costs no request read.
+   * before its join's refold would otherwise throw away the commit the request is folding.
+   *
+   * <p><b>A JOINED HEAD THE FOLD LACKS IS {@link Recut#HELD}, NOT SENT</b> (qits-1839). It is the
+   * branch whose push qits-projects has not folded yet: the re-fold it asked for was deferred while
+   * another fold was in flight (qits-1570), so the request's {@code mergedSha} stands on a fold
+   * without the tip. A run sent there could only end in the refused push — measured live on
+   * qits-qits-rr-292, an upstream re-plan opened at that fold and FAILED on exactly that. Held, the
+   * row waits for the re-fold, which supersedes it.
+   *
+   * <p>Either answer unreadable, or a delete the git host refuses, keeps today's behaviour, {@link
+   * Recut#KEPT}: the head stays the start, and the worst that can happen is the refused push this
+   * used to end in. Holding on an unread answer instead would strand the row on every hiccup of
+   * either peer. The containment read comes first, so the ordinary own branch — inside its own
+   * fold — costs no request read.
    */
-  private boolean recut(MtBump row, MtRepository repository, String head) {
+  private Recut recut(MtBump row, MtRepository repository, String head) {
     if (repository.catalogId == null || repository.catalogId.isBlank()) {
-      return false;
+      return Recut.KEPT;
     }
     GitHostReader.Containment contained = gitHost.contains(repository.catalogId, head, row.foldSha);
     if (!contained.readable() || contained.contains()) {
-      return false;
+      return Recut.KEPT;
     }
     ReleaseRequestClient.ReleaseState request =
         releases.state(repository.catalogId, row.releaseRequestId);
-    if (!request.readable() || request.branches().contains(row.branch)) {
-      return false;
+    if (!request.readable()) {
+      return Recut.KEPT;
+    }
+    if (request.branches().contains(row.branch)) {
+      return Recut.HELD;
     }
     GitHostRefs.Deletion deletion =
         refs.delete(repository.catalogId, repository.project, repository.name, row.branch);
     if (deletion.outcome() == GitHostRefs.Deleted.FAILED) {
       LOG.warnf("The automation %s keeps the stale head %s of %s: %s", row.id, abbreviate(head),
           row.branch, deletion.message());
-      return false;
+      return Recut.KEPT;
     }
     LOG.infof(
         "Recutting %s for release request %s: its head %s is not in fold %s and the request no"
             + " longer joins it",
         row.branch, requestName(row), abbreviate(head), abbreviate(row.foldSha));
-    return true;
+    return Recut.RECUT;
   }
 
   /**
