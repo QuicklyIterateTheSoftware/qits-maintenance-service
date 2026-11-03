@@ -268,11 +268,7 @@ public class ChangelogRanges {
 
           @Override
           public List<Release> releasesOf(String repository) {
-            List<Release> releases = new ArrayList<>();
-            for (MtRelease row : store.releasesOf(repository)) {
-              releases.add(new Release(row.version, row.sha));
-            }
-            return releases;
+            return ledgerOf(repository);
           }
 
           @Override
@@ -295,6 +291,37 @@ public class ChangelogRanges {
             return Unpublished.of(history.cuts());
           }
         });
+  }
+
+  /**
+   * <b>One repository's release ledger, under every name it has carried</b> (qits-1840) — the
+   * store-backed {@link Sources#releasesOf}.
+   *
+   * <p>{@code mt_release.repository} is the catalog name a release was cut under, and a rename
+   * changes the name while keeping the repository: every release recorded before it sits under the
+   * OLD name. Read under the new name alone, the ledger of a freshly renamed repository is empty or
+   * nearly so, and rule 3 (a gitlink pin is resolved to the release cut at its commit) and rule 6
+   * (the candidates are drawn from the ledger as well as the listing) both lose the history — so
+   * the ledger is read under every spelling {@link ArtifactGraph#spellings} knows, the retired
+   * names a rename left on the same catalog id included.
+   *
+   * <p><b>One row per version</b>, the first spelling's winning: the live name comes first, and a
+   * version recorded under both — a redelivery that resolved the id to each row in turn — is one
+   * release, not two.
+   *
+   * @param repository the source repository's catalog name
+   * @return its releases, deduplicated by version
+   */
+  List<Release> ledgerOf(String repository) {
+    Map<String, Release> byVersion = new LinkedHashMap<>();
+    for (String spelling : artifacts.spellings(repository)) {
+      for (MtRelease row : store.releasesOf(spelling)) {
+        if (row.version != null) {
+          byVersion.putIfAbsent(row.version, new Release(row.version, row.sha));
+        }
+      }
+    }
+    return new ArrayList<>(byVersion.values());
   }
 
   /** The rules themselves, over any {@link Sources}. */

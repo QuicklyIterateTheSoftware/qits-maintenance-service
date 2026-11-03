@@ -480,33 +480,116 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
     return DbRetry.inNewTx(
         "reconcile the inventory against the catalog",
         () -> {
-          List<MtRepository> gone = find("name not in ?1", names).list();
-          if (gone.isEmpty()) {
-            return List.<String>of();
-          }
-          List<String> dropped = new java.util.ArrayList<>();
-          List<String> absent = new java.util.ArrayList<>();
-          for (MtRepository row : gone) {
-            // NEWLY dropped, so a nightly scan does not report the same twenty-three names for ever.
-            if (!RepositoryStatus.ABSENT.name().equals(row.status)
-                || !java.util.Objects.equals(message, row.message)) {
-              dropped.add(row.name);
-            }
-            row.status = RepositoryStatus.ABSENT.name();
-            row.message = message;
-            row.lastScanAt = now;
-            absent.add(row.name);
-          }
-          // Two bulk deletes rather than two per row: this runs over the whole inventory on every
-          // full scan, and the updates above are flushed by the first query anyway.
-          MtPin.delete("repository in ?1", absent);
-          MtGroup.delete("repository in ?1", absent);
-          // …and what its gitlinks reached, which is the same cache one hop further out.
-          MtGitlinkPin.delete("repository in ?1", absent);
-          MtMainPin.delete("repository in ?1", absent);
-          getEntityManager().flush();
-          return List.copyOf(dropped);
+          return markAbsent(find("name not in ?1", names).list(), message, now);
         });
+  }
+
+  /**
+   * <b>Every row a RENAME left behind, marked ABSENT on every scan — a scan of one repository
+   * included</b> (qits-1840).
+   *
+   * <p>A rename in qits-projects keeps the catalog row's id, so after one the store holds two rows
+   * carrying the same {@code catalog_id}: the old name, still OK with the pins and the groups its
+   * last scan wrote, and the new name, which the very next push scanned in as OK beside it. Only
+   * {@link #reconcileCatalog} ever retired the old one, and only a FULL scan calls that — the
+   * nightly cron. Until it ran, both rows were live, and every reader that resolves a shared id by
+   * "live first, then the lowest name" handed the bump path the OLD name. Measured live:
+   * {@code qits-platform-access-cli} and {@code qits-platform-access-monorepo}, one catalog id,
+   * and bumps FAILING with {@code no changelog for qits-platform-access-cli} because the changelogs
+   * are published under the name the repository has now.
+   *
+   * <p><b>Why this needs no full scan when {@code reconcileCatalog} does.</b> The rule that a scan
+   * of one repository never reconciles is about EVIDENCE: a listing filtered down to one name says
+   * nothing about the other forty-seven. But a scan of one repository does not read a filtered
+   * listing — it reads the WHOLE catalog and filters it afterwards — and the evidence this method
+   * acts on is narrower than "unlisted": the catalog answered this row's {@code catalog_id} under
+   * a DIFFERENT name, and did not answer this row's name at all. That is the catalog saying, in so
+   * many words, that the row was renamed. So:
+   *
+   * <ul>
+   *   <li><b>a row whose name IS listed is never touched</b>, whatever its id — the query excludes
+   *       it outright, so two listed repositories that somehow share an id both stay live;
+   *   <li><b>a row with no {@code catalog_id} is never touched</b> — there is no rename to see;
+   *   <li><b>an empty listing touches nothing</b>, the same belt as {@code reconcileCatalog}'s:
+   *       the caller already closes a scan whose catalog read failed or listed nothing before it
+   *       gets here.
+   * </ul>
+   *
+   * <p><b>The treatment is {@code reconcileCatalog}'s, row for row</b> — status ABSENT, the given
+   * sentence, pins, groups, gitlink pins and main pins gone, the row and its {@code catalog_id}
+   * kept — and the caller passes the same sentence, so the next full scan rewrites the row
+   * idempotently instead of reporting it dropped a second time.
+   *
+   * @param listedByCatalogId every catalog id the listing answered, to the name it answered it
+   *     under; ids the listing did not carry are simply absent
+   * @param listed every name the catalog answered — the WHOLE listing, never a filtered subset
+   * @param message the sentence the retired rows carry
+   * @return the names newly retired, which is what is worth a log line
+   */
+  @ActivateRequestContext
+  public List<String> retireRenamed(
+      Map<String, String> listedByCatalogId,
+      Collection<String> listed,
+      String message,
+      Instant now) {
+    if (listedByCatalogId == null
+        || listedByCatalogId.isEmpty()
+        || listed == null
+        || listed.isEmpty()) {
+      return List.of();
+    }
+    Map<String, String> byId = Map.copyOf(listedByCatalogId);
+    List<String> names = List.copyOf(listed);
+    return DbRetry.inNewTx(
+        "retire the repositories a rename left behind",
+        () -> {
+          List<MtRepository> renamed =
+              find("catalogId in ?1 and name not in ?2", List.copyOf(byId.keySet()), names)
+                  .list()
+                  .stream()
+                  .filter(row -> row.catalogId != null && !row.catalogId.isBlank())
+                  // Implied by "name not in", and spelled out because it is the whole rule: the
+                  // catalog answered this id under ANOTHER name.
+                  .filter(row -> !java.util.Objects.equals(byId.get(row.catalogId), row.name))
+                  .toList();
+          return markAbsent(renamed, message, now);
+        });
+  }
+
+  /**
+   * The ABSENT treatment itself, inside the caller's transaction: the shared body of {@link
+   * #reconcileCatalog} and {@link #retireRenamed}, so the two can never disagree about what a
+   * retired row loses.
+   *
+   * @return the names newly marked — a row already ABSENT with this sentence is rewritten and not
+   *     reported again
+   */
+  private List<String> markAbsent(List<MtRepository> gone, String message, Instant now) {
+    if (gone.isEmpty()) {
+      return List.of();
+    }
+    List<String> dropped = new java.util.ArrayList<>();
+    List<String> absent = new java.util.ArrayList<>();
+    for (MtRepository row : gone) {
+      // NEWLY dropped, so a nightly scan does not report the same twenty-three names for ever.
+      if (!RepositoryStatus.ABSENT.name().equals(row.status)
+          || !java.util.Objects.equals(message, row.message)) {
+        dropped.add(row.name);
+      }
+      row.status = RepositoryStatus.ABSENT.name();
+      row.message = message;
+      row.lastScanAt = now;
+      absent.add(row.name);
+    }
+    // Two bulk deletes rather than two per row: this runs over the whole inventory on every
+    // full scan, and the updates above are flushed by the first query anyway.
+    MtPin.delete("repository in ?1", absent);
+    MtGroup.delete("repository in ?1", absent);
+    // …and what its gitlinks reached, which is the same cache one hop further out.
+    MtGitlinkPin.delete("repository in ?1", absent);
+    MtMainPin.delete("repository in ?1", absent);
+    getEntityManager().flush();
+    return List.copyOf(dropped);
   }
 
   /**
@@ -1019,7 +1102,17 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
    * share a {@code catalog_id}; an unordered {@code firstResult} filed releases under the old name
    * at random, and the ledger then kept a release nothing would ever place on main. So: a row whose
    * NAME is the spelling answers first — a name is answered unchanged, always — then a row that is
-   * not {@link RepositoryStatus#retired retired}, then the lowest name.
+   * not {@link RepositoryStatus#retired retired}, then the row scanned MOST RECENTLY, then the
+   * lowest name.
+   *
+   * <p><b>The most recent scan breaks the tie between two LIVE rows</b> (qits-1840). Between a rename
+   * and the scan that retires the old row ({@link #retireRenamed} now runs on every scan, but a row
+   * written before it, or a scan that failed, can still leave both OK), the two rows are equally
+   * live, and the lowest name answered — {@code qits-platform-access-cli} over {@code
+   * qits-platform-access-monorepo}, measured live, so releases were filed under the name nothing
+   * scans any more. The name the catalog lists is the one every scan since the rename has written,
+   * and the old one's {@code last_scan_at} stopped the day it was renamed; a row never scanned
+   * sorts last.
    *
    * @return the catalog name, or the spelling unchanged when the catalog knows neither
    */
@@ -1038,6 +1131,9 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
               .min(
                   Comparator.comparing((MtRepository row) -> !spelling.equals(row.name))
                       .thenComparing(row -> RepositoryStatus.retired(row.status))
+                      .thenComparing(
+                          (MtRepository row) -> row.lastScanAt,
+                          Comparator.nullsLast(Comparator.<Instant>reverseOrder()))
                       .thenComparing(row -> row.name))
               .map(row -> row.name)
               .orElse(spelling);

@@ -49,7 +49,9 @@ import org.jboss.logging.Logger;
  * 23 of 30 bumps FAILED with {@code no run recorded for MaintenanceBump} because the clock was
  * bumping pre-rename ghosts. So a scan that read the WHOLE catalog now marks every unlisted row
  * ABSENT and drops its pins and groups — see {@link #reconcile}, which is where the three guards
- * are.
+ * are. A row the catalog now lists under another NAME — same catalog id — is retired by every scan,
+ * a scan of one repository included, because that much a single push's scan does have evidence for
+ * (qits-1840, {@link #retireRenamed}).
  *
  * <p><b>A SCAN NEVER BUMPS ANYTHING, whoever asked for it.</b> It used to: a SCHEDULED scan whose
  * {@code bump.auto} was on asked for one bump per group it found pending, at the end of its own run.
@@ -214,6 +216,7 @@ public class ScanService {
     }
     // BEFORE the registry half, so no ghost's pins are looked up: a dropped repository's rows are
     // gone by the time refreshLatest reads the inventory back out of the store.
+    retireRenamed(read, what, now);
     reconcile(read, repository, what, now);
     withdrawBumpsOff(repository, scanned, what);
     refreshLatest(scope, repository);
@@ -409,6 +412,46 @@ public class ScanService {
   }
 
   /**
+   * <b>Every row a RENAME left behind, retired by EVERY scan — a scan of one repository included</b>
+   * (qits-1840).
+   *
+   * <p>A rename keeps qits-projects' row id, so the old name and the new one carry the same {@code
+   * catalog_id}, and both were OK until the nightly FULL scan's {@link #reconcile} got round to the
+   * old one — hours in which every reader that resolves a shared id handed the bump path the old
+   * name, and a bump FAILED with {@code no changelog for qits-platform-access-cli} against a
+   * repository that publishes its changelogs as {@code qits-platform-access-monorepo}.
+   *
+   * <p><b>This is not the reconciliation that a scan of one repository must never run</b>, and the
+   * difference is the evidence. {@code reconcile} retires every UNLISTED row, which needs the whole
+   * listing and is refused to a single-repository scan for that reason. But every scan holds the
+   * whole listing — the filter to one name happens after the read, in {@code scan} — and what this
+   * acts on is the catalog answering a row's id under ANOTHER name while not answering the row's
+   * own. A listed name is never retired, a row with no id is never retired, and the two
+   * catalog guards hold here exactly as they do there: a failed read and an empty listing close the
+   * scan in {@code scan} before this is reached, and {@code MaintenanceStore.retireRenamed} refuses
+   * an empty listing again.
+   *
+   * <p>The sentence is {@link #DROPPED_FROM_THE_CATALOG}, the same one {@code reconcile} writes, so
+   * the next full scan finds the row already ABSENT for that reason and does not report it twice.
+   */
+  private void retireRenamed(CatalogReader.Result read, String what, Instant now) {
+    Map<String, String> listedByCatalogId = new LinkedHashMap<>();
+    for (CatalogEntry entry : read.entries()) {
+      if (entry.catalogId() != null && !entry.catalogId().isBlank()) {
+        listedByCatalogId.putIfAbsent(entry.catalogId(), entry.name());
+      }
+    }
+    List<String> listed = read.entries().stream().map(CatalogEntry::name).toList();
+    List<String> retired =
+        store.retireRenamed(listedByCatalogId, listed, DROPPED_FROM_THE_CATALOG, now);
+    if (!retired.isEmpty()) {
+      LOG.infof(
+          "%s retired %d repositories the catalog now lists under another name: %s",
+          what, retired.size(), retired);
+    }
+  }
+
+  /**
    * <b>THE HALF THAT WAS MISSING: every row the catalog no longer lists, marked ABSENT.</b>
    *
    * <p>The scan above upserts what the catalog HAS. This is the other direction, and without it the
@@ -429,7 +472,10 @@ public class ScanService {
    *       repository is a listing of one, and it says nothing whatsoever about the other
    *       forty-seven. That is the ordinary shape of {@code ScanTrigger.EVENT}: a push to a main
    *       branch queues a scan of exactly that repository, several times an hour, and a single-repo
-   *       scan that reconciled would empty the inventory on every push;
+   *       scan that reconciled would empty the inventory on every push. (A RENAMED row is the one
+   *       exception, and it is not this sweep: {@link #retireRenamed} retires it on every scan,
+   *       because the catalog naming its id under another name is evidence about that row —
+   *       qits-1840);
    *   <li><b>the listing is not empty</b> — held one line earlier by the {@code entries.isEmpty()}
    *       refusal, and again inside {@code MaintenanceStore.reconcileCatalog}. Two places, because
    *       the failure mode is the whole store in one transaction.

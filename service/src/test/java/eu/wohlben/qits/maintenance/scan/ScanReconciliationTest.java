@@ -377,6 +377,78 @@ class ScanReconciliationTest {
     assertEquals(1, store.pins(GHOST).size());
   }
 
+  // --- a rename keeps the catalog id (qits-1840) ------------------------------------------------
+
+  /**
+   * <b>A SCAN OF ONE REPOSITORY RETIRES THE ROW ITS RENAME LEFT BEHIND.</b> The catalog lists the
+   * new name under the ghost's catalog id and no longer lists the ghost. That is evidence about the
+   * ghost row, whichever repository the scan was of — the live case: {@code
+   * qits-platform-access-cli} stayed OK beside {@code qits-platform-access-monorepo} until the
+   * nightly full scan, and every bump in between looked for the old name's changelogs.
+   */
+  @Test
+  void aScanOfOneRepositoryRetiresTheRowTheCatalogNowListsUnderAnotherName() {
+    seedTheGhost("2026.811.1");
+    catalogListingWithIds(Map.of(Fixture.REPOSITORY, "r-" + GHOST));
+
+    UUID id = scans.request(ScanScope.ALL, Fixture.REPOSITORY, ScanTrigger.EVENT);
+    queue.awaitIdle(Duration.ofSeconds(60));
+    assertEquals(ScanStatus.SUCCEEDED.name(), store.scan(id).orElseThrow().status);
+
+    MtRepository ghost = row(GHOST);
+    assertEquals(RepositoryStatus.ABSENT.name(), ghost.status);
+    assertEquals(ScanService.DROPPED_FROM_THE_CATALOG, ghost.message);
+    assertTrue(store.pins(GHOST).isEmpty(), "a renamed-away row pins nothing");
+    assertTrue(store.groups(GHOST).isEmpty(), "and has no group for the clock to bump");
+    assertEquals("r-" + GHOST, ghost.catalogId, "the row and its catalog id are kept");
+    MtRepository renamed = row(Fixture.REPOSITORY);
+    assertEquals(RepositoryStatus.OK.name(), renamed.status);
+    assertEquals("r-" + GHOST, renamed.catalogId);
+    assertEquals(Fixture.REPOSITORY, store.repositoryName("r-" + GHOST), "the id answers anew");
+  }
+
+  /**
+   * <b>A NAME THE CATALOG LISTS IS NEVER RETIRED</b>, even when another listed name carries its
+   * catalog id: that is two listed repositories, not a rename.
+   */
+  @Test
+  void aScanOfOneRepositoryNeverRetiresARowWhoseNameIsListed() {
+    seedTheGhost("2026.811.1");
+    catalogListingWithIds(Map.of(Fixture.REPOSITORY, "r-" + GHOST, GHOST, "r-" + GHOST));
+
+    UUID id = scans.request(ScanScope.ALL, Fixture.REPOSITORY, ScanTrigger.EVENT);
+    queue.awaitIdle(Duration.ofSeconds(60));
+    assertEquals(ScanStatus.SUCCEEDED.name(), store.scan(id).orElseThrow().status);
+
+    assertEquals(RepositoryStatus.OK.name(), row(GHOST).status);
+    assertEquals(1, store.pins(GHOST).size());
+  }
+
+  /**
+   * <b>AND THE TWO CATALOG GUARDS HOLD FOR A SCAN OF ONE REPOSITORY TOO.</b> A failed read and an
+   * empty listing close the scan before anything is retired, rename or not.
+   */
+  @Test
+  void aScanOfOneRepositoryOverAFailedOrEmptyCatalogRetiresNothing() {
+    seedTheGhost("2026.811.1");
+    peers.answer(
+        PeerTarget.PROJECTS,
+        CatalogReader.PATH,
+        FakePeers.Scripted.unreachable("connection refused"));
+    UUID failed = scans.request(ScanScope.ALL, Fixture.REPOSITORY, ScanTrigger.EVENT);
+    queue.awaitIdle(Duration.ofSeconds(60));
+    assertEquals(ScanStatus.FAILED.name(), store.scan(failed).orElseThrow().status);
+    assertEquals(RepositoryStatus.OK.name(), row(GHOST).status);
+
+    catalogListing();
+    UUID empty = scans.request(ScanScope.ALL, Fixture.REPOSITORY, ScanTrigger.EVENT);
+    queue.awaitIdle(Duration.ofSeconds(60));
+    assertEquals(ScanStatus.FAILED.name(), store.scan(empty).orElseThrow().status);
+
+    assertEquals(RepositoryStatus.OK.name(), row(GHOST).status);
+    assertEquals(1, store.pins(GHOST).size());
+  }
+
   // --- a manifest the tree lists and the git host does not serve (qits-1172) --------------------
 
   /**
@@ -491,6 +563,27 @@ class ScanReconciliationTest {
           .append("\",\"name\":\"")
           .append(name)
           .append("\",\"mainBranch\":\"main\",\"declared\":true}");
+    }
+    peers.answer(
+        PeerTarget.PROJECTS, CatalogReader.PATH, FakePeers.Scripted.ok(json.append("]}").toString()));
+  }
+
+  /** The catalog, listing each name under the catalog id it is mapped to. */
+  private void catalogListingWithIds(Map<String, String> idByName) {
+    StringBuilder json = new StringBuilder("{\"repositories\":[");
+    boolean first = true;
+    for (Map.Entry<String, String> entry : new java.util.TreeMap<>(idByName).entrySet()) {
+      if (!first) {
+        json.append(',');
+      }
+      first = false;
+      json.append("{\"id\":\"")
+          .append(entry.getValue())
+          .append("\",\"projectId\":\"")
+          .append(Fixture.PROJECT)
+          .append("\",\"name\":\"")
+          .append(entry.getKey())
+          .append("\",\"mainBranch\":\"main\"}");
     }
     peers.answer(
         PeerTarget.PROJECTS, CatalogReader.PATH, FakePeers.Scripted.ok(json.append("]}").toString()));
