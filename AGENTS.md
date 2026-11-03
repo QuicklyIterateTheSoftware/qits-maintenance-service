@@ -933,14 +933,26 @@ inventory story's whole subject is that the peers were up and answering and none
 Every story also pins `assertEdgeCount` and `assertOnlyEdgesFrom`, so a call appearing later shows
 rather than passing quietly.
 
-**Ordering is load-bearing rather than tidy.** A cumulative source is attributed by a cursor, so
-pre-story traffic — the startup JWKS fetch — lands in whichever story drains first, and a "no peer
-was asked" claim is only checkable once the story that DID ask has drained. Every story method
-carries `@UserflowRunsAfter` and `UserflowClassOrderer` (junit's secondary orderer, registered in
+**Ordering is load-bearing rather than tidy.** A cumulative source is attributed by a cursor, so a
+"no peer was asked" claim is only checkable once the story that DID ask has drained — and that is
+all it decides now; who owns the boot calls is the next paragraph. Every story method carries
+`@UserflowRunsAfter` and `UserflowClassOrderer` (junit's secondary orderer, registered in
 `service/src/test/resources/application.properties`) turns that into the chain
 `TokenValidationBootstrapIT → ScanCycleIT → InventoryIT → MaintenanceRefusalIT` (the bump stories,
 `BumpIT`, went with the group door in qits-1133 R5). Two
 multi-story classes also pin `@TestMethodOrder`.
+
+**Who owns the boot calls is claimed, not raced for.** The idp's two boot reads — discovery and the
+JWKS fetch — predate every story, so under the cursor rule they used to land in whichever story
+drained first, and a class run alone (`-Dit.test=ScanCycleIT`) failed its own edge count by two.
+`TokenValidationBootstrapIT` now installs through `StoryNetwork.installClaimingBootCalls()` and keeps
+them; every other class's `install()` skips the idp backlog recorded before its first registration
+unless that claim came first. The skip is fixed once per JVM (a system property, so every
+classloader's copy agrees) and never recomputed, which keeps the idp list prefix-stable under the
+kept cursor — so a claim arriving after a plain install changes nothing and the bootstrap fails its
+JWKS `assertEdge` loudly. An idp request a story itself causes still lands in that story. So a story
+class runs without the bootstrap ahead of it — `ScanCycleIT` and `MaintenanceRefusalIT` alone,
+`InventoryIT` behind the scan whose rows it reads — and the full chain draws the diagrams it did.
 
 **Namespacing, not resetting.** `InventoryReset` has no equivalent in a launched process, so the
 catalogue keeps stories apart by giving them different repositories: `qits-ci` carries the rich

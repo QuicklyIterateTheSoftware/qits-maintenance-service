@@ -62,13 +62,17 @@ import org.junit.jupiter.api.TestMethodOrder;
  * marks it {@code "declared": true} and draws it distinctly, so a claim never renders like
  * evidence. The stories are browserless (no {@code Flow} parameter), so no Chromium is involved.
  *
- * <p><b>THIS CLASS RUNS FIRST, and that is load-bearing rather than tidiness.</b> Every far side in
+ * <p><b>THIS CLASS CLAIMS THE BOOT CALLS, and runs first so the claim lands.</b> Every far side in
  * this catalogue is a cumulative recording attributed by a cursor, so traffic that happened before
  * any story ran — the startup JWKS fetch, which is half the subject of the first story below —
- * lands in whichever story drains <i>first</i>. Every other story class carries
- * {@code @UserflowRunsAfter} pointing back here, and {@code UserflowClassOrderer} (junit's
- * secondary orderer, registered in the test {@code application.properties}) is what turns that into
- * an order. The two methods here are {@code @Order}ed for the same reason, one level down.
+ * lands in whichever story drains <i>first</i>. Order alone used to decide that, which left any
+ * other class run on its own holding two edges it never caused; now this class installs through
+ * {@code StoryNetwork.installClaimingBootCalls()} and every other one skips the boot backlog unless
+ * that claim came first. Every other story class still carries {@code @UserflowRunsAfter} pointing
+ * back here, and {@code UserflowClassOrderer} (junit's secondary orderer, registered in the test
+ * {@code application.properties}) is what turns that into an order — so in the full chain the claim
+ * is made before anything else installs. The two methods here are {@code @Order}ed for the same
+ * reason, one level down: the boot edges go to the story that is about them.
  *
  * <p><b>The route both stories drive is {@code GET /maintenance/api/repositories}</b>, and it is
  * chosen as the least side-effectful read this service has. Every route this API serves is
@@ -141,12 +145,13 @@ public class TokenValidationBootstrapIT {
    * Wires every side of the diagram, once, before either story runs — the RestAssured tap for what
    * arrives here, and six cumulative sources for what left. It is one call because a class that
    * wired half of it would produce a diagram that is wrong rather than incomplete, and every
-   * registration in it is idempotent, so each story class calls the same line from its own
-   * {@code @BeforeAll}.
+   * registration in it is idempotent, so each story class calls the same wiring from its own
+   * {@code @BeforeAll}. This one alone calls the claiming variant: the idp's boot reads are this
+   * class's subject, so its source keeps them where every other class's skips them.
    */
   @BeforeAll
   static void tapEverySideOfThisService() {
-    StoryNetwork.install();
+    StoryNetwork.installClaimingBootCalls();
   }
 
   @UserStory(
@@ -180,8 +185,9 @@ public class TokenValidationBootstrapIT {
     //
     // The edge itself is drained from that recording and nothing here draws it; what is asserted is
     // that it happened, and the note carries the one thing a method, a path and a status cannot —
-    // WHEN. This is also the story that owns it: the cursor gives pre-story traffic to whichever
-    // story drains first, which is why this class runs first and pins its method order.
+    // WHEN. This is also the story that owns it: this class claimed the boot calls in its
+    // @BeforeAll, and the cursor gives that pre-story traffic to whichever of ITS stories drains
+    // first, which is why the method order is pinned.
     assertTrue(
         idp.recordedRequests().stream()
             .anyMatch(r -> "/idp/.well-known/openid-configuration".equals(r.path())),
@@ -362,7 +368,7 @@ public class TokenValidationBootstrapIT {
     // networkHash recomputes from them, and every mermaid line is in the markdown.
     ReportAssertions.assertComplete(CATEGORY, ACCEPTED_SLUG, UserflowReport.PASSED);
     // Observed on the far side, drained from the mock's recording, and attributed to this story
-    // because it is the first one that ran (see the class javadoc on ordering).
+    // because this class claimed the boot calls and this is its first story (see the class javadoc).
     ReportAssertions.assertEdge(
         CATEGORY,
         ACCEPTED_SLUG,
