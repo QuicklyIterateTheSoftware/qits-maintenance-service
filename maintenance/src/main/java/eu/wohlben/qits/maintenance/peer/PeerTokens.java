@@ -22,7 +22,9 @@ import org.jboss.logging.Logger;
  * <p><b>The switch is the extension's own</b>, {@code quarkus.oidc-client.qits.client-enabled}. It
  * reads only the deployer's {@code idp:client} resource now, with no fallback to the OLD
  * {@code projects} client's toggle. There is no key of ours beside it — one switch cannot disagree
- * with itself. Off, this answers empty and a call goes out with the forward-auth headers alone.
+ * with itself. Off, this answers empty — and {@link PeerClient} now fails the call closed rather
+ * than falling back to the forwarded pair (owner ruling 2026-10-18, qits-543): there is no second
+ * credential left to send.
  *
  * <p><b>The release ask needs no client of its own.</b> It goes to qits-projects, on the credential
  * every catalog read already mints.

@@ -800,12 +800,14 @@ the platform. `qits:admin-agent` is admitted too (qits-628 follow-up): an ADMIN 
 agent carries it alongside `qits:agent`, and for now it may use everything `qits:admin` may use.
 `qits:desk-admin` (epic qits-1621) is admitted everywhere `qits:admin-agent` is, this door included.
 
-**Outbound, this service is a MACHINE and nothing else**: every call carries `X-Qits-Roles:
-qits:system`, and the idp client carries `qits:system` — the orchestrator's machine role.
-`qits:admin` is the human role and this service never holds it, not even to read a CI run:
-qits-ci a3ecce2 made its read-only run and repository routes take `qits:system`. What the client
-needs beyond the orchestrator's is one claim, `project = *`, because qits-ci's trigger demands every
-project. See README's "Rollout needs".
+**Outbound, this service is a MACHINE and nothing else**: every call presents only this service's
+own bearer from the named `qits` oidc client, carrying `qits:system` — never a forwarded
+`X-Qits-User`/`X-Qits-Roles` pair, which `PeerClient` no longer sends at all, with or without the
+client enabled (owner ruling 2026-10-18, qits-543: a client that cannot mint fails the call closed
+rather than falling back to the pair). `qits:admin` is the human role and this service never holds
+it, not even to read a CI run: qits-ci a3ecce2 made its read-only run and repository routes take
+`qits:system`. What the client needs beyond the orchestrator's is one claim, `project = *`, because
+qits-ci's trigger demands every project. See README's "Rollout needs".
 
 `qits.auth.machine.required=true` and `quarkus.oidc.tenant-enabled=true` ship as a PAIR of literals
 (qits-765: a deployment no longer supplies `QITS_AUTH_MACHINE_REQUIRED`), with `%dev.`/`%test.`

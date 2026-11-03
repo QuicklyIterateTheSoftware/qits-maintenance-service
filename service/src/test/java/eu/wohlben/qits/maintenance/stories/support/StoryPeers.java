@@ -79,9 +79,11 @@ import java.util.concurrent.Executors;
  *       to a registry and two to {@code URI.getPath()}; a label built from the decoded form would
  *       show a request this service never sent. Matching is on the decoded form, because that is
  *       what a registry does.
- *   <li><b>The roles header is recorded beside the status.</b> "Outbound, this service is a MACHINE
- *       and nothing else" is a claim in AGENTS.md, and this is where it is checkable: every call
- *       carries {@code X-Qits-Roles: qits:system} and never the human role.
+ *   <li><b>The Authorization header is recorded beside the status.</b> "Outbound, this service is a
+ *       MACHINE and nothing else" is a claim in AGENTS.md, and this is where it is checkable: since
+ *       qits-543, every call carries only this service's own bearer from the named {@code qits}
+ *       oidc client — never a forwarded {@code X-Qits-User}/{@code X-Qits-Roles} pair, which
+ *       {@code PeerClient} no longer sends at all.
  * </ul>
  */
 public final class StoryPeers {
@@ -99,8 +101,9 @@ public final class StoryPeers {
    */
   public static final String DROPPED = "dropped";
 
-  /** What a request that carried no roles header records. Nothing this service sends ever does. */
-  public static final String NO_ROLES = "-";
+  /** What a request that carried no Authorization header records. Nothing this service sends ever
+   * does — every outbound call presents its own bearer (qits-543). */
+  public static final String NO_AUTHORIZATION = "-";
 
   private static final Map<String, StoryPeers> INSTANCES = new ConcurrentHashMap<>();
 
@@ -271,14 +274,15 @@ public final class StoryPeers {
   // --- what the tap reads ------------------------------------------------------------------------
 
   /**
-   * One recorded exchange: what was asked, what was answered, and which roles the caller asserted.
+   * One recorded exchange: what was asked, what was answered, and what credential the caller
+   * presented.
    *
    * @param method GET or POST
    * @param path the RAW path, query included — what was on the wire
    * @param status the status this peer answered, or {@link #DROPPED}
-   * @param roles the {@code X-Qits-Roles} header, or {@link #NO_ROLES}
+   * @param authorization the {@code Authorization} header, or {@link #NO_AUTHORIZATION}
    */
-  public record Request(String method, String path, String status, String roles) {
+  public record Request(String method, String path, String status, String authorization) {
 
     /** The label half of an edge: method, path, and the status that came back. */
     public String label() {
@@ -297,7 +301,8 @@ public final class StoryPeers {
       if (line.isBlank()) {
         continue;
       }
-      // "<method>\t<path>\t<status>\t<roles>" — tabs, because a path may hold anything but one.
+      // "<method>\t<path>\t<status>\t<authorization>" — tabs, because a path may hold anything but
+      // one.
       String[] fields = line.split("\t", 4);
       if (fields.length == 4) {
         requests.add(new Request(fields[0], fields[1], fields[2], fields[3]));
@@ -341,7 +346,7 @@ public final class StoryPeers {
       return;
     }
     String method = exchange.getRequestMethod();
-    String roles = header(exchange, "X-Qits-Roles");
+    String authorization = header(exchange, "Authorization");
     String wire = query == null || query.isEmpty() ? raw : raw + "?" + query;
     byte[] body = exchange.getRequestBody().readAllBytes();
     if (body.length > 0) {
@@ -351,7 +356,7 @@ public final class StoryPeers {
     if (!reachable) {
       // Recorded BEFORE the connection goes away — this is the one exchange whose evidence would
       // otherwise not exist, and it is the evidence the outage story is entirely about.
-      record(method, wire, DROPPED, roles);
+      record(method, wire, DROPPED, authorization);
       exchange.close();
       return;
     }
@@ -361,17 +366,17 @@ public final class StoryPeers {
       // ordinary case: a repository that carries no .config/qits/maintenance.yml is a 404 and then a
       // second read of the root tree, and that pair is a rule this service has rather than a gap in
       // a fixture.
-      record(method, wire, "404", roles);
+      record(method, wire, "404", authorization);
       respond(exchange, 404, "application/json", "{\"message\":\"not found\"}"
           .getBytes(StandardCharsets.UTF_8), Map.of());
       return;
     }
-    record(method, wire, String.valueOf(answer.status), roles);
+    record(method, wire, String.valueOf(answer.status), authorization);
     respond(exchange, answer.status, answer.contentType, answer.body, answer.headers);
   }
 
-  private void record(String method, String path, String status, String roles) {
-    recording.add(method + "\t" + path + "\t" + status + "\t" + roles);
+  private void record(String method, String path, String status, String authorization) {
+    recording.add(method + "\t" + path + "\t" + status + "\t" + authorization);
   }
 
   private void handleControl(HttpExchange exchange, String command) throws java.io.IOException {
@@ -462,7 +467,7 @@ public final class StoryPeers {
 
   private static String header(HttpExchange exchange, String name) {
     String value = exchange.getRequestHeaders().getFirst(name);
-    return value == null || value.isBlank() ? NO_ROLES : value;
+    return value == null || value.isBlank() ? NO_AUTHORIZATION : value;
   }
 
   // --- the client half ---------------------------------------------------------------------------

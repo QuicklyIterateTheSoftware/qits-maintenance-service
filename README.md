@@ -923,11 +923,13 @@ build an inert client. Nothing injects any of them and no code asks them for any
 no such variable reaches the container any more — the config GC deletes the retired entries and the
 deployer's extras file stops stating them (qits-375) — not before.
 
-**One toggle reaches every peer.** With the client off, calls go out with the forward-auth pair
-alone (`X-Qits-User: qits-platform-maintenance`, `X-Qits-Roles: qits:system`), which every call
-carries regardless; with it on, all five peers — qits-projects, qits-githost, qits-ci,
-qits-artifacts and qits-mirror — are called with a bearer. There is no per-peer
-arming, and every one of the five accepts `qits-platform`.
+**One toggle reaches every peer, and there is no fallback any more (owner ruling 2026-10-18,
+qits-543).** With the client on, all five peers — qits-projects, qits-githost, qits-ci,
+qits-artifacts and qits-mirror — are called with a bearer and nothing else. With the client off, or
+when it cannot mint, the call fails closed before a socket opens, naming the missing
+`quarkus.oidc-client.qits` client: `PeerClient` no longer sends the forwarded `X-Qits-User`/
+`X-Qits-Roles` pair at all, so there is no second credential left for an off client to fall back to.
+There is no per-peer arming, and every one of the five accepts `qits-platform`.
 
 **There was a sixth, `configuration`, and it went with the release trains** — as did
 `qits.maintenance.targets.configuration-url` and `qits.maintenance.train.sweep-cron`. Nothing here

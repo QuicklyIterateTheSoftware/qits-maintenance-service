@@ -209,16 +209,19 @@ public class ScanCycleIT {
             + " same commit is what tells an absent FILE from a missing COMMIT")
         .as("absent-is-not-gone");
 
-    // OUTBOUND, THIS SERVICE IS A MACHINE AND NOTHING ELSE. Every call above carried the
-    // forward-auth pair, and the role on it is qits:system — never qits:admin, which is the human
-    // role and one this service holds nowhere, not even when the scan was a person's button.
+    // OUTBOUND, THIS SERVICE IS A MACHINE AND NOTHING ELSE. Every call above carried this service's
+    // own bearer from the named qits oidc client — never a forwarded pair, which PeerClient no
+    // longer sends at all (qits-543) — so every read reached the git host as qits:system rather
+    // than as the person who pressed the button.
     assertTrue(
         githost.recordedRequests().stream()
-            .allMatch(request -> StoryIdentities.MACHINE_ROLE.equals(request.roles())),
-        "every outbound call must assert qits:system and only that");
+            .allMatch(
+                request -> StoryProfile.IDP_TOKEN_STUB_AUTHORIZATION.equals(request.authorization())),
+        "every outbound call must present this service's own bearer and only that");
     story
         .note("and every one of those reads went out as a MACHINE: the operator pressed the button,"
-            + " and what reached the git host asserted qits:system rather than their own role")
+            + " and what reached the git host carried this service's own bearer rather than their"
+            + " own identity")
         .as("outbound-is-a-machine");
 
     // --- what the inventory now holds ----------------------------------------------------------

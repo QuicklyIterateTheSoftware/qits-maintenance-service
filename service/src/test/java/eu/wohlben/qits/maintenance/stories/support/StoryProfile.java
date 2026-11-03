@@ -1,8 +1,16 @@
 package eu.wohlben.qits.maintenance.stories.support;
 
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
 import eu.wohlben.qits.maintenance.api.PackagedSurfaceIT;
 import eu.wohlben.qits.maintenance.testdb.EmbeddedPg;
 import eu.wohlben.qits.servicemock.idp.MockIdp;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.io.UncheckedIOException;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -58,6 +66,12 @@ import java.util.Map;
  *   <li><b>{@code quarkus.oidc.auth-server-url}</b> — where the idp is. Discovery stays on, as it
  *       ships (qits-708): the issuer and the JWKS address are taken from the mock's discovery
  *       document, so the packaged artifact is otherwise exactly what ships.
+ *   <li><b>{@code quarkus.oidc-client.qits.auth-server-url}</b> — the credential THIS service
+ *       presents to every peer now that {@code PeerClient} sends only the bearer and never the
+ *       forwarded pair (owner ruling 2026-10-18, qits-543). Pointed at {@link #idpTokenStubBaseUrl},
+ *       a tiny stub answering {@code POST /idp/token} that is deliberately NOT wired into {@link
+ *       StoryNetwork} — see that method's javadoc for why the mint must be answered and never
+ *       drawn.
  *   <li><b>{@code qits.maintenance.call-timeout}</b>, bounded. A stand-in answers in microseconds
  *       and the outage arm closes the connection outright, so nothing here waits — but the shipped
  *       minute would turn a wrong assumption into a hung IT rather than a failed one.
@@ -127,6 +141,19 @@ public class StoryProfile extends PackagedSurfaceIT.PackagedUnderTarget {
   private static final String URL_PROPERTY = "qits.test.userflows-it.db-url";
 
   private static final String EVENTSTREAM_URL_PROPERTY = "qits.test.userflows-it.eventstream-url";
+
+  /** Where the idp-token stub parks its port, so a second classloader attaches to the first. */
+  private static final String IDP_TOKEN_STUB_PORT_PROPERTY = "qits.test.userflows-it.idp-token-port";
+
+  /**
+   * The access token the stub mints — opaque is fine, since no story peer validates it. Public so a
+   * story can assert that {@code PeerClient} presented exactly this bearer and not, say, nothing at
+   * all ({@code ScanCycleIT}'s "outbound, this service is a MACHINE" proof, qits-543).
+   */
+  public static final String IDP_TOKEN_STUB_TOKEN = "story-maintenance-machine-token";
+
+  /** The {@code Authorization} header value every outbound {@code PeerClient} call must carry. */
+  public static final String IDP_TOKEN_STUB_AUTHORIZATION = "Bearer " + IDP_TOKEN_STUB_TOKEN;
 
   @Override
   public Map<String, String> getConfigOverrides() {
@@ -199,6 +226,12 @@ public class StoryProfile extends PackagedSurfaceIT.PackagedUnderTarget {
     // state here.
     overrides.put("quarkus.oidc.auth-server-url", idp.baseUrl());
 
+    // The credential PeerClient now presents on every outbound call (qits-543): the qits named
+    // oidc client, pointed at a stub that is NOT registered with StoryNetwork, so the mint is
+    // answered and never drawn. See idpTokenStubBaseUrl's javadoc.
+    overrides.put("quarkus.oidc-client.qits.auth-server-url", idpTokenStubBaseUrl() + "/idp");
+    overrides.put("quarkus.oidc-client.qits.credentials.secret", "story-maintenance-client-secret");
+
     return Map.copyOf(overrides);
   }
 
@@ -229,5 +262,51 @@ public class StoryProfile extends PackagedSurfaceIT.PackagedUnderTarget {
     String url = EmbeddedPg.url(EVENTSTREAM_DATABASE);
     System.setProperty(EVENTSTREAM_URL_PROPERTY, url);
     return url;
+  }
+
+  /**
+   * The base url of a tiny stub that answers {@code POST /idp/token} with a canned bearer, started
+   * once per JVM and parked by port the way {@link #databaseUrl} parks a url — a second classloader
+   * attaches to the first instance's port rather than starting a second server.
+   *
+   * <p><b>Deliberately a server of its own, and deliberately outside {@link StoryPeers} /
+   * {@link StoryNetwork}.</b> quarkus-oidc-client caches the bearer it mints and re-mints only once
+   * it expires, so the mint belongs to whichever story makes this process's FIRST outbound peer call
+   * in the run — which depends on story order, exactly the instability {@code
+   * qits-deployments-service}'s equivalent stub (commit {@code c8e9340}) already named. Answering it
+   * from a server nothing registers with {@link eu.wohlben.qits.userflows.NetworkCapture} is what
+   * keeps it off every diagram: there is no source to attribute it to, so no story's edge count or
+   * {@code assertNoEdgesTo} can see it move. The token says {@code expires_in: 3600} and is simply
+   * answered, the same way the deployments stub's is.
+   */
+  private static synchronized String idpTokenStubBaseUrl() {
+    String port = System.getProperty(IDP_TOKEN_STUB_PORT_PROPERTY);
+    if (port != null) {
+      return "http://localhost:" + port;
+    }
+    HttpServer server;
+    try {
+      server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+    } catch (IOException e) {
+      throw new UncheckedIOException("could not start the idp-token stub", e);
+    }
+    server.createContext("/idp/token", StoryProfile::answerIdpToken);
+    server.start();
+    String url = "http://localhost:" + server.getAddress().getPort();
+    System.setProperty(IDP_TOKEN_STUB_PORT_PROPERTY, String.valueOf(server.getAddress().getPort()));
+    return url;
+  }
+
+  private static void answerIdpToken(HttpExchange exchange) throws IOException {
+    byte[] body =
+        ("{\"access_token\":\""
+                + IDP_TOKEN_STUB_TOKEN
+                + "\",\"token_type\":\"Bearer\",\"expires_in\":3600}")
+            .getBytes(StandardCharsets.UTF_8);
+    exchange.getResponseHeaders().add("Content-Type", "application/json");
+    exchange.sendResponseHeaders(200, body.length);
+    try (OutputStream out = exchange.getResponseBody()) {
+      out.write(body);
+    }
   }
 }
