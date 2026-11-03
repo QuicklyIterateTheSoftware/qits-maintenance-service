@@ -53,9 +53,6 @@ public class PeerClient {
 
   private static final ObjectMapper JSON = new ObjectMapper();
 
-  /** The environment qits-deployments injects into every container. */
-  private static final String ENVIRONMENT = "QITS_ENVIRONMENT";
-
   @ConfigProperty(name = "qits.maintenance.call-timeout")
   Duration callTimeout;
 
@@ -150,19 +147,13 @@ public class PeerClient {
   }
 
   /**
-   * The target's base url, from configuration — or, for the one target with no key, derived.
+   * The target's base url, from configuration.
    *
-   * <p>Read through {@code ConfigProvider} rather than as eight injected fields: the key is on the
-   * target, so one lookup keeps the mapping in one place instead of spelling every peer twice. A
-   * keyless target ({@link PeerTarget#NPM_MIRROR}) reads only the platform-injected
-   * {@code QITS_ENVIRONMENT}, the same fact the shipped {@code ${QITS_ENVIRONMENT:dev}} lines expand.
+   * <p>Read through {@code ConfigProvider} rather than as eleven injected fields: the key is on the
+   * target, so one lookup keeps the mapping in one place instead of spelling every peer twice.
    */
   private String base(PeerTarget target) {
     Config config = ConfigProvider.getConfig();
-    if (target.urlKey() == null) {
-      return target.derivedBase(
-          config.getOptionalValue(ENVIRONMENT, String.class).orElse(null));
-    }
     return config
         .getOptionalValue(target.urlKey(), String.class)
         .orElseThrow(() -> new IllegalStateException(target.urlKey() + " is not configured"));

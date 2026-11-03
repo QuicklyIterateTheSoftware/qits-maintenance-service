@@ -43,10 +43,7 @@ public final class ContractPeerClient extends PeerClient {
 
   /** The path the shipped config puts in front of every call to {@code target}; empty for a host. */
   public static String mount(PeerTarget target) {
-    String url =
-        target.urlKey() == null
-            ? target.derivedBase(null)
-            : ConfigProvider.getConfig().getValue(target.urlKey(), String.class);
+    String url = ConfigProvider.getConfig().getValue(target.urlKey(), String.class);
     String path = URI.create(url).getRawPath();
     if (path == null || path.equals("/")) {
       return "";

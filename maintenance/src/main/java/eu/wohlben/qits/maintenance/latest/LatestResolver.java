@@ -27,7 +27,7 @@ import org.w3c.dom.Element;
  *
  * <p><b>Which address is decided by the pin's KIND, not by the ecosystem alone.</b> An internal
  * maven artifact lives in qits-artifacts' hosted repository and an external one is read through
- * qits-platform-mirror's Central cache; asking the wrong one for either answers 404 and reports no
+ * qits-mirror's Central cache; asking the wrong one for either answers 404 and reports no
  * latest at all, which reads exactly like "up to date".
  *
  * <p><b>Docker is internal-only in v1.</b> Ordering tags across vendors — a temurin tag beside an

@@ -915,8 +915,8 @@ what left. A story sets `NetworkCapture.actor(...)` **before** each call, becaus
 request and never a narrative role, and then only asserts and notes.
 
 **The five peers are real sockets that record.** `stories/support/StoryPeers` is a `com.sun`
-HttpServer per service — qits-projects, qits-githost, qits-ci, qits-platform-artifacts,
-qits-platform-mirror — armed by `StoryCatalog` with a two-repository platform, and the launched
+HttpServer per service — qits-projects, qits-githost, qits-ci, qits-artifacts,
+qits-mirror — armed by `StoryCatalog` with a two-repository platform, and the launched
 process is handed their addresses as its shipped `qits.maintenance.*-url` keys. It is **not**
 `FakePeers` and it is not a `MockService`, for three reasons that are each independently fatal: a
 CDI alternative does not exist in a launched fast-jar; a recording of the CALL cannot label an edge
