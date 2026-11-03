@@ -27,8 +27,8 @@ import org.junit.jupiter.api.Test;
  * refusal for this service — so unlike {@code qits:desk}, it reaches the trigger and the re-run
  * too, exactly where {@code qits:admin-agent} does.
  *
- * <p>Each request names its identity in {@code X-Qits-User} / {@code X-Qits-Roles}, mirroring
- * {@link AgentReadAccessTest}.
+ * <p>Each request presents its own bearer ({@link SuiteBearers#bearer}), mirroring {@link
+ * AgentReadAccessTest}.
  */
 @QuarkusTest
 class DeskAccessTest {
@@ -36,7 +36,7 @@ class DeskAccessTest {
   private static final String BASE = "/maintenance/api";
 
   private static RequestSpecification as(String role) {
-    return given().header("X-Qits-User", "the-delivery-desk").header("X-Qits-Roles", role);
+    return given().header("Authorization", SuiteBearers.bearer("the-delivery-desk", role));
   }
 
   private static RequestSpecification desk() {

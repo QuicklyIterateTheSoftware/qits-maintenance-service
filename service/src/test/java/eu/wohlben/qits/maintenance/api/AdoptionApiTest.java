@@ -159,6 +159,7 @@ class AdoptionApiTest {
     theChain();
 
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/repositories/" + LIBRARY + "/downstream")
         .then()
@@ -185,6 +186,7 @@ class AdoptionApiTest {
     theChain();
 
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/repositories/" + LIBRARY_ID + "/downstream")
         .then()
@@ -202,6 +204,7 @@ class AdoptionApiTest {
   @Test
   void anUnknownRepositoryIsAnEmptyClosureRatherThanARefusal() {
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/repositories/qits-never-heard-of/downstream")
         .then()
@@ -219,6 +222,7 @@ class AdoptionApiTest {
     theFrontendShippedIt();
 
     given()
+        .header("Authorization", SuiteBearers.operator())
         .queryParam("repository", LIBRARY)
         .queryParam("version", VERSION)
         .when()
@@ -257,6 +261,7 @@ class AdoptionApiTest {
     theFrontendShippedIt();
 
     given()
+        .header("Authorization", SuiteBearers.operator())
         .queryParam("repository", LIBRARY_ID)
         .queryParam("version", VERSION)
         .when()
@@ -278,6 +283,7 @@ class AdoptionApiTest {
     theChain();
 
     given()
+        .header("Authorization", SuiteBearers.operator())
         .queryParam("repository", LIBRARY)
         .queryParam("version", "2026.999.1")
         .when()
@@ -294,6 +300,7 @@ class AdoptionApiTest {
   @Test
   void anUnknownRepositoryIsAnAnswerToo() {
     given()
+        .header("Authorization", SuiteBearers.operator())
         .queryParam("repository", "qits-never-heard-of")
         .queryParam("version", VERSION)
         .when()
@@ -314,18 +321,32 @@ class AdoptionApiTest {
   @Test
   void aByReleaseLookupMissingHalfItsKeyIsRefusedRatherThanGuessed() {
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(ADOPTION)
         .then()
         .statusCode(400)
         .body("message", containsString("both a repository and a version"));
 
-    given().queryParam("repository", LIBRARY).when().get(ADOPTION).then().statusCode(400);
+    given()
+        .header("Authorization", SuiteBearers.operator())
+        .queryParam("repository", LIBRARY)
+        .when()
+        .get(ADOPTION)
+        .then()
+        .statusCode(400);
 
-    given().queryParam("version", VERSION).when().get(ADOPTION).then().statusCode(400);
+    given()
+        .header("Authorization", SuiteBearers.operator())
+        .queryParam("version", VERSION)
+        .when()
+        .get(ADOPTION)
+        .then()
+        .statusCode(400);
 
     // A blank is the same thing as an absent one — a client that sent `?repository=` sent nothing.
     given()
+        .header("Authorization", SuiteBearers.operator())
         .queryParam("repository", "  ")
         .queryParam("version", VERSION)
         .when()

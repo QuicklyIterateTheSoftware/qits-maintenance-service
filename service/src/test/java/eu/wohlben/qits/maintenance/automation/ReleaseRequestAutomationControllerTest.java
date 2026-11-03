@@ -14,6 +14,7 @@ import static org.hamcrest.Matchers.notNullValue;
 
 import eu.wohlben.qits.maintenance.api.Fixture;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
+import eu.wohlben.qits.maintenance.api.SuiteBearers;
 import eu.wohlben.qits.maintenance.model.ScanScope;
 import eu.wohlben.qits.maintenance.peer.FakePeers;
 import eu.wohlben.qits.maintenance.scan.ScanService;
@@ -71,13 +72,15 @@ class ReleaseRequestAutomationControllerTest {
 
   private static RequestSpecification as(String role) {
     return given()
-        .header("X-Qits-User", "someone")
-        .header("X-Qits-Roles", role)
+        .header("Authorization", SuiteBearers.bearer("someone", role))
         .contentType(ContentType.JSON);
   }
 
   private static RequestSpecification rerun(String body) {
-    return given().contentType(ContentType.JSON).body(body);
+    return given()
+        .header("Authorization", SuiteBearers.operator())
+        .contentType(ContentType.JSON)
+        .body(body);
   }
 
   /** The screenshot entry of an answer, wherever the kind order puts it. */
@@ -89,6 +92,7 @@ class ReleaseRequestAutomationControllerTest {
   void theTriggerAnswersEveryApplicableKindAndTheReadAgrees() {
     String bumpId =
         given()
+            .header("Authorization", SuiteBearers.platform())
             .contentType(ContentType.JSON)
             .body(TRIGGER_BODY)
             .when()
@@ -112,6 +116,7 @@ class ReleaseRequestAutomationControllerTest {
     queue.awaitIdle(Duration.ofSeconds(30));
 
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(DOOR + "?foldSha=" + FOLD_A)
         .then()
@@ -119,8 +124,19 @@ class ReleaseRequestAutomationControllerTest {
         .body(SCREENSHOTS + ".bumpId", equalTo(bumpId))
         .body(SCREENSHOTS + ".state", equalTo("RUNNING"))
         .body(SCREENSHOTS + ".runIds[0]", equalTo("run-automation-door"));
-    given().when().get(DOOR).then().statusCode(200).body("foldSha", equalTo(FOLD_A));
-    given().when().get("/maintenance/api/bumps/" + bumpId).then().statusCode(200)
+    given()
+        .header("Authorization", SuiteBearers.operator())
+        .when()
+        .get(DOOR)
+        .then()
+        .statusCode(200)
+        .body("foldSha", equalTo(FOLD_A));
+    given()
+        .header("Authorization", SuiteBearers.operator())
+        .when()
+        .get("/maintenance/api/bumps/" + bumpId)
+        .then()
+        .statusCode(200)
         .body("mode", equalTo("AUTOMATION"));
   }
 
@@ -136,6 +152,7 @@ class ReleaseRequestAutomationControllerTest {
     try {
       long start = System.nanoTime();
       given()
+          .header("Authorization", SuiteBearers.platform())
           .contentType(ContentType.JSON)
           .body(TRIGGER_BODY)
           .when()
@@ -153,6 +170,7 @@ class ReleaseRequestAutomationControllerTest {
     }
 
     given()
+        .header("Authorization", SuiteBearers.platform())
         .contentType(ContentType.JSON)
         .body(TRIGGER_BODY)
         .when()
@@ -168,6 +186,7 @@ class ReleaseRequestAutomationControllerTest {
   @Test
   void aReadOfAnUnknownRequestIsEmpty() {
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(DOOR)
         .then()
@@ -188,6 +207,7 @@ class ReleaseRequestAutomationControllerTest {
             .path("id");
     queue.awaitIdle(Duration.ofSeconds(30));
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get("/maintenance/api/bumps/" + id)
         .then()
@@ -230,7 +250,11 @@ class ReleaseRequestAutomationControllerTest {
   void aRequestIdThatIsNotOneIs400() {
     rerun("{}").when().post(BASE + "not-a-uuid/automations/screenshot-baselines/runs").then()
         .statusCode(400);
-    given().contentType(ContentType.JSON).body(TRIGGER_BODY.replace(FOLD_A, "main")).when()
+    given()
+        .header("Authorization", SuiteBearers.platform())
+        .contentType(ContentType.JSON)
+        .body(TRIGGER_BODY.replace(FOLD_A, "main"))
+        .when()
         .post(DOOR).then().statusCode(400);
   }
 

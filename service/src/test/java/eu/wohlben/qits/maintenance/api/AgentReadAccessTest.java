@@ -16,8 +16,9 @@ import org.junit.jupiter.api.Test;
  * {@code qits:agent}, a commissioned agent's own role: it reads every GET route, it works the bump
  * doors, and it starts nothing else.
  *
- * <p>Each request names its identity in {@code X-Qits-User} / {@code X-Qits-Roles}, so the {@code
- * %test} dev user does not apply and the identity holds exactly the role sent. Where a route needs
+ * <p>Each request presents its own bearer ({@link SuiteBearers#bearer}), so the identity holds
+ * exactly the role sent (epic qits-543, qits-1365: forward-auth and its dev user leave with
+ * qits-1338). Where a route needs
  * data this suite does not seed, the test asserts only that the door let the request through.
  *
  * <p><b>The bumps were refused here once, and are not now.</b> A bump chooses no content — its pins
@@ -31,7 +32,7 @@ class AgentReadAccessTest {
   private static final String BASE = "/maintenance/api";
 
   private static RequestSpecification as(String role) {
-    return given().header("X-Qits-User", "dyn-workspace-agent").header("X-Qits-Roles", role);
+    return given().header("Authorization", SuiteBearers.bearer("dyn-workspace-agent", role));
   }
 
   private static RequestSpecification agent() {

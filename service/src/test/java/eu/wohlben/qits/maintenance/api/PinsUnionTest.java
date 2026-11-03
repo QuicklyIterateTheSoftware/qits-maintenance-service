@@ -88,6 +88,7 @@ class PinsUnionTest {
     releasedAheadOfMain();
 
     given()
+        .header("Authorization", SuiteBearers.platform())
         .when()
         .get(BASE + "/pins")
         .then()
@@ -103,6 +104,7 @@ class PinsUnionTest {
     scanMain();
 
     given()
+        .header("Authorization", SuiteBearers.platform())
         .when()
         .get(BASE + "/pins")
         .then()
@@ -119,6 +121,7 @@ class PinsUnionTest {
     scanMain();
 
     given()
+        .header("Authorization", SuiteBearers.platform())
         .when()
         .get(BASE + "/pins")
         .then()
@@ -143,6 +146,7 @@ class PinsUnionTest {
                 + "\"]}]}"));
 
     given()
+        .header("Authorization", SuiteBearers.platform())
         .when()
         .get(BASE + "/pins")
         .then()
@@ -161,7 +165,12 @@ class PinsUnionTest {
         "/deployments/api/pins",
         FakePeers.Scripted.unreachable("connection refused"));
 
-    given().when().get(BASE + "/pins").then().statusCode(503);
+    given()
+        .header("Authorization", SuiteBearers.platform())
+        .when()
+        .get(BASE + "/pins")
+        .then()
+        .statusCode(503);
   }
 
   // --- rule 3b: a deployed release the ledger never recorded is a refusal ------------------------
@@ -182,6 +191,7 @@ class PinsUnionTest {
     deployed(APPLICATION, RELEASE);
 
     given()
+        .header("Authorization", SuiteBearers.platform())
         .when()
         .get(BASE + "/pins")
         .then()
@@ -200,6 +210,7 @@ class PinsUnionTest {
     deployed(APPLICATION, RELEASE);
 
     given()
+        .header("Authorization", SuiteBearers.platform())
         .when()
         .get(BASE + "/pins")
         .then()
@@ -220,6 +231,7 @@ class PinsUnionTest {
     deployed(APPLICATION, RELEASE);
 
     given()
+        .header("Authorization", SuiteBearers.platform())
         .when()
         .get(BASE + "/pins")
         .then()
@@ -239,7 +251,12 @@ class PinsUnionTest {
         Fixture.REPOSITORY, RELEASE, GitlinkSha.of(Fixture.TAG_SHA), Instant.now());
     deployed(APPLICATION, RELEASE);
 
-    given().when().get(BASE + "/pins").then().statusCode(503);
+    given()
+        .header("Authorization", SuiteBearers.platform())
+        .when()
+        .get(BASE + "/pins")
+        .then()
+        .statusCode(503);
   }
 
   /**
@@ -256,6 +273,7 @@ class PinsUnionTest {
     tagHeld(RELEASE);
 
     given()
+        .header("Authorization", SuiteBearers.platform())
         .when()
         .get(BASE + "/pins")
         .then()
@@ -266,6 +284,7 @@ class PinsUnionTest {
     assertTrue(store.releaseRecorded(Fixture.REPOSITORY, RELEASE), "the worker recorded it");
 
     given()
+        .header("Authorization", SuiteBearers.platform())
         .when()
         .get(BASE + "/pins")
         .then()
@@ -286,12 +305,18 @@ class PinsUnionTest {
     imageReleasedBy(Fixture.REPOSITORY);
     deployed(APPLICATION, RELEASE);
 
-    given().when().get(BASE + "/pins").then().statusCode(503);
+    given()
+        .header("Authorization", SuiteBearers.platform())
+        .when()
+        .get(BASE + "/pins")
+        .then()
+        .statusCode(503);
     queue.awaitIdle(Duration.ofSeconds(30));
     assertEquals(1, tagReads(RELEASE), "the first refusal asked once");
 
     for (int poll = 0; poll < 3; poll++) {
       given()
+          .header("Authorization", SuiteBearers.platform())
           .when()
           .get(BASE + "/pins")
           .then()
@@ -314,6 +339,7 @@ class PinsUnionTest {
     deployed("postgres-exporter", RELEASE);
 
     given()
+        .header("Authorization", SuiteBearers.platform())
         .when()
         .get(BASE + "/pins")
         .then()
@@ -343,6 +369,7 @@ class PinsUnionTest {
     scanMain();
     recordedNotOnMain();
     given()
+        .header("Authorization", SuiteBearers.platform())
         .when()
         .get(BASE + "/pins")
         .then()
@@ -352,6 +379,7 @@ class PinsUnionTest {
     retire(status);
 
     given()
+        .header("Authorization", SuiteBearers.platform())
         .when()
         .get(BASE + "/pins")
         .then()
@@ -373,6 +401,7 @@ class PinsUnionTest {
     deployed(APPLICATION, RELEASE);
 
     given()
+        .header("Authorization", SuiteBearers.platform())
         .when()
         .get(BASE + "/pins")
         .then()
@@ -396,7 +425,12 @@ class PinsUnionTest {
     deployed(APPLICATION, RELEASE);
     tagHeld(RELEASE);
 
-    given().when().get(BASE + "/pins").then().statusCode(200);
+    given()
+        .header("Authorization", SuiteBearers.platform())
+        .when()
+        .get(BASE + "/pins")
+        .then()
+        .statusCode(200);
     queue.awaitIdle(Duration.ofSeconds(30));
 
     assertFalse(store.releaseRecorded(Fixture.REPOSITORY, RELEASE), "no ledger row was healed");
@@ -551,6 +585,7 @@ class PinsUnionTest {
   private void scanMain() {
     String id =
         given()
+            .header("Authorization", SuiteBearers.platform())
             .contentType(ContentType.JSON)
             .body("{\"scope\":\"ALL\"}")
             .when()
@@ -566,7 +601,14 @@ class PinsUnionTest {
     Instant deadline = Instant.now().plus(Duration.ofSeconds(60));
     while (Instant.now().isBefore(deadline)) {
       String status =
-          given().when().get(BASE + "/scans/" + id).then().statusCode(200).extract().path("status");
+          given()
+              .header("Authorization", SuiteBearers.platform())
+              .when()
+              .get(BASE + "/scans/" + id)
+              .then()
+              .statusCode(200)
+              .extract()
+              .path("status");
       if ("SUCCEEDED".equals(status) || "FAILED".equals(status)) {
         assertEquals("SUCCEEDED", status);
         return;

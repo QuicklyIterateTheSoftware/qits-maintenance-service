@@ -49,7 +49,7 @@ class SbomCheckApiTest {
   }
 
   private static RequestSpecification as(String role) {
-    return given().header("X-Qits-User", "someone").header("X-Qits-Roles", role);
+    return given().header("Authorization", SuiteBearers.bearer("someone", role));
   }
 
   @Test

@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.maintenance.testdb.EmbeddedPg;
+import eu.wohlben.qits.servicemock.idp.MockIdp;
 import io.quarkus.test.junit.QuarkusIntegrationTest;
 import io.quarkus.test.junit.QuarkusTestProfile;
 import io.quarkus.test.junit.TestProfile;
@@ -48,10 +49,11 @@ import org.junit.jupiter.api.Test;
  *       the served client would pass against a process with no client in it.
  * </ul>
  *
- * <p><b>This is also the only place the identity contract is real.</b> A {@code @QuarkusTest} runs
- * under the {@code test} profile, where qits-auth-core ships a dev user; the launched artifact runs
- * as a deployment does, so the roles have to arrive the way the edge sends them — in {@code
- * X-Qits-User} and {@code X-Qits-Roles}. A request with neither is asserted to be refused.
+ * <p><b>This is also the only place the identity contract is real.</b> The launched artifact runs
+ * as a deployment does, with the shipped OIDC tenant on ({@link PackagedWithIdp}), so the roles
+ * arrive the way a signed-in person's do: in a bearer this run's {@link MockIdp} minted (epic
+ * qits-543, qits-1365 — forward-auth's {@code X-Qits-User} / {@code X-Qits-Roles} pair leaves
+ * qits-auth-core with qits-1338). A request with none is asserted to be refused.
  *
  * <p><b>And the peers here are REAL calls to a port nothing listens on.</b> The profile points every
  * target at a dead loopback address, so the scan this launches reads no catalog and FAILS in
@@ -62,7 +64,7 @@ import org.junit.jupiter.api.Test;
  * package} to have happened. Ask for them explicitly.
  */
 @QuarkusIntegrationTest
-@TestProfile(PackagedSurfaceIT.PackagedUnderTarget.class)
+@TestProfile(PackagedSurfaceIT.PackagedWithIdp.class)
 public class PackagedSurfaceIT {
 
   /**
@@ -182,9 +184,41 @@ public class PackagedSurfaceIT {
     }
   }
 
-  /** What qits-gateway asserts for an authenticated operator. */
+  /**
+   * {@link PackagedUnderTarget} with the shipped OIDC tenant on, trusting this run's {@link
+   * MockIdp}: every caller's bearer is validated the way a deployment validates it. The machine gate
+   * stays off — this IT is about the surface, and {@code TokenValidationBootstrapIT} is where the
+   * gate is under test. The idp's key and issuer are handed over directly rather than discovered,
+   * so this process asks the mock nothing and its recording stays the stories' evidence alone.
+   */
+  public static class PackagedWithIdp extends PackagedUnderTarget {
+
+    @Override
+    public Map<String, String> getConfigOverrides() {
+      MockIdp idp = MockIdp.ensureStarted();
+      Map<String, String> overrides = new java.util.LinkedHashMap<>(super.getConfigOverrides());
+      overrides.put("quarkus.oidc.tenant-enabled", "true");
+      overrides.put("quarkus.oidc.auth-server-url", "");
+      overrides.put(
+          "quarkus.oidc.public-key",
+          java.util.Base64.getEncoder().encodeToString(idp.publicKey().getEncoded()));
+      overrides.put("quarkus.oidc.token.issuer", idp.issuer());
+      return Map.copyOf(overrides);
+    }
+  }
+
+  /** A signed-in operator's bearer: {@code qits:admin}, minted by this run's idp. */
   private static RequestSpecification asAdmin() {
-    return given().header("X-Qits-User", "packaged-it").header("X-Qits-Roles", "qits:admin");
+    return given()
+        .header(
+            "Authorization",
+            "Bearer "
+                + MockIdp.attach()
+                    .token()
+                    .subject("packaged-it")
+                    .audience("qits-platform")
+                    .groups("qits:admin")
+                    .mint());
   }
 
   @Test

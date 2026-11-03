@@ -74,6 +74,7 @@ class DeployedPactsApiTest {
     deployed(APPLICATION, "2026.1030.900", "2026.1030.1300");
 
     given()
+        .header("Authorization", SuiteBearers.ciRun())
         .queryParam("provider", PROVIDER)
         .when()
         .get(URL)
@@ -106,6 +107,7 @@ class DeployedPactsApiTest {
         "3f1a9c0b7d2e4f5a6b8c9d0e1f2a3b4c5d6e7f80");
 
     given()
+        .header("Authorization", SuiteBearers.ciRun())
         .queryParam("provider", PROVIDER)
         .when()
         .get(URL)
@@ -140,6 +142,7 @@ class DeployedPactsApiTest {
                 + "\",\"shas\":[\"2026.1030.204903\"]},{\"applicationName\":\"qits-ci\",\"shas\":[\"2026.1029.5\"]}]}"));
 
     given()
+        .header("Authorization", SuiteBearers.ciRun())
         .queryParam("provider", PROVIDER)
         .when()
         .get(URL)
@@ -156,6 +159,7 @@ class DeployedPactsApiTest {
     deployed(APPLICATION, "2026.1030.204903");
 
     given()
+        .header("Authorization", SuiteBearers.ciRun())
         .queryParam("provider", "qits-nobody-service")
         .when()
         .get(URL)
@@ -167,8 +171,14 @@ class DeployedPactsApiTest {
 
   @Test
   void aMissingOrBlankProviderIsABadRequest() {
-    given().when().get(URL).then().statusCode(400);
-    given().queryParam("provider", "  ").when().get(URL).then().statusCode(400);
+    given().header("Authorization", SuiteBearers.ciRun()).when().get(URL).then().statusCode(400);
+    given()
+        .header("Authorization", SuiteBearers.ciRun())
+        .queryParam("provider", "  ")
+        .when()
+        .get(URL)
+        .then()
+        .statusCode(400);
   }
 
   @Test
@@ -180,6 +190,7 @@ class DeployedPactsApiTest {
         FakePeers.Scripted.unreachable("connection refused"));
 
     given()
+        .header("Authorization", SuiteBearers.ciRun())
         .queryParam("provider", PROVIDER)
         .when()
         .get(URL)
@@ -192,16 +203,14 @@ class DeployedPactsApiTest {
   @Test
   void aCiRunReadsItAndAReaderDoesNot() {
     given()
-        .header("X-Qits-User", "tok-ci-run")
-        .header("X-Qits-Roles", "qits:ci-run")
+        .header("Authorization", SuiteBearers.bearer("tok-ci-run", "qits:ci-run"))
         .queryParam("provider", PROVIDER)
         .when()
         .get(URL)
         .then()
         .statusCode(not(anyOf(is(401), is(403))));
     given()
-        .header("X-Qits-User", "someone")
-        .header("X-Qits-Roles", "qits:reader")
+        .header("Authorization", SuiteBearers.bearer("someone", "qits:reader"))
         .queryParam("provider", PROVIDER)
         .when()
         .get(URL)

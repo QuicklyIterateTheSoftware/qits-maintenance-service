@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.maintenance.api.Fixture;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
+import eu.wohlben.qits.maintenance.api.SuiteBearers;
 import eu.wohlben.qits.maintenance.automation.DependencyBumpAutomation;
 import eu.wohlben.qits.maintenance.automation.EstatePinsAutomation;
 import eu.wohlben.qits.maintenance.automation.UpstreamReplan;
@@ -566,8 +567,7 @@ class BumpDispatchTest {
 
     assertTrue(dispatcher.assess().candidates().isEmpty(), "not a candidate");
     given()
-        .header("X-Qits-User", "dyn-workspace-agent")
-        .header("X-Qits-Roles", "qits:agent")
+        .header("Authorization", SuiteBearers.bearer("dyn-workspace-agent", "qits:agent"))
         .get("/maintenance/api/bumps/standing")
         .then()
         .statusCode(200)
@@ -970,8 +970,7 @@ class BumpDispatchTest {
 
     ValidatableResponse standing =
         given()
-            .header("X-Qits-User", "dyn-workspace-agent")
-            .header("X-Qits-Roles", "qits:agent")
+            .header("Authorization", SuiteBearers.bearer("dyn-workspace-agent", "qits:agent"))
             .get("/maintenance/api/bumps/standing")
             .then()
             .statusCode(200);

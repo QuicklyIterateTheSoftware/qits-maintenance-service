@@ -6,15 +6,15 @@ import io.restassured.specification.RequestSpecification;
 /**
  * The two kinds of caller this service has, and how a story hands each of them to a request.
  *
- * <h2>A person is a pair of headers</h2>
+ * <h2>A person is a bearer too</h2>
  *
- * <p>{@link #operator(RequestSpecification)} sends {@code X-Qits-User} and {@code X-Qits-Roles},
- * which is what the platform edge asserts for a logged-in operator and the whole of this service's
- * relationship with human authentication — it authenticates no person itself. That is not a
- * shortcut around the bearer: the OIDC tenant this catalogue turns on is <b>bearer-only</b>, so a
- * request carrying no {@code Authorization} header is never challenged by it and falls through to
- * qits-auth-core's header mechanism, exactly as it does behind the edge. Using it is what lets the
- * scan and bump stories say "an operator" honestly rather than dressing a person up as a machine.
+ * <p>{@link #operator(RequestSpecification)} presents a person's token from the same idp: the
+ * operator's name in {@code sub}, the platform audience and {@code qits:admin} in {@code groups}.
+ * Forward-auth — the {@code X-Qits-User} / {@code X-Qits-Roles} pair the edge used to assert for a
+ * logged-in operator — leaves qits-auth-core with qits-1338 (epic qits-543, qits-1365), so a person
+ * reaches this service the way a machine does, and the roles are what tell them apart. That is
+ * still what lets the scan and bump stories say "an operator" honestly rather than dressing a
+ * person up as a machine: the subject is a person's and the role is the human one.
  *
  * <h2>A machine is a bearer this run's idp minted</h2>
  *
@@ -34,12 +34,6 @@ import io.restassured.specification.RequestSpecification;
  * are where that is proved.
  */
 public final class StoryIdentities {
-
-  /** The header the edge names the logged-in person in. */
-  public static final String USER_HEADER = "X-Qits-User";
-
-  /** The header the edge asserts that person's roles in, comma-separated. */
-  public static final String ROLES_HEADER = "X-Qits-Roles";
 
   /** The human role: every route here, including the two that queue work. */
   public static final String ADMIN_ROLE = "qits:admin";
@@ -62,19 +56,29 @@ public final class StoryIdentities {
   /** …and one who authenticated perfectly and covers nothing. */
   public static final String WRONG_ROLE = "a caller with the wrong role";
 
-  /** The operator, by name — the value the edge would carry in {@code X-Qits-User}. */
+  /** The operator, by name — the {@code sub} of the person's token. */
   private static final String OPERATOR_NAME = "alice";
 
   private StoryIdentities() {}
 
-  /** {@code given()} with the two headers the edge asserts for a logged-in operator. */
+  /** {@code given()} with a logged-in operator's bearer: {@code qits:admin}. */
   public static RequestSpecification operator(RequestSpecification request) {
-    return request.header(USER_HEADER, OPERATOR_NAME).header(ROLES_HEADER, ADMIN_ROLE);
+    return withRole(request, ADMIN_ROLE);
   }
 
   /** The same person, with a role this service's routes have never heard of. */
   public static RequestSpecification withRole(RequestSpecification request, String role) {
-    return request.header(USER_HEADER, OPERATOR_NAME).header(ROLES_HEADER, role);
+    return bearer(request, personToken(role));
+  }
+
+  /** A freshly minted person's bearer: the operator's name, the platform audience, {@code role}. */
+  private static String personToken(String role) {
+    return MockIdp.attach()
+        .token()
+        .subject(OPERATOR_NAME)
+        .audience(StoryProfile.PLATFORM_AUDIENCE)
+        .groups(role)
+        .mint();
   }
 
   /** A freshly minted platform-peer bearer: the platform audience, {@code qits:system}. */

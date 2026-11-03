@@ -813,8 +813,11 @@ qits-ci's trigger demands every project. See README's "Rollout needs".
 (qits-765: a deployment no longer supplies `QITS_AUTH_MACHINE_REQUIRED`), with `%dev.`/`%test.`
 turning both off — validation follows the rollout gate rather than standing on its own, so with the
 gate off there is no OIDC tenant, nothing fetches a JWKS, and a clone-alone build needs no issuer.
-There is no third state. A packaged IT runs in normal mode, so `PackagedSurfaceIT` turns the pair
-off by hand and `StoryProfile` turns it back on.
+There is no third state. A packaged IT runs in normal mode, so `PackagedSurfaceIT.PackagedUnderTarget`
+turns the pair off by hand and `StoryProfile` turns it back on; `PackagedSurfaceIT` itself runs
+under `PackagedWithIdp`, which turns the tenant alone back on with the mock idp's key and issuer
+handed over directly (no discovery, so the mock's recording stays the stories' evidence), because
+an operator's bearer is the only way a person names itself once forward-auth is gone.
 
 **THE ISSUER IS PINNED BY DISCOVERY, NEVER BY CONFIGURATION** (qits-708). Discovery is on (the
 default): the tenant reads `<auth-server-url>/.well-known/openid-configuration` at startup, fetches
@@ -879,11 +882,29 @@ profile has to state one either.
   that drives a bump by hand. **The story catalogue is the one exception and it is deliberate**: a
   bump is closed by the sweep and by nothing else, so `StoryProfile` turns the scheduler back on and
   removes every other timer at its own key. See "The userflows".
-- A `@QuarkusTest` runs under the `test` profile, where qits-auth-core ships a dev user carrying
-  `qits:admin` and `qits:system` — so the shipped `@RolesAllowed` pair is exercised rather than
-  bypassed, with no `@TestSecurity` fabricating an identity no deployment produces.
+- **No test uses forward-auth (epic qits-543, qits-1365).** `X-Qits-User` / `X-Qits-Roles` and the
+  `%test` dev user leave qits-auth-core with qits-1338, and the suite already runs without them: the
+  test config blanks the dev user and renames the forward headers (`%test.qits.auth.forward.*` in
+  `service/src/test/resources/application.properties`, which go with qits-1338), so a header-less
+  request is anonymous. Every `@QuarkusTest` request presents a bearer from `api/SuiteBearers`, the
+  suite's own authentication mechanism (asked before the shipped ones, idle unless a test granted
+  the bearer): `platform()` (`qits:system`) for the pin reads, the SBOM ingest, the scans and the
+  automation trigger, `operator()` (`qits:admin`) for the inventory reads and the operator levers,
+  `ciRun()` for the deployed-pacts read, and `bearer(subject, roles...)` for a door test's exact
+  caller (`AgentReadAccessTest`, `DeskAccessTest`, `SbomCheckApiTest`, the automation and
+  deployed-pacts role rows). The shipped `@RolesAllowed` sets are therefore exercised with the role
+  each caller really holds. The pact verification sends one for an interaction that carries none (a
+  `-service` consumer as `qits:system`, anything else as an operator), the golden master as an
+  operator.
+- **Dev mode needs a bearer.** The `%dev` dev user goes with qits-1338, and `%dev` keeps the OIDC
+  tenant off, so `quarkus:dev` answers 401 on every route until the tenant is pointed at an idp
+  (`-Dqits.auth.machine.required=true -Dquarkus.oidc.tenant-enabled=true
+  -Dquarkus.oidc.auth-server-url=https://idp.qits.${QITS_DOMAIN}/idp`); then call it with a person's
+  token, for example `curl -H "Authorization: Bearer $(qits-token qits-platform)" ...`, or through
+  the `qits` CLI.
 - **Every `@QuarkusTest` here is a fake identity away from a deployment; the six ITs are not.** An IT
-  runs against the ARTIFACT, so the roles arrive the way the edge sends them and the datasource
+  runs against the ARTIFACT, so the roles arrive in a bearer the run's `MockIdp` minted (a person's
+  as much as a machine's) and the datasource
   arrives as the shipped `QITS_RESOURCE_DB_*` indirection rather than as the datasource keys.
   `PackagedSurfaceIT` is the one that is about the artifact itself — the route prefixes, Flyway's
   migration surviving as a classpath resource, the client at the root, and **peers that are real

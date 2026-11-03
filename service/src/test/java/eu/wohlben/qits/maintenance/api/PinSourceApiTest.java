@@ -83,6 +83,7 @@ class PinSourceApiTest {
   private void scan() {
     String id =
         given()
+            .header("Authorization", SuiteBearers.platform())
             .contentType(ContentType.JSON)
             .body("{\"scope\":\"ALL\"}")
             .when()
@@ -94,7 +95,14 @@ class PinSourceApiTest {
     Instant deadline = Instant.now().plus(Duration.ofSeconds(60));
     while (Instant.now().isBefore(deadline)) {
       String status =
-          given().when().get(BASE + "/scans/" + id).then().statusCode(200).extract().path("status");
+          given()
+              .header("Authorization", SuiteBearers.platform())
+              .when()
+              .get(BASE + "/scans/" + id)
+              .then()
+              .statusCode(200)
+              .extract()
+              .path("status");
       if ("SUCCEEDED".equals(status) || "FAILED".equals(status)) {
         assertEquals("SUCCEEDED", status);
         return;
@@ -143,6 +151,7 @@ class PinSourceApiTest {
     scan();
 
     given()
+        .header("Authorization", SuiteBearers.platform())
         .when()
         .get(BASE + "/pins")
         .then()
@@ -169,6 +178,7 @@ class PinSourceApiTest {
     scan();
 
     given()
+        .header("Authorization", SuiteBearers.platform())
         .when()
         .get(BASE + "/pins")
         .then()
@@ -195,6 +205,7 @@ class PinSourceApiTest {
     scan();
 
     given()
+        .header("Authorization", SuiteBearers.platform())
         .when()
         .get(BASE + "/pins")
         .then()
@@ -219,6 +230,7 @@ class PinSourceApiTest {
 
     int docker =
         given()
+            .header("Authorization", SuiteBearers.platform())
             .when()
             .get(BASE + "/pins")
             .then()
@@ -239,6 +251,7 @@ class PinSourceApiTest {
     scan();
 
     given()
+        .header("Authorization", SuiteBearers.platform())
         .when()
         .get(BASE + "/pins")
         .then()
@@ -255,7 +268,12 @@ class PinSourceApiTest {
    */
   @Test
   void anEmptyInventoryRefusesRatherThanAnsweringAnEmptyKeepSet() {
-    given().when().get(BASE + "/pins").then().statusCode(503);
+    given()
+        .header("Authorization", SuiteBearers.platform())
+        .when()
+        .get(BASE + "/pins")
+        .then()
+        .statusCode(503);
   }
 
   // --- the same rule, one artifact type over: the daemon binary a pom pin names --------------------
@@ -286,6 +304,7 @@ class PinSourceApiTest {
     scan();
 
     given()
+        .header("Authorization", SuiteBearers.platform())
         .when()
         .get(BASE + "/pins")
         .then()
@@ -317,6 +336,7 @@ class PinSourceApiTest {
     scan();
 
     given()
+        .header("Authorization", SuiteBearers.platform())
         .when()
         .get(BASE + "/pins")
         .then()
@@ -339,6 +359,7 @@ class PinSourceApiTest {
     scan();
 
     given()
+        .header("Authorization", SuiteBearers.platform())
         .when()
         .get(BASE + "/pins")
         .then()
@@ -357,6 +378,7 @@ class PinSourceApiTest {
     scan();
 
     given()
+        .header("Authorization", SuiteBearers.platform())
         .when()
         .get(BASE + "/pins")
         .then()
@@ -369,6 +391,7 @@ class PinSourceApiTest {
     // appended after it, which is what makes two reads over an unchanged store answer identically.
     List<String> ecosystems =
         given()
+            .header("Authorization", SuiteBearers.platform())
             .when()
             .get(BASE + "/pins")
             .then()

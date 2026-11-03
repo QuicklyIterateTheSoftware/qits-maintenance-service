@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import eu.wohlben.qits.maintenance.api.SuiteBearers;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.response.Response;
 import jakarta.inject.Inject;
@@ -358,7 +359,10 @@ class GoldenMasterRecordingTest {
 
     Map<String, String> query = new TreeMap<>();
     interaction.query().forEach((k, v) -> query.put(k, expand(v, params, TEMPLATE_PARAM)));
-    var request = given().queryParams(query);
+    // A recorded call names no caller of its own, so the suite names one rather than leaning on a
+    // forward-auth dev user (epic qits-543, qits-1365): a signed-in operator, whom every door here
+    // admits. The header is sent, not recorded, so the golden master stays the consumer's shape.
+    var request = given().header("Authorization", SuiteBearers.operator()).queryParams(query);
     if (interaction.requestBody() != null) {
       request =
           request

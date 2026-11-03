@@ -26,6 +26,7 @@ class AutomationKindsApiTest {
   @Test
   void answersEveryKindSortedByKindWithItsRolesSorted() {
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(PATH)
         .then()

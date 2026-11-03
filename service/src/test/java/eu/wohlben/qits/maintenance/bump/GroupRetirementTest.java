@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import eu.wohlben.qits.maintenance.api.Fixture;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
+import eu.wohlben.qits.maintenance.api.SuiteBearers;
 import eu.wohlben.qits.maintenance.entity.MtBump;
 import eu.wohlben.qits.maintenance.entity.MtReleaseRequest;
 import eu.wohlben.qits.maintenance.model.BranchState;
@@ -111,14 +112,25 @@ class GroupRetirementTest {
   @Test
   void theGroupDoorAndTheWindowAreGone() {
     given()
+        .header("Authorization", SuiteBearers.operator())
         .contentType(ContentType.JSON)
         .body("{}")
         .when()
         .post(BASE + "/repositories/" + Fixture.REPOSITORY + "/groups/dependencies/bumps")
         .then()
         .statusCode(org.hamcrest.Matchers.oneOf(404, 405));
-    given().when().get(BASE + "/bumps/window").then().statusCode(404);
-    given().when().post(BASE + "/bumps/window").then().statusCode(org.hamcrest.Matchers.oneOf(404, 405));
+    given()
+        .header("Authorization", SuiteBearers.operator())
+        .when()
+        .get(BASE + "/bumps/window")
+        .then()
+        .statusCode(404);
+    given()
+        .header("Authorization", SuiteBearers.operator())
+        .when()
+        .post(BASE + "/bumps/window")
+        .then()
+        .statusCode(org.hamcrest.Matchers.oneOf(404, 405));
 
     queue.awaitIdle(Duration.ofSeconds(30));
     assertTrue(store.bumps(Fixture.REPOSITORY, 10).isEmpty(), "no bump row was opened");

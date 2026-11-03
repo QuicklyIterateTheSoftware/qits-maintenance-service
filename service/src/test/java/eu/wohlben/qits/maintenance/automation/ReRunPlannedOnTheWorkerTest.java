@@ -14,6 +14,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import eu.wohlben.qits.maintenance.api.Fixture;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
+import eu.wohlben.qits.maintenance.api.SuiteBearers;
 import eu.wohlben.qits.maintenance.bump.BumpService;
 import eu.wohlben.qits.maintenance.bump.CiClient;
 import eu.wohlben.qits.maintenance.entity.MtBump;
@@ -98,7 +99,10 @@ class ReRunPlannedOnTheWorkerTest {
   }
 
   private static io.restassured.specification.RequestSpecification rerun(String body) {
-    return given().contentType(ContentType.JSON).body(body);
+    return given()
+        .header("Authorization", SuiteBearers.operator())
+        .contentType(ContentType.JSON)
+        .body(body);
   }
 
   private List<MtBump> rows() {

@@ -76,6 +76,7 @@ class SbomApiTest {
   private void scan() {
     String id =
         given()
+            .header("Authorization", SuiteBearers.platform())
             .contentType(ContentType.JSON)
             .body("{\"scope\":\"ALL\"}")
             .when()
@@ -87,7 +88,14 @@ class SbomApiTest {
     Instant deadline = Instant.now().plus(Duration.ofSeconds(60));
     while (Instant.now().isBefore(deadline)) {
       String status =
-          given().when().get(BASE + "/scans/" + id).then().statusCode(200).extract().path("status");
+          given()
+              .header("Authorization", SuiteBearers.operator())
+              .when()
+              .get(BASE + "/scans/" + id)
+              .then()
+              .statusCode(200)
+              .extract()
+              .path("status");
       if ("SUCCEEDED".equals(status) || "FAILED".equals(status)) {
         assertEquals("SUCCEEDED", status);
         return;
@@ -167,6 +175,7 @@ class SbomApiTest {
         List.of(new ParsedSbom.Edge(-1, 0)));
 
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/dependencies/dependents?ecosystem=maven&name=" + ANNOTATIONS)
         .then()
@@ -207,6 +216,7 @@ class SbomApiTest {
         Instant.now());
 
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/dependencies/dependents?ecosystem=maven&name=" + ANNOTATIONS)
         .then()
@@ -218,6 +228,7 @@ class SbomApiTest {
         .body("dependents[0].sbomStatus", equalTo("INGESTED"));
 
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/artifacts")
         .then()
@@ -252,6 +263,7 @@ class SbomApiTest {
     }
 
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/dependencies/dependents?ecosystem=maven&name=" + ANNOTATIONS)
         .then()
@@ -260,6 +272,7 @@ class SbomApiTest {
         .body("dependents[0].artifactVersion", equalTo("2026.821.1"));
 
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/dependencies/dependents?ecosystem=maven&name=" + ANNOTATIONS + "&all=true")
         .then()
@@ -273,6 +286,7 @@ class SbomApiTest {
   @Test
   void aDependencyNothingShipsAnswersWithAnEmptyListRatherThanAFourOhFour() {
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/dependencies/dependents?ecosystem=npm&name=@nobody/ships-this")
         .then()
@@ -283,12 +297,14 @@ class SbomApiTest {
   @Test
   void anUnknownEcosystemIsRefusedRatherThanAnsweredWithNothing() {
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/dependencies/dependents?ecosystem=cargo&name=serde")
         .then()
         .statusCode(400)
         .body("message", containsString("maven, npm or docker"));
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/dependencies/dependents?ecosystem=maven")
         .then()
@@ -322,6 +338,7 @@ class SbomApiTest {
     theFixtureRelease();
 
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/artifacts")
         .then()
@@ -346,6 +363,7 @@ class SbomApiTest {
   void aManualIngestIsAcceptedWithTheArtifactRowsIdAndTheRowIsCreated() {
     String id =
         given()
+            .header("Authorization", SuiteBearers.platform())
             .contentType(ContentType.JSON)
             .body(
                 "{\"ecosystem\":\"maven\",\"name\":\"" + EVENTSTREAM + "\",\"version\":\"2026.901.1\"}")
@@ -368,6 +386,7 @@ class SbomApiTest {
     // And the row can be asked for again: the manual route is the only thing that moves a terminal
     // one, which is why it exists.
     given()
+        .header("Authorization", SuiteBearers.platform())
         .contentType(ContentType.JSON)
         .body("{\"ecosystem\":\"maven\",\"name\":\"" + EVENTSTREAM + "\",\"version\":\"2026.901.1\"}")
         .when()
@@ -380,6 +399,7 @@ class SbomApiTest {
   @Test
   void anIngestNamingNoVersionOrAnUnknownEcosystemIsRefused() {
     given()
+        .header("Authorization", SuiteBearers.platform())
         .contentType(ContentType.JSON)
         .body("{\"ecosystem\":\"cargo\",\"name\":\"serde\",\"version\":\"1.0.0\"}")
         .when()
@@ -389,6 +409,7 @@ class SbomApiTest {
         .body("message", containsString("maven, npm, docker or daemon"));
 
     given()
+        .header("Authorization", SuiteBearers.platform())
         .contentType(ContentType.JSON)
         .body("{\"ecosystem\":\"maven\",\"name\":\"" + EVENTSTREAM + "\"}")
         .when()
@@ -422,6 +443,7 @@ class SbomApiTest {
     theFixtureRelease();
 
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/repositories/qits-eventstream-javalib/dependents")
         .then()
@@ -475,6 +497,7 @@ class SbomApiTest {
     theFixtureRelease();
 
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/repositories/qits-eventstream-javalib/dependents")
         .then()
@@ -485,6 +508,7 @@ class SbomApiTest {
         .body("artifacts[0].dependents[0].artifactName", equalTo(CI));
 
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/artifacts")
         .then()
@@ -511,6 +535,7 @@ class SbomApiTest {
         List.of());
 
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/artifacts")
         .then()
@@ -523,6 +548,7 @@ class SbomApiTest {
   @Test
   void aRepositoryThatHasReleasedNothingAnswersWithAnEmptyListRatherThanAFourOhFour() {
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/repositories/nothing-like-this/dependents")
         .then()
@@ -548,6 +574,7 @@ class SbomApiTest {
     theFixtureRelease();
 
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/repositories/" + Fixture.REPOSITORY)
         .then()
@@ -583,6 +610,7 @@ class SbomApiTest {
     scan();
 
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/repositories/" + Fixture.REPOSITORY)
         .then()
@@ -598,6 +626,7 @@ class SbomApiTest {
     scan();
 
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/dependencies?kind=INTERNAL")
         .then()
@@ -607,6 +636,7 @@ class SbomApiTest {
         .body("name", not(hasItem("@angular/core")));
 
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/dependencies?kind=EXTERNAL")
         .then()
@@ -617,6 +647,7 @@ class SbomApiTest {
 
     // No filter is both halves, exactly as before.
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/dependencies")
         .then()
@@ -631,6 +662,7 @@ class SbomApiTest {
     scan();
 
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/dependencies?name=io.quarkus.platform:*&kind=EXTERNAL")
         .then()
@@ -639,6 +671,7 @@ class SbomApiTest {
         .body("size()", equalTo(1));
 
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/dependencies?name=io.quarkus.platform:*&kind=INTERNAL")
         .then()
@@ -653,12 +686,14 @@ class SbomApiTest {
   @Test
   void aKindThatIsNotOneOfTheTwoHalvesIsRefused() {
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/dependencies?kind=REACTOR")
         .then()
         .statusCode(400)
         .body("message", containsString("INTERNAL or EXTERNAL"));
     given()
+        .header("Authorization", SuiteBearers.operator())
         .when()
         .get(BASE + "/dependencies?kind=nonsense")
         .then()

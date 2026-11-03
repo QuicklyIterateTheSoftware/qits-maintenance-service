@@ -5,18 +5,21 @@ import static org.junit.jupiter.api.Assertions.fail;
 import au.com.dius.pact.core.model.Interaction;
 import au.com.dius.pact.core.model.Pact;
 import au.com.dius.pact.core.model.ProviderState;
+import au.com.dius.pact.provider.ProviderResponse;
 import au.com.dius.pact.provider.junit5.HttpTestTarget;
 import au.com.dius.pact.provider.junit5.PactVerificationContext;
 import au.com.dius.pact.provider.junit5.PactVerificationInvocationContextProvider;
 import au.com.dius.pact.provider.junitsupport.Provider;
 import au.com.dius.pact.provider.junitsupport.State;
 import au.com.dius.pact.provider.junitsupport.loader.PactSource;
+import eu.wohlben.qits.maintenance.api.SuiteBearers;
 import io.quarkus.test.common.http.TestHTTPResource;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import java.net.URL;
 import java.util.List;
 import java.util.Map;
+import org.apache.hc.core5.http.HttpRequest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
@@ -122,7 +125,37 @@ class ConsumerPactVerificationTest {
                 + wrong.reason());
       }
     }
-    context.setTarget(new HttpTestTarget(base.getHost(), base.getPort()));
+    context.setTarget(new CallerTarget(base.getHost(), base.getPort(), consumer));
+  }
+
+  /**
+   * The target, naming the caller of an interaction that carries no bearer (epic qits-543,
+   * qits-1365) rather than leaning on a forward-auth dev user: a platform service sends its own
+   * {@code qits:system} bearer, anything else — a frontend, the CLI — a signed-in operator's.
+   */
+  static final class CallerTarget extends HttpTestTarget {
+
+    private final String consumer;
+
+    CallerTarget(String host, int port, String consumer) {
+      super(host, port);
+      this.consumer = consumer;
+    }
+
+    @Override
+    public ProviderResponse executeInteraction(Object client, Object request) {
+      if (request instanceof HttpRequest http && !http.containsHeader("Authorization")) {
+        http.setHeader("Authorization", callerOf(consumer));
+      }
+      return super.executeInteraction(client, request);
+    }
+  }
+
+  /** The bearer a consumer's bearer-less interaction stands for, by what kind of consumer it is. */
+  static String callerOf(String consumer) {
+    return consumer.endsWith("-service")
+        ? SuiteBearers.bearer(consumer, "qits:system")
+        : SuiteBearers.operator();
   }
 
   @TestTemplate
