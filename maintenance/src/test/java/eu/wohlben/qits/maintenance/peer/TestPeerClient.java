@@ -32,10 +32,10 @@ public final class TestPeerClient extends PeerClient {
         new PeerTokens() {
           @Override
           public Optional<String> token() {
-            // No idp in a plain JUnit test: every call goes out with the forward-auth headers
-            // alone, exactly as a deployment with quarkus.oidc-client.qits.client-enabled=false
-            // ships (see PeerTokens' own javadoc).
-            return Optional.empty();
+            // No idp in a plain JUnit test, and no pact row pins what this bearer says — but
+            // PeerClient now refuses to send any call with no bearer at all (qits-543), so a
+            // stand-in is what makes the call go out at all.
+            return Optional.of("a-contract-test-bearer");
           }
         };
   }

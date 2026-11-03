@@ -30,8 +30,10 @@ public final class ContractPeerClient extends PeerClient {
           @Override
           public Optional<String> token() {
             // The machine token is minted at qits-idp by quarkus-oidc-client, a call of its own
-            // with a row of its own (IdpContract); a peer row carries the forward-auth pair alone.
-            return Optional.empty();
+            // with a row of its own (IdpContract). No peer row pins what this bearer says, so a
+            // stand-in satisfies every one of them: PeerClient now refuses to send any call with
+            // no bearer at all (qits-543).
+            return Optional.of("a-contract-test-bearer");
           }
         };
   }

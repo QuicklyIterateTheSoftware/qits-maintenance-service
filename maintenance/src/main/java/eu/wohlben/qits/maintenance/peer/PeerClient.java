@@ -14,9 +14,11 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import org.eclipse.microprofile.config.Config;
 import org.eclipse.microprofile.config.ConfigProvider;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
+import org.jboss.logging.Logger;
 
 /**
  * The one way this service touches another.
@@ -27,18 +29,19 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
  * a {@code maven-metadata.xml} and a raw blob — which a JSON-bound client would make awkward.
  *
  * <p><b>The lazily built client is wrapped through {@link QitsHttpClients}</b> (qits-1198): a CLIENT
- * span per call and {@code X-Qits-Caller} alongside the forward-auth pair, the same two things a
- * REST client gets from Quarkus and this one otherwise would not.
+ * span per call and {@code X-Qits-Caller}, the same two things a REST client gets from Quarkus and
+ * this one otherwise would not.
  *
- * <p><b>Two credentials on every call, and they are not alternatives.</b> {@code X-Qits-User} /
- * {@code X-Qits-Roles} are the forward-auth pair a peer accepts on the platform's own network; the
- * bearer, where a client is enabled, is the machine track. The roles header carries
- * {@code qits:system} and only that: every peer route this service calls is a machine route, and
- * {@code qits:admin} is the human role — a bump asked for by a person is still this service
- * calling.
+ * <p><b>One credential on every call, and it is mandatory (owner ruling 2026-10-18, qits-543).</b>
+ * The bearer from the named Quarkus OIDC client {@code quarkus.oidc-client.qits} ({@code
+ * qits:system}) is the only identity a call carries — never the {@code X-Qits-User}/{@code
+ * X-Qits-Roles} pair, and never the pair as a fallback when the client is disabled. A call this
+ * service cannot mint a bearer for is refused locally instead of going out unauthenticated — the
+ * same pattern qits-projects' {@code HttpGitHostRepositories} uses: fail closed and say which
+ * client is missing.
  *
  * <p><b>Nothing throws.</b> A scan reads every repository in the catalog, so one unreachable peer
- * must cost one row's status and not the run.
+ * — or one call this process has no bearer for — must cost one row's status and not the run.
  *
  * <p><b>A response is bounded.</b> A packument for a popular package is megabytes of version
  * history and this service reads one field out of it; an unbounded read would let one dependency's
@@ -46,6 +49,8 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
  */
 @ApplicationScoped
 public class PeerClient {
+
+  private static final Logger LOG = Logger.getLogger(PeerClient.class);
 
   /** How much of a peer's answer is read. A packument past this is refused rather than truncated —
    * see {@link #bound}. */
@@ -103,15 +108,27 @@ public class PeerClient {
    * nothing left here for the target to select.
    */
   public PeerAnswer send(PeerCall call) {
+    Optional<String> token = tokens.token();
+    if (token.isEmpty()) {
+      LOG.warnf(
+          "no bearer: the qits oidc client is not configured or could not mint one; %s was not"
+              + " called",
+          call.url());
+      return new PeerAnswer(
+          null,
+          null,
+          null,
+          Map.of(),
+          "no bearer: the qits oidc client (quarkus.oidc-client.qits) is not configured or could"
+              + " not mint one; "
+              + call.url()
+              + " was not called");
+    }
+
     HttpRequest.Builder request =
         HttpRequest.newBuilder(URI.create(call.url()))
             .timeout(callTimeout)
-            // The forward-auth half: this service's own name and the one role it acts with. Every
-            // peer route a scan or a bump calls is a machine route — qits-ci's read-only run and
-            // repository routes included, since its a3ecce2 — so the role is qits:system and never
-            // an operator's.
-            .header("X-Qits-User", "qits-platform-maintenance")
-            .header("X-Qits-Roles", "qits:system");
+            .header("Authorization", "Bearer " + token.get());
     if ("DELETE".equals(call.method())) {
       request.DELETE();
     } else if (call.body() == null) {
@@ -121,7 +138,6 @@ public class PeerClient {
           .header("Content-Type", "application/json")
           .POST(HttpRequest.BodyPublishers.ofString(call.body(), StandardCharsets.UTF_8));
     }
-    tokens.token().ifPresent(token -> request.header("Authorization", "Bearer " + token));
 
     try {
       HttpResponse<byte[]> response =
