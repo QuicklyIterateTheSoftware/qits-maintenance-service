@@ -714,7 +714,7 @@ components:
   securitySchemes:
     SecurityScheme:
       type: openIdConnect
-      openIdConnectUrl: http://dev-qits-idp:8080/idp/.well-known/openid-configuration
+      openIdConnectUrl: https://idp.qits.test.wohlben.eu/idp/.well-known/openid-configuration
       description: Authentication
 paths:
   /maintenance/api/adoption/by-release:
