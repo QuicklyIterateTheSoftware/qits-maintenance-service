@@ -94,6 +94,19 @@ does, and a listing that is EMPTY never does. The last is spelled twice, in `Sca
 in `MaintenanceStore.reconcileCatalog`, because reconciling against nothing empties the whole store
 in one transaction. `ScanReconciliationTest` is where all five arms are pinned.
 
+**A RENAMED row is retired by EVERY scan, a scan of one repository included (qits-1840).** A rename
+keeps qits-projects' row id, so the old name and the new one share a `catalog_id`, and both stayed
+OK until the nightly full scan — measured live with `qits-platform-access-cli` beside
+`qits-platform-access-monorepo`, and bumps FAILING with `no changelog for qits-platform-access-cli`
+in between. Every scan reads the WHOLE listing and filters it afterwards, and "the catalog answers
+this row's id under another name and does not answer this row's name" is evidence about that row
+alone, so `ScanService.retireRenamed` → `MaintenanceStore.retireRenamed` gives it the ABSENT
+treatment with the same sentence. A listed name is never retired, a row with no `catalog_id` never,
+and the failed-read and empty-listing guards hold as above. The readers agree: a shared id resolves
+to the live row scanned MOST RECENTLY (`repositoryName`, `ArtifactGraph.names`), and
+`ArtifactGraph.RepositoryNames` reads a retired old name OUT as the live name on its id and IN as one
+of the live name's spellings, which `ChangelogRanges.ledgerOf` reads the release ledger under.
+
 ## Parsers
 
 **XML-aware, never a regular expression.** A pom is read to find WHERE a version is set, and the

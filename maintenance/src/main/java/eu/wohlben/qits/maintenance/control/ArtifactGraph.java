@@ -504,6 +504,23 @@ public class ArtifactGraph {
     return Map.copyOf(byRepository);
   }
 
+  /**
+   * <b>Every string one repository's artifact and ledger rows may carry</b> — its name, its catalog
+   * id, and every RETIRED name a rename left on the same catalog id (qits-1840).
+   *
+   * <p>{@link RepositoryNames#spellings} for a caller outside this class. {@code ChangelogRanges}
+   * reads the release ledger through it: a release recorded under a repository's old name, before
+   * the rename, is still that repository's release, and a range that could not see it would floor
+   * itself at the wrong version.
+   *
+   * @param repository a catalog name
+   * @return the name first, then its other spellings; just the name when the store knows nothing
+   *     more, and empty for null
+   */
+  public List<String> spellings(String repository) {
+    return names().spellings(repository);
+  }
+
   // --- the one translation ----------------------------------------------------------------------
 
   /**
@@ -516,7 +533,21 @@ public class ArtifactGraph {
    * qits-projects' row id, so the ABSENT old row and the new one carry the same {@code catalog_id};
    * a plain put let whichever came last in name order win, and an application's producer became a
    * repository nobody scans. The same preference as {@code MaintenanceStore.repositoryName}: a
-   * row that is not {@link RepositoryStatus#retired retired} first, then the lowest name.
+   * row that is not {@link RepositoryStatus#retired retired} first, then the row scanned most
+   * recently, then the lowest name.
+   *
+   * <p><b>The most recent scan is the tie-break between two LIVE rows</b> (qits-1840): a rename
+   * leaves the old row OK until a scan retires it, and in that window "the lowest name" picked
+   * {@code qits-platform-access-cli} over {@code qits-platform-access-monorepo}, measured live. The
+   * listed name is the one every scan since the rename has written; a row never scanned sorts last.
+   *
+   * <p><b>And a retired NAME is translated too</b> (qits-1840). The catalog-id arm only ever
+   * covered rows written under the id; an artifact written under the OLD NAME — by a listener that
+   * resolved the id to the old row while it was still live, or before the rename at all — passed
+   * through as the old name, so {@link #producers} named a repository nobody scans and the bump's
+   * changelog check looked for {@code @changelog/<old name>}. So every retired row whose id answers
+   * with a different name is recorded here, both ways round: out to that name, in as one of its
+   * spellings.
    */
   private RepositoryNames names() {
     Map<String, String> byCatalogId = new LinkedHashMap<>();
@@ -524,14 +555,36 @@ public class ArtifactGraph {
     List<MtRepository> rows = new ArrayList<>(store.repositories());
     rows.sort(
         Comparator.comparing((MtRepository row) -> RepositoryStatus.retired(row.status))
+            .thenComparing(
+                (MtRepository row) -> row.lastScanAt,
+                Comparator.nullsLast(Comparator.<java.time.Instant>reverseOrder()))
             .thenComparing(row -> row.name, Comparator.nullsLast(Comparator.naturalOrder())));
+    Set<String> retired = new HashSet<>();
     for (MtRepository row : rows) {
       if (row.catalogId != null && !row.catalogId.isBlank() && row.name != null) {
         byCatalogId.putIfAbsent(row.catalogId, row.name);
         byName.put(row.name, row.catalogId);
+        if (RepositoryStatus.retired(row.status)) {
+          retired.add(row.name);
+        }
       }
     }
-    return new RepositoryNames(byCatalogId, byName);
+    // A retired row whose id answers with ANOTHER, live row: the name a rename left behind.
+    Map<String, String> liveByRetiredName = new LinkedHashMap<>();
+    Map<String, List<String>> retiredByCatalogId = new LinkedHashMap<>();
+    for (MtRepository row : rows) {
+      if (row.name == null || !retired.contains(row.name)) {
+        continue;
+      }
+      retiredByCatalogId
+          .computeIfAbsent(row.catalogId, id -> new ArrayList<>())
+          .add(row.name);
+      String winner = byCatalogId.get(row.catalogId);
+      if (winner != null && !winner.equals(row.name) && !retired.contains(winner)) {
+        liveByRetiredName.put(row.name, winner);
+      }
+    }
+    return new RepositoryNames(byCatalogId, byName, liveByRetiredName, retiredByCatalogId);
   }
 
   /**
@@ -552,29 +605,60 @@ public class ArtifactGraph {
    *       which answered nothing at all for a repository whose releases predate the fix.
    * </ul>
    *
+   * <p><b>A renamed repository's OLD NAME is a third spelling, in both directions</b> (qits-1840):
+   * rows written under it before the rename — or while the old row was still live beside the new
+   * one — are that repository's history, read out as the live name and found by it.
+   *
    * <p><b>An unknown value passes through untouched in both directions.</b> A raw uuid with no
    * catalog row behind it is still what a release said, and a repository the catalog does not carry
    * an id for is looked up by its name alone — which is exactly right, because nothing ever wrote
-   * anything else for it.
+   * anything else for it. A retired name with no live row on its id passes through too: nothing has
+   * replaced it.
+   *
+   * @param nameByCatalogId catalog id to the name that answers for it — live first, newest scan
+   * @param catalogIdByName name to its own catalog id
+   * @param liveByRetiredName a retired name to the live name now answering for its catalog id
+   * @param retiredByCatalogId catalog id to every retired name carrying it
    */
   private record RepositoryNames(
-      Map<String, String> nameByCatalogId, Map<String, String> catalogIdByName) {
+      Map<String, String> nameByCatalogId,
+      Map<String, String> catalogIdByName,
+      Map<String, String> liveByRetiredName,
+      Map<String, List<String>> retiredByCatalogId) {
 
     /** A stored {@code mt_artifact.repository}, as a repository is CALLED. */
     String of(String stored) {
       if (stored == null) {
         return null;
       }
+      String renamed = liveByRetiredName.get(stored);
+      if (renamed != null) {
+        return renamed;
+      }
       return nameByCatalogId.getOrDefault(stored, stored);
     }
 
-    /** Every string this repository's artifact rows may carry: its name, and its catalog id. */
+    /**
+     * Every string this repository's artifact rows may carry: its name, its catalog id, and every
+     * retired name sharing that id.
+     */
     List<String> spellings(String repository) {
       if (repository == null) {
         return List.of();
       }
       String catalogId = catalogIdByName.get(repository);
-      return catalogId == null ? List.of(repository) : List.of(repository, catalogId);
+      if (catalogId == null) {
+        return List.of(repository);
+      }
+      List<String> spellings = new ArrayList<>();
+      spellings.add(repository);
+      spellings.add(catalogId);
+      for (String former : retiredByCatalogId.getOrDefault(catalogId, List.of())) {
+        if (!spellings.contains(former)) {
+          spellings.add(former);
+        }
+      }
+      return List.copyOf(spellings);
     }
   }
 }

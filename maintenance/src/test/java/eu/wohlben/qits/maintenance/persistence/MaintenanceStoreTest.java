@@ -185,6 +185,94 @@ class MaintenanceStoreTest {
   }
 
   /**
+   * <b>Two LIVE rows on one catalog id: the one scanned most recently answers</b> (qits-1840).
+   * Between a rename and the scan that retires the old row both are OK, and the lowest name used to
+   * win — {@code qits-platform-access-cli} over {@code qits-platform-access-monorepo}, measured
+   * live. Both name orders are tried, so it is the scan time deciding and not the alphabet.
+   */
+  @Test
+  void aCatalogIdTwoLiveRowsShareAnswersWithTheNewerScannedOne() {
+    Instant renamedAt = Instant.parse("2026-11-01T10:00:00Z");
+    Instant since = renamedAt.plusSeconds(3600);
+    for (boolean newNameSortsFirst : List.of(true, false)) {
+      String catalogId = UUID.randomUUID().toString();
+      String suffix = UUID.randomUUID().toString();
+      String old = (newNameSortsFirst ? "z-old-" : "a-old-") + suffix;
+      String current = (newNameSortsFirst ? "a-new-" : "z-new-") + suffix;
+      store.markRepository(old, "qits", catalogId, null, RepositoryStatus.OK, null, renamedAt);
+      store.markRepository(current, "qits", catalogId, null, RepositoryStatus.OK, null, since);
+
+      assertEquals(current, store.repositoryName(catalogId), "newest scan, " + newNameSortsFirst);
+      assertEquals(old, store.repositoryName(old), "a name is still answered unchanged");
+    }
+  }
+
+  /**
+   * <b>A row the catalog now lists under another name is retired, and nothing else is</b>
+   * (qits-1840): the listed name, a row with no catalog id, and a row whose id the listing does not
+   * carry all stay as they were, and an empty listing retires nothing at all.
+   */
+  @Test
+  void retireRenamedRetiresOnlyARowWhoseIdTheCatalogListsUnderAnotherName() {
+    String catalogId = UUID.randomUUID().toString();
+    String suffix = UUID.randomUUID().toString();
+    String old = "renamed-old-" + suffix;
+    String current = "renamed-new-" + suffix;
+    String noId = "no-id-" + suffix;
+    String otherId = "other-id-" + suffix;
+    Instant now = Instant.now();
+    store.replaceInventory(
+        old,
+        "qits",
+        catalogId,
+        null,
+        "main",
+        RepositoryStatus.OK,
+        "sha1",
+        null,
+        List.of(pin("g:a", "1.0.0", "dependency:g:a")),
+        List.of(GroupConfig.Group.ofKind("dependencies", PinKind.INTERNAL)),
+        GroupSource.DEFAULT,
+        candidate -> PinKind.INTERNAL,
+        now);
+    store.markRepository(current, "qits", catalogId, null, RepositoryStatus.OK, null, now);
+    store.markRepository(noId, "qits", null, null, RepositoryStatus.OK, null, now);
+    store.markRepository(
+        otherId, "qits", UUID.randomUUID().toString(), null, RepositoryStatus.OK, null, now);
+
+    assertEquals(
+        List.of(),
+        store.retireRenamed(java.util.Map.of(), List.of(current), DROPPED, now),
+        "no id listed, nothing retired");
+    assertEquals(
+        List.of(),
+        store.retireRenamed(java.util.Map.of(catalogId, current), List.of(), DROPPED, now),
+        "an empty listing retires nothing");
+    assertEquals(
+        List.of(),
+        store.retireRenamed(
+            java.util.Map.of(catalogId, current), List.of(current, old), DROPPED, now),
+        "a listed name is never retired");
+    List<String> retired =
+        store.retireRenamed(java.util.Map.of(catalogId, current), List.of(current), DROPPED, now);
+    List<String> again =
+        store.retireRenamed(java.util.Map.of(catalogId, current), List.of(current), DROPPED, now);
+
+    assertEquals(List.of(old), retired);
+    assertEquals(List.of(), again, "a row already retired for this reason is not reported twice");
+    MtRepository gone = store.repository(old).orElseThrow();
+    assertEquals(RepositoryStatus.ABSENT.name(), gone.status);
+    assertEquals(DROPPED, gone.message);
+    assertEquals(catalogId, gone.catalogId, "the row and its catalog id are kept");
+    assertTrue(store.pins(old).isEmpty(), "its pins go");
+    assertTrue(store.groups(old).isEmpty(), "and its groups");
+    assertEquals(RepositoryStatus.OK.name(), store.repository(current).orElseThrow().status);
+    assertEquals(RepositoryStatus.OK.name(), store.repository(noId).orElseThrow().status);
+    assertEquals(RepositoryStatus.OK.name(), store.repository(otherId).orElseThrow().status);
+    assertEquals(current, store.repositoryName(catalogId));
+  }
+
+  /**
    * A catalog listing that carried no id says nothing about the id this row already has, and
    * clearing it would take the translation away from every graph row that still needs it.
    */
