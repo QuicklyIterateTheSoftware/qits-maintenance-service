@@ -136,6 +136,10 @@ public class PackagedSurfaceIT {
           // way the bus is. TokenValidationBootstrapIT's StoryProfile turns both back on.
           Map.entry("qits.auth.machine.required", "false"),
           Map.entry("quarkus.oidc.tenant-enabled", "false"),
+          // Every peer address and both idp addresses expand QITS_DOMAIN, which ships with no
+          // default and which surefire/failsafe keep out of the forked JVM (pom.xml): without one
+          // the launched artifact refuses to boot (qits-1424). Never dialled — every peer is dead.
+          Map.entry("QITS_DOMAIN", "example.test"),
           Map.entry("qits.maintenance.targets.projects-url", dead),
           Map.entry("qits.maintenance.targets.githost-url", dead),
           Map.entry("qits.maintenance.targets.ci-url", dead),

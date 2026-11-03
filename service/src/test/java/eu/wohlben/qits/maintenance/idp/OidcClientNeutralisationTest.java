@@ -186,11 +186,14 @@ class OidcClientNeutralisationTest {
     // rather than presenting the old projects client's credential.
     Map<String, String> oldExtrasOnly = new LinkedHashMap<>(deployedEnvironment());
     oldExtrasOnly.keySet().removeIf(name -> name.startsWith("QITS_RESOURCE_IDP_"));
+    // The domain every container is given; the fallback is the idp's edge host (qits-1424).
+    oldExtrasOnly.put("QITS_DOMAIN", "example.test");
     SmallRyeConfig config = config(oldExtrasOnly);
 
     assertEquals("dev-qits-maintenance", value(config, "quarkus.oidc-client.qits.client-id"));
     assertEquals(
-        "http://dev-qits-idp:8080/idp", value(config, "quarkus.oidc-client.qits.auth-server-url"));
+        "https://idp.qits.example.test/idp",
+        value(config, "quarkus.oidc-client.qits.auth-server-url"));
     assertTrue(
         config
             .getOptionalValue("quarkus.oidc-client.qits.credentials.secret", String.class)
