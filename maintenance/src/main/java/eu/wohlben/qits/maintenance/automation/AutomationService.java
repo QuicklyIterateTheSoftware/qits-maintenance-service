@@ -1423,8 +1423,9 @@ public class AutomationService {
               + abbreviate(row.foldSha) + " lacks " + abbreviate(startHead) + " of " + row.branch;
       if (!held.equals(row.message)) {
         store.bumpFinished(row.id, BumpStatus.REQUESTED, null, held, Instant.now());
+        LOG.infof("The %s automation %s of %s %s", row.automationKind, row.id, row.repository,
+            held);
       }
-      LOG.infof("The %s automation %s of %s %s", row.automationKind, row.id, row.repository, held);
       return;
     }
     if (recut == Recut.RECUT) {
