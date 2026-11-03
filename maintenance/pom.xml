@@ -71,7 +71,7 @@
         <dependency>
             <!-- ObjectMapper without a REST layer. A peer's answer is read as a TREE and never bound
                  to a record: the shapes belong to qits-projects, qits-githost, qits-artifacts,
-                 qits-platform-mirror and qits-ci, and binding them here would be five other
+                 qits-mirror and qits-ci, and binding them here would be five other
                  repositories' contracts to keep in step with. It is also how `changes` reaches the
                  `mt_bump` row and the CI payload. -->
             <groupId>io.quarkus</groupId>
