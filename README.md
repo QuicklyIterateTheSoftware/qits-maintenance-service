@@ -835,16 +835,17 @@ environment without a rebuild.
 
 | key | default | what it decides |
 |---|---|---|
-| `qits.maintenance.targets.projects-url` | `http://qits-projects:8080` | where the catalog is |
-| `qits.maintenance.targets.githost-url` | `http://qits-githost:8080` | where the manifests are |
-| `qits.maintenance.targets.ci-url` | `http://qits-ci:8080` | which CI applies a bump |
-| `qits.maintenance.targets.deployments-url` | `http://${QITS_ENVIRONMENT:dev}-qits-deployments:8080` | which versions serve or would roll back; `GET /pins` keeps what those releases declared |
-| `qits.maintenance.targets.system-url` | `http://${QITS_ENVIRONMENT:dev}-qits-system:8080` | where the CI room is read: the targets' slots and leases (qits-1769) |
-| `qits.maintenance.targets.artifacts-url` | `http://qits-artifacts:8080` | where the SBOM documents and the changelog listings are — a bare host, because both routes' whole paths belong to the caller |
-| `qits.maintenance.registries.maven-url` | `http://qits-artifacts:8080/artifacts/maven/maven` | internal maven |
-| `qits.maintenance.registries.npm-url` | `http://qits-artifacts:8080/artifacts/npm/npm` | internal npm |
-| `qits.maintenance.registries.oci-url` | `http://qits-artifacts:8080/v2` | internal images |
-| `qits.maintenance.mirror.maven-url` | `http://qits-mirror:8080/artifacts/maven/central` | Maven Central, cached |
+| `qits.maintenance.targets.projects-url` | `https://projects.qits.${QITS_DOMAIN}` | where the catalog is |
+| `qits.maintenance.targets.githost-url` | `https://githost.qits.${QITS_DOMAIN}` | where the manifests are |
+| `qits.maintenance.targets.ci-url` | `https://ci.qits.${QITS_DOMAIN}` | which CI applies a bump |
+| `qits.maintenance.targets.deployments-url` | `https://deployments.qits.${QITS_DOMAIN}` | which versions serve or would roll back; `GET /pins` keeps what those releases declared |
+| `qits.maintenance.targets.system-url` | `https://system.qits.${QITS_DOMAIN}` | where the CI room is read: the targets' slots and leases (qits-1769) |
+| `qits.maintenance.targets.artifacts-url` | `https://registry.qits.${QITS_DOMAIN}` | where the SBOM documents and the changelog listings are — a bare host, because both routes' whole paths belong to the caller |
+| `qits.maintenance.registries.maven-url` | `https://registry.qits.${QITS_DOMAIN}/artifacts/maven/maven` | internal maven |
+| `qits.maintenance.registries.npm-url` | `https://registry.qits.${QITS_DOMAIN}/artifacts/npm/npm` | internal npm |
+| `qits.maintenance.registries.oci-url` | `https://registry.qits.${QITS_DOMAIN}/v2` | internal images |
+| `qits.maintenance.mirror.maven-url` | `https://mirror.qits.${QITS_DOMAIN}/artifacts/maven/central` | Maven Central, cached |
+| `qits.maintenance.mirror.npm-url` | `https://mirror.qits.${QITS_DOMAIN}/npm/npmjs` | npmjs, cached |
 | `qits.maintenance.call-timeout` | `PT60S` | how long one peer call may take |
 | `qits.maintenance.internal.maven-groups` | `eu.wohlben.qits` | which maven groups this platform publishes |
 | `qits.maintenance.internal.npm-scopes` | `@qits` | which npm scopes it publishes |
@@ -877,12 +878,13 @@ and the prefix names the repository row it serves. Moving a row is then a deploy
 **`targets.artifacts-url` deliberately does not**: `/artifacts/sboms/…` and
 `/artifacts/docs/docs/@changelog/…` are qits-artifacts' own API rather than a mount, so the whole path belongs to the caller and lives in the code.
 
-**The npmjs cache has no key at all.** `qits.maintenance.mirror.npm-url` is gone (qits-472): its
-address is derived in code (`PeerTarget.NPM_MIRROR`) as
-`http://${QITS_ENVIRONMENT:dev}-qits-mirror:8080/npm/npmjs`, so a deployment still setting
-`QITS_MAINTENANCE_MIRROR_NPM_URL` sets something nothing reads. It stays on the internal alias
-rather than the public edge because the edge wants Basic with a client pair or a `qits_tok_`, and
-every call from here carries the `qits` client's minted bearer instead.
+**Every peer is its edge host** (qits-1424, feature qits-1406): `https://<label>.qits.${QITS_DOMAIN}`,
+the label being the peer's published host (`registry` for qits-artifacts). No address names a wire
+alias or an environment, and `QITS_DOMAIN` has no default: the tenant's
+`quarkus.oidc.auth-server-url` (`https://idp.qits.${QITS_DOMAIN}/idp`) expands it at boot, so a
+process without it refuses to start. Every call — the registry and mirror reads included — carries
+the `qits` client's minted `Bearer <jwt>`, which the edge validates offline and forwards; nothing
+here does the docker token dance or sends Basic. The npmjs cache moved first (qits-533).
 
 **`bump.enabled` stops every write as well as the dispatcher**, which is the point: a platform that
 wants to watch what *would* change for a week reads the inventory and pushes nothing.

@@ -94,7 +94,8 @@ class IdpTenantReadsPactTest {
       shipped.load(in);
     }
     String server = shipped.getProperty("quarkus.oidc.auth-server-url", "");
-    assertTrue(server.contains("qits-idp"), "the tenant reads qits-idp: " + server);
+    assertTrue(
+        server.startsWith("https://idp.qits."), "the tenant reads qits-idp at its edge host: " + server);
     assertNull(
         shipped.getProperty("quarkus.oidc.token.issuer"),
         "the issuer is never configuration: discovery publishes it (qits-730)");

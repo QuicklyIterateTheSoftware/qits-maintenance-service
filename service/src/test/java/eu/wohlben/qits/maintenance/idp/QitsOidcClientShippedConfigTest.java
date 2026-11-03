@@ -24,13 +24,11 @@ class QitsOidcClientShippedConfigTest {
 
   @Test
   void theQitsClientResolvesItsOwnLiteralDefaults() {
-    // The tier is DERIVED, not written: QITS_ENVIRONMENT is injected into every container by
-    // qits-deployments and is unset under test, so the `:dev` fallback is what resolves here. The
-    // assertion is on the resolved string on purpose — a default that stopped deriving would still
-    // read `dev-` on this suite only if somebody hardcoded it, and that is the mistake worth
-    // catching.
+    // The idp through the edge, at its own host (qits-1424): https://idp.qits.<QITS_DOMAIN>/idp, the
+    // domain the test resources supply. The assertion is on the resolved string on purpose — a
+    // default that went back to a wire alias, or grew an environment label, fails here.
     assertEquals(
-        "http://dev-qits-idp:8080/idp", value("quarkus.oidc-client.qits.auth-server-url"));
+        "https://idp.qits.test.wohlben.eu/idp", value("quarkus.oidc-client.qits.auth-server-url"));
     assertEquals("dev-qits-maintenance", value("quarkus.oidc-client.qits.client-id"));
     // Empty, not absent — SmallRye reads a configured-empty String as null, so an empty secret reads
     // as an empty Optional rather than as "" itself.

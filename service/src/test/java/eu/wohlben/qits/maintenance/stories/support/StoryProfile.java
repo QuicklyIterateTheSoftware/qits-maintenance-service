@@ -167,6 +167,11 @@ public class StoryProfile extends PackagedSurfaceIT.PackagedUnderTarget {
     // reader diffing a launch command should find them in it.
     Map<String, String> overrides = new LinkedHashMap<>(super.getConfigOverrides());
 
+    // Every shipped peer address expands QITS_DOMAIN, which has no default and which failsafe keeps
+    // out of the forked JVM (pom.xml) — so the launched artifact is given one (qits-1424). The two
+    // peers no story stands in for (deployments, system) then name a host that resolves nowhere,
+    // which is the posture a dead alias used to give them.
+    overrides.put("QITS_DOMAIN", "example.test");
     overrides.put("QITS_RESOURCE_DB_URL", databaseUrl());
     overrides.put("QITS_RESOURCE_EVENTSTREAM_URL", eventstreamUrl());
 
