@@ -104,6 +104,11 @@
              X-Qits-Caller; the server filter (jandex-discovered off this jar alone) records an
              inbound caller on the server span. Not released yet (qits-1198). -->
         <qits.http-core.version>2026.1103.132907</qits.http-core.version>
+        <!-- qits-telemetry-core (epic qits-428): the three OTLP/HTTP exporters as CDI beans whose
+             header supplier carries the `qits` oidc client's current bearer, so spans, logs and
+             metrics reach qits-observability at its edge host. Published by
+             qits-integrations-quarkus, like qits-http-core above. -->
+        <qits.telemetry-core.version>2026.1103.201640</qits.telemetry-core.version>
         <!-- The user-story framework (test scope, service/ only). The five story classes under
              service/src/test/.../stories/ plus TokenValidationBootstrapIT are userflows, so a
              `mvn verify -DskipITs=false -Dit.test=<the list>` also regenerates
@@ -379,6 +384,15 @@
                 <groupId>${project.groupId}</groupId>
                 <artifactId>qits-http-core</artifactId>
                 <version>${qits.http-core.version}</version>
+            </dependency>
+            <dependency>
+                <!-- OTLP export to qits-observability through the edge (epic qits-428): replaces all
+                     three of Quarkus' own OTLP exporters with CDI beans that attach the `qits` oidc
+                     client's bearer on every export. qits.telemetry.endpoint in application.properties;
+                     quarkus.otel.exporter.otlp.* no longer reaches anything. -->
+                <groupId>eu.wohlben.qits</groupId>
+                <artifactId>qits-telemetry-core</artifactId>
+                <version>${qits.telemetry-core.version}</version>
             </dependency>
             <dependency>
                 <!-- The userflow framework. Test scope, in `service/` only: the story runs against
