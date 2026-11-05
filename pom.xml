@@ -156,7 +156,7 @@
 
         <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
         <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
-        <quarkus.platform.version>3.34.6</quarkus.platform.version>
+        <quarkus.platform.version>3.40.1</quarkus.platform.version>
 
         <!-- Quinoa is a Quarkiverse extension: not in quarkus-bom, and its version does NOT track
              the platform's. 2.8.2 is built against Quarkus 3.27.3 LTS — older than the 3.34.6
