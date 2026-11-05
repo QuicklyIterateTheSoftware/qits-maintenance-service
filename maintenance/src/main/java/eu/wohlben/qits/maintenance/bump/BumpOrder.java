@@ -1,12 +1,18 @@
 package eu.wohlben.qits.maintenance.bump;
 
 import eu.wohlben.qits.bootstrap.graph.Ecosystem;
+import eu.wohlben.qits.bootstrap.graph.EdgeKind;
+import eu.wohlben.qits.bootstrap.graph.ProjectGraph;
+import eu.wohlben.qits.bootstrap.graph.Verdict;
+import eu.wohlben.qits.bootstrap.graph.Walk;
 import eu.wohlben.qits.maintenance.control.ArtifactGraph;
 import eu.wohlben.qits.maintenance.pending.Change;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Deque;
+import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -230,6 +236,61 @@ public final class BumpOrder {
     for (Candidate candidate : candidates) {
       owed.add(candidate.repository());
     }
+    List<Pick> picks =
+        owed.size() == candidates.size()
+            ? readyPicks(candidates, producers, n)
+            : readyPicksOneByOne(candidates, producers, owed, n);
+    if (picks.size() == n) {
+      return List.copyOf(picks);
+    }
+    cycleBreak(candidates, producers, owed).ifPresent(picks::add);
+    return List.copyOf(picks);
+  }
+
+  /**
+   * <b>The READY picks are the library's walk (qits-1880)</b>: the candidates as a {@link
+   * CandidateSource}, its graph over ARTIFACT edges, offered upstream first with the caller's listing
+   * order as the tie-break.
+   *
+   * <p>The visitor never answers DONE — a pick's consumers wait on its RELEASE, not on its dispatch,
+   * and a held candidate's on the release in flight — so the walk only ever offers a repository with
+   * no owed upstream at all, which is READY to the letter, in listing order. A held one is answered
+   * HELD and is never the pick; a free one is recorded and answered HELD too; RECOMPUTE ends the walk
+   * once the room is used up. The walk's own cycle report is not read: a knot is {@link #cycleBreak}'s
+   * to judge, among the free candidates only — the walk reports a ring through a held one as well.
+   */
+  private static List<Pick> readyPicks(
+      List<Candidate> candidates, Map<String, String> producers, int n) {
+    Map<String, Candidate> byRepository = new HashMap<>();
+    Map<String, Integer> listing = new HashMap<>();
+    for (int i = 0; i < candidates.size(); i++) {
+      byRepository.put(candidates.get(i).repository(), candidates.get(i));
+      listing.put(candidates.get(i).repository(), i);
+    }
+    ProjectGraph graph = ProjectGraph.of(new CandidateSource(candidates, producers), Map.of());
+    List<Pick> picks = new ArrayList<>();
+    Walk.run(
+        graph,
+        EnumSet.of(EdgeKind.ARTIFACT),
+        Comparator.comparingInt(listing::get),
+        repository -> {
+          Candidate candidate = byRepository.get(repository);
+          if (candidate.held()) {
+            return Verdict.HELD;
+          }
+          picks.add(new Pick(candidate, Set.of(), false));
+          return picks.size() == n ? Verdict.RECOMPUTE : Verdict.HELD;
+        });
+    return picks;
+  }
+
+  /**
+   * A listing that names one repository twice is no project — a graph has one node per repository —
+   * so each candidate is judged on its own, as before the walk. {@code BumpDispatcher.assess} never
+   * hands one over (one group, one row per repository); this keeps the public contract total.
+   */
+  private static List<Pick> readyPicksOneByOne(
+      List<Candidate> candidates, Map<String, String> producers, Set<String> owed, int n) {
     List<Pick> picks = new ArrayList<>();
     for (Candidate candidate : candidates) {
       if (candidate.held()) {
@@ -238,12 +299,11 @@ public final class BumpOrder {
       if (owedUpstreams(candidate, producers, owed).isEmpty()) {
         picks.add(new Pick(candidate, Set.of(), false));
         if (picks.size() == n) {
-          return List.copyOf(picks);
+          return picks;
         }
       }
     }
-    cycleBreak(candidates, producers, owed).ifPresent(picks::add);
-    return List.copyOf(picks);
+    return picks;
   }
 
   /**

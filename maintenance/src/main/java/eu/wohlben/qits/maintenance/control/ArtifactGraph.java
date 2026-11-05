@@ -1,5 +1,6 @@
 package eu.wohlben.qits.maintenance.control;
 
+import eu.wohlben.qits.bootstrap.graph.Coordinate;
 import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.maintenance.dto.ArtifactDto;
 import eu.wohlben.qits.maintenance.dto.DependentDto;
@@ -412,9 +413,24 @@ public class ArtifactGraph {
     return segment.isEmpty() ? null : segment;
   }
 
-  /** The {@code (ecosystem, name)} spelling {@link #producers} is keyed by. */
+  /**
+   * The {@code (ecosystem, name)} spelling {@link #producers} is keyed by — the library's {@link
+   * Coordinate#key()} for an ecosystem it knows (qits-1880), byte-identical by its contract.
+   *
+   * <p><b>Not every caller hands in an ecosystem.</b> {@link #producers} keys every released
+   * artifact by its stored type, and {@code daemon} ({@link Ecosystem#DAEMON_WIRE_NAME}) is one that
+   * is deliberately no constant; {@code GoldenRecordingsAutomation} keys whatever type a file names.
+   * Those, a null, and any spelling that is not exactly a wire name ({@link Ecosystem#of} would take
+   * {@code MAVEN} for {@code maven}, and the key must not change case) keep the plain concatenation
+   * — which is the same format, so the two kinds of key share one map.
+   */
   public static String producerKey(String ecosystem, String name) {
-    return ecosystem + " " + name;
+    Optional<Ecosystem> known =
+        Ecosystem.of(ecosystem).filter(value -> value.wireName().equals(ecosystem));
+    if (known.isEmpty() || name == null) {
+      return ecosystem + " " + name;
+    }
+    return new Coordinate(known.get(), name).key();
   }
 
   /**
