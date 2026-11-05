@@ -1,7 +1,7 @@
 package eu.wohlben.qits.maintenance.sbom;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.maintenance.peer.PeerAnswer;
 import eu.wohlben.qits.maintenance.peer.PeerClient;
 import eu.wohlben.qits.maintenance.peer.PeerExchange;

@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.db.DbRetry;
 import eu.wohlben.qits.maintenance.catalog.CatalogEntry;
 import eu.wohlben.qits.maintenance.catalog.CatalogReader;
@@ -16,7 +17,6 @@ import eu.wohlben.qits.maintenance.entity.MtArtifact;
 import eu.wohlben.qits.maintenance.entity.MtSbomTicket;
 import eu.wohlben.qits.maintenance.error.NoSbomCheckRunException;
 import eu.wohlben.qits.maintenance.error.SbomCheckFailedException;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.ReleaseOrigin;
 import eu.wohlben.qits.maintenance.model.SbomStatus;
 import eu.wohlben.qits.maintenance.peer.PeerAnswer;

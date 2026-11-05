@@ -1,11 +1,11 @@
 package eu.wohlben.qits.maintenance.control;
 
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.maintenance.bump.Calver;
 import eu.wohlben.qits.maintenance.dto.DeployedPactsDto;
 import eu.wohlben.qits.maintenance.dto.DeployedPactsDto.DeployedPactDto;
 import eu.wohlben.qits.maintenance.entity.MtArtifact;
 import eu.wohlben.qits.maintenance.error.BadRequestException;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;

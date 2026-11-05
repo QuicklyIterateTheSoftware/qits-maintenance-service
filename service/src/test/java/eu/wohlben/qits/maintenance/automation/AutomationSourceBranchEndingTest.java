@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.maintenance.api.Fixture;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
 import eu.wohlben.qits.maintenance.bump.BumpService;
@@ -16,7 +17,6 @@ import eu.wohlben.qits.maintenance.entity.MtBump;
 import eu.wohlben.qits.maintenance.error.BumpAlreadyActiveException;
 import eu.wohlben.qits.maintenance.model.BumpStatus;
 import eu.wohlben.qits.maintenance.model.BumpTrigger;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.ScanScope;
 import eu.wohlben.qits.maintenance.pending.Change;
 import eu.wohlben.qits.maintenance.peer.FakePeers;

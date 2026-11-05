@@ -6,11 +6,11 @@ import static eu.wohlben.qits.maintenance.bus.ForeignEventContractTest.scmReleas
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
+import eu.wohlben.qits.bootstrap.graph.manifest.ParsedPin;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
 import eu.wohlben.qits.maintenance.manifest.GroupConfig;
-import eu.wohlben.qits.maintenance.manifest.ParsedPin;
 import eu.wohlben.qits.maintenance.model.BranchState;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.GroupSource;
 import eu.wohlben.qits.maintenance.model.PinKind;
 import eu.wohlben.qits.maintenance.model.RepositoryStatus;

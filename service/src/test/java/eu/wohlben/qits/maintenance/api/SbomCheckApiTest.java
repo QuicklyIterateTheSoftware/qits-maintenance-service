@@ -6,7 +6,7 @@ import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import eu.wohlben.qits.maintenance.model.Ecosystem;
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.maintenance.model.ReleaseOrigin;
 import eu.wohlben.qits.maintenance.peer.FakePeers;
 import eu.wohlben.qits.maintenance.peer.PeerTarget;

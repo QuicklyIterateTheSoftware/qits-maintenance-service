@@ -3,11 +3,11 @@ package eu.wohlben.qits.maintenance.latest;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.maintenance.automation.UpstreamReplan;
 import eu.wohlben.qits.maintenance.entity.MtLatest;
 import eu.wohlben.qits.maintenance.githost.GitHostReader;
 import eu.wohlben.qits.maintenance.githost.TreeLookup;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.GroupSource;
 import eu.wohlben.qits.maintenance.model.PinKind;
 import eu.wohlben.qits.maintenance.model.RepositoryStatus;

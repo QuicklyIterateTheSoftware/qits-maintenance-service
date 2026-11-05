@@ -1,5 +1,8 @@
 package eu.wohlben.qits.maintenance.automation;
 
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
+import eu.wohlben.qits.bootstrap.graph.manifest.GitmodulesParser;
+import eu.wohlben.qits.bootstrap.graph.manifest.ParsedPin;
 import eu.wohlben.qits.maintenance.bump.CiClient;
 import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
 import eu.wohlben.qits.maintenance.entity.MtLatest;
@@ -7,12 +10,9 @@ import eu.wohlben.qits.maintenance.entity.MtPin;
 import eu.wohlben.qits.maintenance.githost.FileLookup;
 import eu.wohlben.qits.maintenance.latest.LatestResolver;
 import eu.wohlben.qits.maintenance.manifest.DependencyBumps;
-import eu.wohlben.qits.maintenance.manifest.GitmodulesParser;
 import eu.wohlben.qits.maintenance.manifest.GroupConfig;
 import eu.wohlben.qits.maintenance.manifest.ManifestScanner;
-import eu.wohlben.qits.maintenance.manifest.ParsedPin;
 import eu.wohlben.qits.maintenance.manifest.RepositoryConfig;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.PinKind;
 import eu.wohlben.qits.maintenance.model.RepositoryArchetype;
 import eu.wohlben.qits.maintenance.pending.Change;

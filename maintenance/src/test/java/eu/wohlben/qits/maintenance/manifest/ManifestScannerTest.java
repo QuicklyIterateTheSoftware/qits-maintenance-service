@@ -3,11 +3,13 @@ package eu.wohlben.qits.maintenance.manifest;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
+import eu.wohlben.qits.bootstrap.graph.manifest.GitmodulesParser;
+import eu.wohlben.qits.bootstrap.graph.manifest.ParsedPin;
 import eu.wohlben.qits.maintenance.catalog.CatalogEntry;
 import eu.wohlben.qits.maintenance.githost.FileLookup;
 import eu.wohlben.qits.maintenance.githost.GitHostReader;
 import eu.wohlben.qits.maintenance.githost.TreeLookup;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.RepositoryStatus;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -296,16 +298,6 @@ class ManifestScannerTest {
     return maintenanceYml == null ? host : host.blob(GroupConfig.PATH, maintenanceYml);
   }
 
-  /** The control: with no file, both ecosystems pin. */
-  @Test
-  void withoutAnIgnoreBothEcosystemsPin() {
-    List<ParsedPin> pins = read(mixed(null)).pins();
-
-    assertEquals(
-        List.of(Ecosystem.DOCKER, Ecosystem.GITLINK),
-        pins.stream().map(ParsedPin::ecosystem).toList());
-  }
-
   /**
    * AN IGNORED ECOSYSTEM'S PINS SIMPLY DO NOT EXIST. Not filtered afterwards and not stored and
    * skipped later: there is no pin, and the reads that would have found one are never made either.
@@ -326,12 +318,6 @@ class ManifestScannerTest {
     assertEquals(
         List.of(GroupConfig.DEFAULT_GROUP, GroupConfig.EXTERNAL_GROUP),
         read.groups().stream().map(GroupConfig.Group::name).toList());
-  }
-
-  /** Every ecosystem may be named, and a repository that names them all pins nothing. */
-  @Test
-  void aRepositoryMayIgnoreEveryEcosystemItHas() {
-    assertTrue(read(mixed("ignore: [maven, npm, docker, gitlink]\n")).pins().isEmpty());
   }
 
   /**

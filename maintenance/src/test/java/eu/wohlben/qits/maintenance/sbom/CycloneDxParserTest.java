@@ -8,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;

@@ -1,6 +1,6 @@
 package eu.wohlben.qits.maintenance.latest;
 
-import eu.wohlben.qits.maintenance.model.Ecosystem;
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.maintenance.model.PinKind;
 import java.util.function.Predicate;
 

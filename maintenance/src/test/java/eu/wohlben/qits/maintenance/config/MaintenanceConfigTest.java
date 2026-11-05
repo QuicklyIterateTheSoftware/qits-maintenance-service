@@ -2,8 +2,8 @@ package eu.wohlben.qits.maintenance.config;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import eu.wohlben.qits.maintenance.manifest.ParsedPin;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
+import eu.wohlben.qits.bootstrap.graph.manifest.ParsedPin;
 import eu.wohlben.qits.maintenance.model.PinKind;
 import java.util.List;
 import org.junit.jupiter.api.Test;

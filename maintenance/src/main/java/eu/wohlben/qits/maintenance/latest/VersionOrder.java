@@ -1,6 +1,6 @@
 package eu.wohlben.qits.maintenance.latest;
 
-import eu.wohlben.qits.maintenance.model.Ecosystem;
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.Locale;

@@ -1,11 +1,11 @@
 package eu.wohlben.qits.maintenance.api;
 
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.maintenance.control.ArtifactGraph;
 import eu.wohlben.qits.maintenance.control.Inventory;
 import eu.wohlben.qits.maintenance.dto.DependencyDto;
 import eu.wohlben.qits.maintenance.dto.DependentsDto;
 import eu.wohlben.qits.maintenance.error.BadRequestException;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.PinKind;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;

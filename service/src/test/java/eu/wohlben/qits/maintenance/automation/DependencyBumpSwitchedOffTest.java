@@ -143,9 +143,9 @@ class DependencyBumpSwitchedOffTest {
   @Test
   void theUpstreamHookIsANoOp() {
     upstream.latestMoved(
-        eu.wohlben.qits.maintenance.model.Ecosystem.MAVEN, AutomationFixture.EVENTSTREAM);
+        eu.wohlben.qits.bootstrap.graph.Ecosystem.MAVEN, AutomationFixture.EVENTSTREAM);
     upstream.replanConsumers(
-        eu.wohlben.qits.maintenance.model.Ecosystem.MAVEN, AutomationFixture.EVENTSTREAM);
+        eu.wohlben.qits.bootstrap.graph.Ecosystem.MAVEN, AutomationFixture.EVENTSTREAM);
     queue.awaitIdle(Duration.ofSeconds(30));
 
     assertTrue(

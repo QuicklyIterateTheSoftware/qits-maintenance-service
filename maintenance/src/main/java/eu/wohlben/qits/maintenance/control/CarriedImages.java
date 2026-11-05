@@ -1,7 +1,7 @@
 package eu.wohlben.qits.maintenance.control;
 
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.maintenance.dto.PinSourceDto;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.util.List;

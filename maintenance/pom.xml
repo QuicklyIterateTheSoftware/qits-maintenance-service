@@ -34,6 +34,12 @@
 
     <dependencies>
         <dependency>
+            <!-- The manifest parsers and discovery ManifestScanner reads a repository with, and the
+                 project graph BumpOrder walks (qits-3). Plain Java: no beans, nothing to index. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-bootstrap-graph</artifactId>
+        </dependency>
+        <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-arc</artifactId>
         </dependency>

@@ -5,11 +5,11 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
+import eu.wohlben.qits.bootstrap.graph.manifest.ParsedPin;
 import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
 import eu.wohlben.qits.maintenance.githost.FileLookup;
 import eu.wohlben.qits.maintenance.manifest.ManifestScanner;
-import eu.wohlben.qits.maintenance.manifest.ParsedPin;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;

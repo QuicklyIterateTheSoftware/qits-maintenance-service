@@ -1,10 +1,10 @@
 package eu.wohlben.qits.maintenance.api;
 
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
+import eu.wohlben.qits.bootstrap.graph.manifest.GitmodulesParser;
 import eu.wohlben.qits.maintenance.bump.CiClient;
 import eu.wohlben.qits.maintenance.bump.SystemClient;
-import eu.wohlben.qits.maintenance.manifest.GitmodulesParser;
 import eu.wohlben.qits.maintenance.peer.FakePeers;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.peer.PeerTarget;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import java.time.Instant;

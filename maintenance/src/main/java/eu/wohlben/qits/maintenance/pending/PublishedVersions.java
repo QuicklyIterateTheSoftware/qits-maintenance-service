@@ -1,7 +1,7 @@
 package eu.wohlben.qits.maintenance.pending;
 
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.maintenance.latest.PublishedLookup;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.PinKind;
 
 /**

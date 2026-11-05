@@ -1,5 +1,6 @@
 package eu.wohlben.qits.maintenance.control;
 
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.maintenance.adoption.ReleaseLedger;
 import eu.wohlben.qits.maintenance.adoption.ReleaseLedgerHeal;
 import eu.wohlben.qits.maintenance.bump.BumpService;
@@ -31,7 +32,6 @@ import eu.wohlben.qits.maintenance.error.UnrecordedDeploymentException;
 import eu.wohlben.qits.maintenance.latest.GitlinkSha;
 import eu.wohlben.qits.maintenance.manifest.Globs;
 import eu.wohlben.qits.maintenance.model.BranchState;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.PinKind;
 import eu.wohlben.qits.maintenance.model.RepositoryStatus;
 import eu.wohlben.qits.maintenance.pending.PendingChanges;

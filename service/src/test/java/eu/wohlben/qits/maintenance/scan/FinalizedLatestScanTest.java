@@ -2,9 +2,9 @@ package eu.wohlben.qits.maintenance.scan;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.maintenance.api.Fixture;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.ScanScope;
 import eu.wohlben.qits.maintenance.model.ScanStatus;
 import eu.wohlben.qits.maintenance.peer.FakePeers;

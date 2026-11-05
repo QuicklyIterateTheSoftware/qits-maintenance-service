@@ -6,9 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.eventstream.control.EventFrame;
 import eu.wohlben.qits.maintenance.latest.VersionOrder;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.ReleaseOrigin;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import eu.wohlben.qits.maintenance.sbom.SbomIngestService;
@@ -180,7 +180,7 @@ class SoftwareReleaseListenerTest {
     final List<String> moved = new java.util.ArrayList<>();
 
     @Override
-    public void latestMoved(eu.wohlben.qits.maintenance.model.Ecosystem ecosystem, String name) {
+    public void latestMoved(eu.wohlben.qits.bootstrap.graph.Ecosystem ecosystem, String name) {
       moved.add(ecosystem.wireName() + ":" + name);
     }
   }

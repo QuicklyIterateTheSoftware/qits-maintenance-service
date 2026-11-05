@@ -1,6 +1,8 @@
 package eu.wohlben.qits.maintenance.persistence;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
+import eu.wohlben.qits.bootstrap.graph.manifest.ParsedPin;
 import eu.wohlben.qits.db.DbRetry;
 import eu.wohlben.qits.maintenance.bump.CiClient;
 import eu.wohlben.qits.maintenance.entity.MtArtifact;
@@ -29,12 +31,10 @@ import eu.wohlben.qits.maintenance.latest.LatestLookup;
 import eu.wohlben.qits.maintenance.latest.VersionOrder;
 import eu.wohlben.qits.maintenance.manifest.DependencyBumps;
 import eu.wohlben.qits.maintenance.manifest.GroupConfig;
-import eu.wohlben.qits.maintenance.manifest.ParsedPin;
 import eu.wohlben.qits.maintenance.model.BranchState;
 import eu.wohlben.qits.maintenance.model.BumpMode;
 import eu.wohlben.qits.maintenance.model.BumpStatus;
 import eu.wohlben.qits.maintenance.model.BumpTrigger;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.GroupSource;
 import eu.wohlben.qits.maintenance.model.PinKind;
 import eu.wohlben.qits.maintenance.model.ReleaseOrigin;

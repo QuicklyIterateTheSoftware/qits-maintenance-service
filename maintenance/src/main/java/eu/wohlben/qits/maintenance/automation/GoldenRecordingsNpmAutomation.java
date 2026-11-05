@@ -2,9 +2,9 @@ package eu.wohlben.qits.maintenance.automation;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
+import eu.wohlben.qits.bootstrap.graph.manifest.ParsedPin;
 import eu.wohlben.qits.maintenance.githost.FileLookup;
-import eu.wohlben.qits.maintenance.manifest.ParsedPin;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.util.Iterator;
 import java.util.List;

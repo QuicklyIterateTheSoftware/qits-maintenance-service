@@ -1,5 +1,6 @@
 package eu.wohlben.qits.maintenance.adoption;
 
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.maintenance.adoption.DownstreamResolver.Closure;
 import eu.wohlben.qits.maintenance.adoption.DownstreamResolver.Downstream;
 import eu.wohlben.qits.maintenance.adoption.ReleaseCoordinates.Coordinate;
@@ -8,7 +9,6 @@ import eu.wohlben.qits.maintenance.entity.MtRelease;
 import eu.wohlben.qits.maintenance.entity.MtRepository;
 import eu.wohlben.qits.maintenance.latest.GitlinkSha;
 import eu.wohlben.qits.maintenance.latest.VersionOrder;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.SbomStatus;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import jakarta.enterprise.context.ApplicationScoped;

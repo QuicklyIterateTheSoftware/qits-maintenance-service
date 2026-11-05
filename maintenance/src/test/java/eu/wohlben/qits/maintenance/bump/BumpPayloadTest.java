@@ -3,8 +3,8 @@ package eu.wohlben.qits.maintenance.bump;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.maintenance.bump.changelog.ChangelogRange;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.pending.Change;
 import java.util.List;
 import java.util.Map;

@@ -1,5 +1,6 @@
 package eu.wohlben.qits.maintenance.control;
 
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.maintenance.dto.ArtifactDto;
 import eu.wohlben.qits.maintenance.dto.DependentDto;
 import eu.wohlben.qits.maintenance.dto.DependentsDto;
@@ -11,7 +12,6 @@ import eu.wohlben.qits.maintenance.entity.MtArtifactEdge;
 import eu.wohlben.qits.maintenance.entity.MtPin;
 import eu.wohlben.qits.maintenance.entity.MtRepository;
 import eu.wohlben.qits.maintenance.latest.VersionOrder;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.RepositoryStatus;
 import eu.wohlben.qits.maintenance.model.SbomStatus;
 import eu.wohlben.qits.maintenance.pending.PendingChanges;

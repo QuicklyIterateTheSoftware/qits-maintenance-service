@@ -1,7 +1,7 @@
 package eu.wohlben.qits.maintenance.bump;
 
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.maintenance.control.ArtifactGraph;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.pending.Change;
 import java.util.ArrayDeque;
 import java.util.ArrayList;

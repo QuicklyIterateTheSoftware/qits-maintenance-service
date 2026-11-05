@@ -1,10 +1,10 @@
 package eu.wohlben.qits.maintenance.automation;
 
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.maintenance.bump.ReleaseRequestClient;
 import eu.wohlben.qits.maintenance.entity.MtPin;
 import eu.wohlben.qits.maintenance.entity.MtRepository;
 import eu.wohlben.qits.maintenance.model.BumpTrigger;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.PinKind;
 import eu.wohlben.qits.maintenance.model.RepositoryArchetype;
 import eu.wohlben.qits.maintenance.pending.PendingChanges;

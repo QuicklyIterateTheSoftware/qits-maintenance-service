@@ -1,12 +1,12 @@
 package eu.wohlben.qits.maintenance.bump.changelog;
 
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.maintenance.bump.Calver;
 import eu.wohlben.qits.maintenance.bump.ReleaseRequestClient;
 import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
 import eu.wohlben.qits.maintenance.control.ArtifactGraph;
 import eu.wohlben.qits.maintenance.entity.MtRelease;
 import eu.wohlben.qits.maintenance.latest.GitlinkSha;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.PinKind;
 import eu.wohlben.qits.maintenance.pending.Change;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;

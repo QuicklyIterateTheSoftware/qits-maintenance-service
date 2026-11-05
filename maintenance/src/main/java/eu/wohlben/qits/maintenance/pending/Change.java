@@ -1,6 +1,7 @@
 package eu.wohlben.qits.maintenance.pending;
 
-import eu.wohlben.qits.maintenance.model.Ecosystem;
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
+
 
 /**
  * One edit, exactly as the bump payload carries it.

@@ -1,5 +1,6 @@
 package eu.wohlben.qits.maintenance.latest;
 
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.maintenance.automation.UpstreamReplan;
 import eu.wohlben.qits.maintenance.entity.MtLatest;
 import eu.wohlben.qits.maintenance.entity.MtRelease;
@@ -7,7 +8,6 @@ import eu.wohlben.qits.maintenance.entity.MtRepository;
 import eu.wohlben.qits.maintenance.githost.FileLookup;
 import eu.wohlben.qits.maintenance.githost.GitHostReader;
 import eu.wohlben.qits.maintenance.githost.TreeLookup;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.RepositoryStatus;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import eu.wohlben.qits.maintenance.work.WorkQueue;

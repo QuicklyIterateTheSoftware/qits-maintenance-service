@@ -1,6 +1,6 @@
 package eu.wohlben.qits.maintenance.sbom;
 
-import eu.wohlben.qits.maintenance.model.Ecosystem;
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import java.util.List;
 
 /**

@@ -1,5 +1,7 @@
 package eu.wohlben.qits.maintenance.automation;
 
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
+import eu.wohlben.qits.bootstrap.graph.manifest.ParsedPin;
 import eu.wohlben.qits.maintenance.bump.CiClient;
 import eu.wohlben.qits.maintenance.control.ArtifactGraph;
 import eu.wohlben.qits.maintenance.entity.MtRepository;
@@ -7,8 +9,6 @@ import eu.wohlben.qits.maintenance.githost.FileLookup;
 import eu.wohlben.qits.maintenance.githost.GitHostReader;
 import eu.wohlben.qits.maintenance.githost.TreeLookup;
 import eu.wohlben.qits.maintenance.manifest.ManifestScanner;
-import eu.wohlben.qits.maintenance.manifest.ParsedPin;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import jakarta.inject.Inject;
 import java.util.HashMap;

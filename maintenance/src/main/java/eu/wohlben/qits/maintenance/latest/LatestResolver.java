@@ -1,8 +1,8 @@
 package eu.wohlben.qits.maintenance.latest;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import eu.wohlben.qits.maintenance.manifest.Xml;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
+import eu.wohlben.qits.bootstrap.graph.manifest.Xml;
 import eu.wohlben.qits.maintenance.model.PinKind;
 import eu.wohlben.qits.maintenance.peer.PeerAnswer;
 import eu.wohlben.qits.maintenance.peer.PeerClient;

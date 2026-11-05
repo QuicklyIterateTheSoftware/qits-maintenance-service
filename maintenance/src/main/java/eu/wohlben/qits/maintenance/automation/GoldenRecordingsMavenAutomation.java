@@ -1,9 +1,9 @@
 package eu.wohlben.qits.maintenance.automation;
 
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
+import eu.wohlben.qits.bootstrap.graph.manifest.ParsedPin;
+import eu.wohlben.qits.bootstrap.graph.manifest.Xml;
 import eu.wohlben.qits.maintenance.githost.FileLookup;
-import eu.wohlben.qits.maintenance.manifest.ParsedPin;
-import eu.wohlben.qits.maintenance.manifest.Xml;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.util.ArrayList;
 import java.util.List;

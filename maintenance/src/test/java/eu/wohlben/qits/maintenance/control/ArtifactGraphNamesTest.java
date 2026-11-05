@@ -2,7 +2,7 @@ package eu.wohlben.qits.maintenance.control;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import eu.wohlben.qits.maintenance.model.Ecosystem;
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.maintenance.model.RepositoryStatus;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import io.quarkus.test.junit.QuarkusTest;

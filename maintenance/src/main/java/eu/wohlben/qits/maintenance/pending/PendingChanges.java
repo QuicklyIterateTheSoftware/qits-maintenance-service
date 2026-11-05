@@ -1,5 +1,6 @@
 package eu.wohlben.qits.maintenance.pending;
 
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.maintenance.entity.MtGroup;
 import eu.wohlben.qits.maintenance.entity.MtLatest;
 import eu.wohlben.qits.maintenance.entity.MtPin;
@@ -7,7 +8,6 @@ import eu.wohlben.qits.maintenance.latest.GitlinkSha;
 import eu.wohlben.qits.maintenance.latest.PublishedLookup;
 import eu.wohlben.qits.maintenance.latest.VersionOrder;
 import eu.wohlben.qits.maintenance.manifest.Globs;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.PinKind;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import java.util.ArrayList;

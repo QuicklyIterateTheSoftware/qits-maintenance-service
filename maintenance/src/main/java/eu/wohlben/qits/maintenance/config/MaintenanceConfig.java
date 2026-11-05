@@ -1,6 +1,6 @@
 package eu.wohlben.qits.maintenance.config;
 
-import eu.wohlben.qits.maintenance.manifest.ParsedPin;
+import eu.wohlben.qits.bootstrap.graph.manifest.ParsedPin;
 import eu.wohlben.qits.maintenance.model.PinKind;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.time.Duration;
@@ -272,7 +272,7 @@ public class MaintenanceConfig {
    * correct setting is the default, and setting it would send gitlink pins to a registry that has
    * never heard of a git repository.
    */
-  public PinKind kindOf(eu.wohlben.qits.maintenance.model.Ecosystem ecosystem, String name) {
+  public PinKind kindOf(eu.wohlben.qits.bootstrap.graph.Ecosystem ecosystem, String name) {
     if (name == null) {
       return PinKind.EXTERNAL;
     }

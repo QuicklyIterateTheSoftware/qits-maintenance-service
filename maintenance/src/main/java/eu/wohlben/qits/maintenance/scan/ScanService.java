@@ -1,5 +1,6 @@
 package eu.wohlben.qits.maintenance.scan;
 
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.maintenance.catalog.CatalogEntry;
 import eu.wohlben.qits.maintenance.catalog.CatalogReader;
 import eu.wohlben.qits.maintenance.config.MaintenanceConfig;
@@ -10,7 +11,6 @@ import eu.wohlben.qits.maintenance.latest.LatestLookup;
 import eu.wohlben.qits.maintenance.latest.LatestResolver;
 import eu.wohlben.qits.maintenance.latest.MainHeadLatest;
 import eu.wohlben.qits.maintenance.manifest.ManifestScanner;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.PinKind;
 import eu.wohlben.qits.maintenance.model.RepositoryStatus;
 import eu.wohlben.qits.maintenance.model.ScanScope;
@@ -372,7 +372,7 @@ public class ScanService {
   private void keepMain(
       CatalogEntry entry, ManifestScanner.Read read, List<MaintenanceStore.GitlinkPin> gitlinks) {
     List<MaintenanceStore.MainPin> pins = new java.util.ArrayList<>();
-    for (eu.wohlben.qits.maintenance.manifest.ParsedPin pin : read.pins()) {
+    for (eu.wohlben.qits.bootstrap.graph.manifest.ParsedPin pin : read.pins()) {
       if (pin.ecosystem() == Ecosystem.GITLINK || config.kindOf(pin) != PinKind.INTERNAL) {
         continue;
       }

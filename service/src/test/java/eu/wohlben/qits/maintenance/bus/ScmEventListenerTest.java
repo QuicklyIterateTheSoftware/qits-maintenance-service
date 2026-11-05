@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.maintenance.adoption.ReleaseLedger;
 import eu.wohlben.qits.maintenance.entity.MtBranch;
 import eu.wohlben.qits.maintenance.entity.MtGroup;
@@ -20,7 +21,6 @@ import eu.wohlben.qits.maintenance.githost.TreeLookup;
 import eu.wohlben.qits.maintenance.latest.GitlinkSha;
 import eu.wohlben.qits.maintenance.latest.MainHeadLatest;
 import eu.wohlben.qits.maintenance.model.BranchState;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.ScanScope;
 import eu.wohlben.qits.maintenance.pending.PendingChanges;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
@@ -264,7 +264,7 @@ class ScmEventListenerTest {
     final List<String> moved = new java.util.ArrayList<>();
 
     @Override
-    public void latestMoved(eu.wohlben.qits.maintenance.model.Ecosystem ecosystem, String name) {
+    public void latestMoved(eu.wohlben.qits.bootstrap.graph.Ecosystem ecosystem, String name) {
       moved.add(ecosystem.wireName() + ":" + name);
     }
 

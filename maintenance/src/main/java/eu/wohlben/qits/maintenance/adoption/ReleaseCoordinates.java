@@ -1,9 +1,9 @@
 package eu.wohlben.qits.maintenance.adoption;
 
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.maintenance.entity.MtArtifact;
 import eu.wohlben.qits.maintenance.entity.MtRepository;
 import eu.wohlben.qits.maintenance.latest.VersionOrder;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;

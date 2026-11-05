@@ -1,7 +1,7 @@
 package eu.wohlben.qits.maintenance.sbom;
 
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.maintenance.entity.MtArtifact;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.ReleaseOrigin;
 import eu.wohlben.qits.maintenance.model.SbomStatus;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;

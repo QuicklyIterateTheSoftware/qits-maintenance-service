@@ -5,10 +5,10 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.maintenance.bump.changelog.ChangelogClient;
 import eu.wohlben.qits.maintenance.error.SbomCheckFailedException;
 import eu.wohlben.qits.maintenance.latest.LatestLookup;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.PinKind;
 import eu.wohlben.qits.maintenance.sbom.SbomClient;
 import eu.wohlben.qits.pact.consumer.GoldenInteraction;

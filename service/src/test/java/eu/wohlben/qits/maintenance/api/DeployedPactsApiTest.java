@@ -10,7 +10,7 @@ import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 
-import eu.wohlben.qits.maintenance.model.Ecosystem;
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.maintenance.peer.FakePeers;
 import eu.wohlben.qits.maintenance.peer.PeerTarget;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;

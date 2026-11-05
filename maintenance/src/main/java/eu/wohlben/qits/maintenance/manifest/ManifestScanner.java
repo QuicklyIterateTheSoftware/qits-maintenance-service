@@ -1,18 +1,20 @@
 package eu.wohlben.qits.maintenance.manifest;
 
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
+import eu.wohlben.qits.bootstrap.graph.manifest.GitmodulesParser;
+import eu.wohlben.qits.bootstrap.graph.manifest.ManifestReader;
+import eu.wohlben.qits.bootstrap.graph.manifest.ParsedPin;
+import eu.wohlben.qits.bootstrap.graph.manifest.RepositoryFiles;
 import eu.wohlben.qits.maintenance.catalog.CatalogEntry;
 import eu.wohlben.qits.maintenance.githost.FileLookup;
 import eu.wohlben.qits.maintenance.githost.GitHostReader;
 import eu.wohlben.qits.maintenance.githost.TreeLookup;
-import eu.wohlben.qits.maintenance.model.Ecosystem;
 import eu.wohlben.qits.maintenance.model.RepositoryStatus;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Deque;
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -32,6 +34,10 @@ import org.jboss.logging.Logger;
  * {@code docker/}, which is where several repositories keep the build file the root does not hold.
  * Nothing else is walked: a recursive search would read every vendored file in every repository on
  * the platform for a handful of pins.
+ *
+ * <p><b>That discovery is the library's</b> ({@link ManifestReader}, qits-bootstrap-graph): this
+ * class answers its {@link RepositoryFiles} from the git host ({@link GitHostFiles}) and keeps the
+ * statuses, the configuration and everything about where the files came from.
  *
  * <p><b>{@code service/src/main/webui} is NOT scanned, and the shape of the discovery is what keeps
  * it out.</b> It is a gitlink to the SPA's own repository, which the catalog lists in its own
@@ -57,29 +63,19 @@ import org.jboss.logging.Logger;
 public class ManifestScanner {
 
   /** The lock beside a root package.json. Without it a manifest has ranges and no versions. */
-  public static final String PACKAGE_LOCK = "package-lock.json";
-
-  /** A cap on the reactor walk. A pom that names itself, or a cycle through two modules, would
-   * otherwise be an unbounded read against another service. */
-  private static final int MAX_POMS = 128;
+  public static final String PACKAGE_LOCK = ManifestReader.PACKAGE_LOCK;
 
   private static final Logger LOG = Logger.getLogger(ManifestScanner.class);
 
-  /** The path fragment a gitlink to an embedded SPA sits at on this platform. */
-  private static final String EMBEDDED_CLIENT = "src/main/webui";
-
   /** The one directory below the root that a Dockerfile is looked for in. */
   private static final String DOCKER_DIRECTORY = "docker";
-
-  /** What PomParser writes as the location of a {@code <parent>} pin. */
-  private static final String PARENT_LOCATION = "parent:";
 
   /** A cap on the submodule walk. A wrapper repository declares dozens and nothing declares this
    * many; the bound is what keeps one malformed file from being an unbounded read. */
   private static final int MAX_GITLINKS = 128;
 
   /** What a gitlink pin's location says: the path the {@code 160000} entry sits at. */
-  static final String GITLINK_LOCATION = "gitlink:";
+  static final String GITLINK_LOCATION = ManifestReader.GITLINK_LOCATION;
 
   @Inject GitHostReader gitHost;
 
@@ -304,31 +300,35 @@ public class ManifestScanner {
   }
 
   /**
-   * The four parsers over one resolved tree, and the per-line dedupe that follows them.
+   * The library's discovery over one resolved tree, and the per-line dedupe that follows it.
    *
    * <p><b>Shared by the scan and by the ledger's read of a released tree</b>, which is the whole of
    * what those two have in common: a second copy of this would be a second answer to "what does
    * this repository declare", and the two would disagree the first time a parser changed.
+   *
+   * <p><b>The discovery itself is {@link ManifestReader}'s</b> (qits-bootstrap-graph, qits-1879):
+   * the root, the reactor, {@code docker/}, {@code .gitmodules} plus the gitlinks, the dedupe. What
+   * stays here is everything about the git host — {@link GitHostFiles} answers the library's {@link
+   * RepositoryFiles} from the tree and blob routes at {@code sha}, and a read it cannot make is
+   * {@link UnservedManifest}, which propagates out of the library untouched.
    */
   private List<ParsedPin> pins(
       String project, String name, String sha, TreeLookup root, GroupConfig.Parsed config) {
-    List<ParsedPin> pins = new ArrayList<>();
-    if (!config.ignores(Ecosystem.MAVEN)) {
-      pins.addAll(mavenPins(project, name, sha, root));
+    Set<Ecosystem> ignored = EnumSet.noneOf(Ecosystem.class);
+    for (Ecosystem ecosystem : Ecosystem.values()) {
+      if (config.ignores(ecosystem)) {
+        ignored.add(ecosystem);
+      }
     }
-    if (!config.ignores(Ecosystem.NPM)) {
-      pins.addAll(npmPins(project, name, sha, root));
+    GitHostFiles files = new GitHostFiles(project, name, sha, root, ignored);
+    try {
+      return ManifestReader.read(files, ignored);
+    } catch (IllegalStateException contradiction) {
+      // The library's own word for "listed and not read". GitHostFiles never answers a listed path
+      // empty — it raises UnservedManifest with the host's status first — so this is the backstop,
+      // and it means the same thing: the pins are unknown, the row is UNREACHABLE.
+      throw new UnservedManifest(name + ": " + contradiction.getMessage());
     }
-    if (!config.ignores(Ecosystem.DOCKER)) {
-      pins.addAll(dockerPins(project, name, sha, root));
-    }
-    if (!config.ignores(Ecosystem.GITLINK)) {
-      pins.addAll(gitlinkPins(project, name, sha, root));
-    }
-    // ONE ROW PER LINE. Every module of a reactor names the same root property, and each one
-    // produced a pin against the root pom above. They are one line and one change; without this
-    // the payload would carry the same edit once per module and the commit message would repeat it.
-    return dedupe(pins);
   }
 
   private static Read absent(String name, String branch) {
@@ -342,285 +342,173 @@ public class ManifestScanner {
   }
 
   /**
-   * The root pom and every pom the reactor reaches from it.
+   * <b>One repository at one sha, as the git host's tree and blob routes answer it</b> — the
+   * library's {@link RepositoryFiles}, and every rule about which reads are made and what a failed
+   * one means.
    *
-   * <p>The ROOT pom's properties are carried into every module, because a module's version
-   * expression is nearly always defined up there — resolving them per-file would drop most of the
-   * platform's pins as unresolvable.
-   *
-   * <p><b>The whole reactor is read BEFORE any of it is parsed</b>, and that ordering is the point:
-   * "is this dependency one of our own modules" cannot be answered from a single pom, and it is the
-   * question that decides whether a pin is bumpable at all. A one-pass parser reported
-   * {@code eu.wohlben.qits:qits-ci-domain} as a dependency of {@code qits-ci} to upgrade, which
-   * would have been an offer to overwrite what its own release stamps.
+   * <ul>
+   *   <li>{@link #paths()} is the root listing's blobs plus, when the root lists a {@code docker/}
+   *       directory and docker is not ignored, the blobs of that one listing. Nothing else is
+   *       listed: a repository without the directory is not asked for one, and one that ignores
+   *       docker costs no listing for it.
+   *   <li>{@link #read} of a path a listing named and the host did not serve — ABSENT included, a
+   *       contradiction between two answers at the same sha — is {@link UnservedManifest}. A path no
+   *       listing named (a reactor module's pom) answered ABSENT is genuinely absent; any other
+   *       failure to ask is unserved. Every answer is kept, so a file is read once.
+   *   <li>{@link #gitlinks()} lists each DIRECTORY a {@code .gitmodules} path sits in, once, and
+   *       reports the sha of every entry there that is a gitlink. A directory the commit does not
+   *       hold (ABSENT) is a stale section; a listing that fails is unserved; a gitlink the host
+   *       reports no sha for is left out rather than guessed — on a host without object names that
+   *       is every submodule, said in one line.
+   * </ul>
    */
-  private List<ParsedPin> mavenPins(String project, String name, String sha, TreeLookup root) {
-    if (!root.hasBlob("pom.xml")) {
-      return List.of();
-    }
-    FileLookup rootPom = listed(project, name, sha, "pom.xml");
+  final class GitHostFiles implements RepositoryFiles {
 
-    // --- pass one: read the reactor ------------------------------------------------------------
-    Map<String, String> poms = new LinkedHashMap<>();
-    poms.put("pom.xml", rootPom.content());
-    Deque<String> pending = new ArrayDeque<>();
-    for (String module : PomParser.modules(rootPom.content())) {
-      pending.add(modulePom("", module));
-    }
-    while (!pending.isEmpty() && poms.size() < MAX_POMS) {
-      String path = pending.poll();
-      if (path == null || poms.containsKey(path)) {
-        continue;
-      }
-      if (path.contains(EMBEDDED_CLIENT)) {
-        LOG.debugf("Not following %s of %s: it is an embedded client's own repository", path, name);
-        continue;
-      }
-      FileLookup pom = gitHost.blob(project, name, sha, path);
-      if (pom.status() == FileLookup.Status.ABSENT) {
-        // A module the pom NAMES and the commit does not carry. No listing said it was there —
-        // the reactor walk asks by path, it does not list — so this is the git host's answer about
-        // a path rather than a contradiction of one, and there is nothing at it to pin. Maven
-        // would refuse to build such a reactor; that is the repository's to fix, not a scan fault.
-        continue;
-      }
-      if (!pom.found()) {
-        throw new UnservedManifest(name, path, pom.status(), pom.message());
-      }
-      poms.put(path, pom.content());
-      String directory = path.substring(0, path.length() - "pom.xml".length());
-      for (String module : PomParser.modules(pom.content())) {
-        pending.add(modulePom(directory, module));
-      }
+    private final String project;
+    private final String name;
+    private final String sha;
+    private final TreeLookup root;
+    private final Set<Ecosystem> ignored;
+    private final Map<String, Optional<String>> contents = new LinkedHashMap<>();
+    private List<String> paths;
+    private Set<String> listed;
+    private Map<String, String> gitlinks;
+
+    GitHostFiles(
+        String project, String name, String sha, TreeLookup root, Set<Ecosystem> ignored) {
+      this.project = project;
+      this.name = name;
+      this.sha = sha;
+      this.root = root;
+      this.ignored = ignored;
     }
 
-    // Every coordinate this repository builds. A dependency on one of these is the repository
-    // depending on itself, and a PARENT that is one of these is not a dependency at all.
-    Set<String> reactor = new LinkedHashSet<>();
-    for (String content : poms.values()) {
-      PomParser.coordinate(content).ifPresent(reactor::add);
+    @Override
+    public List<String> paths() {
+      if (paths == null) {
+        List<String> all = new ArrayList<>();
+        for (TreeLookup.TreeEntry entry : root.entries()) {
+          if (entry.isBlob()) {
+            all.add(entry.name());
+          }
+        }
+        if (!ignored.contains(Ecosystem.DOCKER)
+            && root.entry(DOCKER_DIRECTORY).filter(TreeLookup.TreeEntry::isTree).isPresent()) {
+          // ONE named directory, not a walk: qits-workspace-daemon builds from docker/Dockerfile
+          // and qits-projects-daemon from docker/Dockerfile.projects, and naming it costs exactly
+          // one listing — and that only for a repository whose root says it has the directory.
+          TreeLookup listing = gitHost.tree(project, name, sha, DOCKER_DIRECTORY);
+          if (!listing.found()) {
+            // The root listed the directory, so any answer but its listing is the host's failure.
+            throw new UnservedManifest(
+                name, DOCKER_DIRECTORY + "/", listing.status(), listing.message());
+          }
+          for (TreeLookup.TreeEntry entry : listing.entries()) {
+            if (entry.isBlob()) {
+              all.add(DOCKER_DIRECTORY + "/" + entry.name());
+            }
+          }
+        }
+        paths = List.copyOf(all);
+        listed = Set.copyOf(all);
+      }
+      return paths;
     }
 
-    // --- pass two: parse, and judge each pin against the reactor -------------------------------
-    Map<String, String> rootProperties = PomParser.properties(rootPom.content());
-    List<ParsedPin> pins = new ArrayList<>();
-    for (Map.Entry<String, String> pom : poms.entrySet()) {
-      Map<String, String> inherited = pom.getKey().equals("pom.xml") ? Map.of() : rootProperties;
-      for (ParsedPin pin : PomParser.parse(pom.getKey(), pom.getValue(), inherited, "pom.xml")) {
-        boolean ownArtifact = reactor.contains(pin.name());
-        if (ownArtifact && pin.location().startsWith(PARENT_LOCATION)) {
-          // A module inheriting this repository's own root pom is the reactor's shape, not a
-          // dependency anybody could upgrade. A parent from OUTSIDE the reactor — a shared
-          // qits-parent from the registry — is not in this set and stays a pin.
+    @Override
+    public Optional<String> read(String path) {
+      Optional<String> known = contents.get(path);
+      if (known != null) {
+        return known;
+      }
+      paths();
+      FileLookup file = gitHost.blob(project, name, sha, path);
+      Optional<String> answer;
+      if (file.found()) {
+        answer = Optional.of(file.content());
+      } else if (file.status() == FileLookup.Status.ABSENT && !listed.contains(path)) {
+        // A module the pom NAMES and the commit does not carry. No listing said it was there — the
+        // reactor walk asks by path, it does not list — so this is the git host's answer about a
+        // path rather than a contradiction of one, and there is nothing at it to pin.
+        answer = Optional.empty();
+      } else {
+        throw new UnservedManifest(name, path, file.status(), file.message());
+      }
+      contents.put(path, answer);
+      return answer;
+    }
+
+    @Override
+    public Map<String, String> gitlinks() {
+      if (gitlinks != null) {
+        return gitlinks;
+      }
+      gitlinks = new LinkedHashMap<>();
+      Optional<String> declaration = read(GitmodulesParser.PATH);
+      if (declaration.isEmpty()) {
+        return gitlinks;
+      }
+      // One listing per DIRECTORY, not per submodule: a wrapper repository declares dozens, and the
+      // ones sharing a parent share the read that answers for all of them.
+      Map<String, TreeLookup> listings = new LinkedHashMap<>();
+      List<String> unpinned = new ArrayList<>();
+      int pinned = 0;
+      for (GitmodulesParser.Submodule module : GitmodulesParser.parse(declaration.get())) {
+        if (pinned >= MAX_GITLINKS) {
+          LOG.warnf(
+              "%s declares more than %d submodules; the rest of .gitmodules is not read",
+              name, MAX_GITLINKS);
+          break;
+        }
+        int slash = module.path().lastIndexOf('/');
+        String directory = slash < 0 ? "" : module.path().substring(0, slash);
+        String entryName = slash < 0 ? module.path() : module.path().substring(slash + 1);
+        TreeLookup listing =
+            directory.isEmpty()
+                ? root
+                : listings.computeIfAbsent(
+                    directory, path -> gitHost.tree(project, name, sha, path));
+        if (listing.status() == FileLookup.Status.ABSENT) {
+          // The directory comes from .gitmodules, not from a listing, so a path this commit does
+          // not hold is an answer — the same stale-section case as the missing entry below.
+          LOG.debugf(
+              "%s declares the submodule %s at %s, which this revision does not list",
+              name, module.name(), module.path());
           continue;
         }
-        pins.add(pin.withReactorOwn(pin.reactorOwn() || ownArtifact));
+        if (!listing.found()) {
+          throw new UnservedManifest(name, directory + "/", listing.status(), listing.message());
+        }
+        Optional<TreeLookup.TreeEntry> entry = listing.entry(entryName);
+        if (entry.isEmpty()) {
+          // Declared in the file and not present in the tree: an ordinary state for a submodule
+          // removed in a commit that left the section behind.
+          LOG.debugf(
+              "%s declares the submodule %s at %s, where the tree holds nothing",
+              name, module.name(), module.path());
+          continue;
+        }
+        String at = entry.get().isGitlink() ? entry.get().sha() : null;
+        if (at == null || at.isBlank()) {
+          // A gitlink whose sha the git host does not report is SKIPPED, and that is the whole
+          // safety of this pass: a pin recorded with a made-up version would be one the pending
+          // rule compares and the bump step then applies, into somebody else's repository.
+          unpinned.add(module.name());
+          continue;
+        }
+        gitlinks.putIfAbsent(module.path(), at);
+        pinned++;
       }
-    }
-    return pins;
-  }
-
-  /** A module entry may name a directory or a pom outright, which is maven's own rule. */
-  private static String modulePom(String directory, String module) {
-    String value = module.trim();
-    while (value.startsWith("./")) {
-      value = value.substring(2);
-    }
-    String path = value.endsWith(".xml") ? value : trimTrailingSlash(value) + "/pom.xml";
-    return directory.isEmpty() ? path : directory + path;
-  }
-
-  private static String trimTrailingSlash(String value) {
-    return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
-  }
-
-  /** The root package.json, resolved through the lock beside it. */
-  private List<ParsedPin> npmPins(String project, String name, String sha, TreeLookup root) {
-    if (!root.hasBlob("package.json")) {
-      return List.of();
-    }
-    FileLookup manifest = listed(project, name, sha, "package.json");
-    String lock = null;
-    if (root.hasBlob(PACKAGE_LOCK)) {
-      // The lock is where every npm VERSION comes from: a manifest read without it pins nothing at
-      // all, so an unserved lock is as unreadable as an unserved manifest.
-      lock = listed(project, name, sha, PACKAGE_LOCK).content();
-    }
-    return NpmParser.parse("package.json", manifest.content(), lock);
-  }
-
-  /**
-   * Every Dockerfile in the repository root, and every one in a {@code docker/} directory beside it.
-   *
-   * <p><b>ONE named directory, not a walk.</b> The root alone was the whole of this pass and it
-   * missed real files: qits-workspace-daemon builds from {@code docker/Dockerfile} and
-   * qits-projects-daemon from {@code docker/Dockerfile.projects}, so their base images were pinned
-   * in the inventory of nothing. A recursive search would read every vendored file in every
-   * repository on the platform to find them; {@code docker/} is the one place on this platform that
-   * holds a build file that is not in the root, and naming it costs exactly one extra listing — and
-   * that only for a repository that has the directory, because the root listing already says.
-   */
-  private List<ParsedPin> dockerPins(String project, String name, String sha, TreeLookup root) {
-    List<ParsedPin> pins = new ArrayList<>();
-    pins.addAll(dockerPins(project, name, sha, root, ""));
-    if (root.entry(DOCKER_DIRECTORY).filter(TreeLookup.TreeEntry::isTree).isPresent()) {
-      TreeLookup listing = gitHost.tree(project, name, sha, DOCKER_DIRECTORY);
-      if (!listing.found()) {
-        // The root listed the directory, so any answer but its listing is the host's failure.
-        throw new UnservedManifest(
-            name, DOCKER_DIRECTORY + "/", listing.status(), listing.message());
-      }
-      pins.addAll(dockerPins(project, name, sha, listing, DOCKER_DIRECTORY + "/"));
-    }
-    return pins;
-  }
-
-  /** The Dockerfiles of one listing, read at the path that listing sits at. */
-  private List<ParsedPin> dockerPins(
-      String project, String name, String sha, TreeLookup listing, String directory) {
-    List<ParsedPin> pins = new ArrayList<>();
-    for (TreeLookup.TreeEntry entry : listing.entries()) {
-      if (!entry.isBlob() || !isDockerfile(entry.name())) {
-        continue;
-      }
-      String path = directory + entry.name();
-      pins.addAll(DockerParser.parse(path, listed(project, name, sha, path).content()));
-    }
-    return pins;
-  }
-
-  /**
-   * Every submodule {@code .gitmodules} declares, pinned at the sha its gitlink records.
-   *
-   * <p><b>The file names the submodule; the TREE holds the version.</b> {@code .gitmodules} is a
-   * committed text file and carries a path, a url and nothing about what is checked out there — the
-   * commit a submodule is pinned at lives in the parent's tree, as a mode-{@code 160000} entry at
-   * that path. So this reads both: the file for the name (the url's basename) and the directory
-   * listing above the path for the sha.
-   *
-   * <p><b>A gitlink whose sha the git host does not report is SKIPPED, and that is the whole
-   * safety of this pass.</b> The tree route collapses every non-directory entry to {@code blob} and
-   * has never reported an object name, so on such a host this produces nothing at all — which is
-   * the honest answer. A pin recorded with a made-up version would be one the pending rule compares
-   * and the bump step then applies, into somebody else's repository.
-   *
-   * <p><b>A file that will not parse is not a CONFIG_ERROR.</b> {@code .config/qits/maintenance.yml}
-   * is this service's own configuration surface and a repository that writes it wrongly is told so
-   * on its row; {@code .gitmodules} is git's file, written by {@code git submodule add}, and a
-   * repository whose whole scan failed over one unreadable line in it would be this service
-   * claiming ownership of a format it does not own. Unreadable entries are dropped and the rest of
-   * the scan stands.
-   */
-  private List<ParsedPin> gitlinkPins(String project, String name, String sha, TreeLookup root) {
-    if (!root.hasBlob(GitmodulesParser.PATH)) {
-      return List.of();
-    }
-    FileLookup file = listed(project, name, sha, GitmodulesParser.PATH);
-    List<GitmodulesParser.Submodule> modules = GitmodulesParser.parse(file.content());
-    if (modules.isEmpty()) {
-      return List.of();
-    }
-    // One listing per DIRECTORY, not per submodule: a wrapper repository declares dozens, and the
-    // ones sharing a parent share the read that answers for all of them.
-    Map<String, TreeLookup> listings = new LinkedHashMap<>();
-    List<ParsedPin> pins = new ArrayList<>();
-    List<String> unpinned = new ArrayList<>();
-    for (GitmodulesParser.Submodule module : modules) {
-      if (pins.size() >= MAX_GITLINKS) {
-        LOG.warnf(
-            "%s declares more than %d submodules; the rest of .gitmodules is not read",
-            name, MAX_GITLINKS);
-        break;
-      }
-      int slash = module.path().lastIndexOf('/');
-      String directory = slash < 0 ? "" : module.path().substring(0, slash);
-      String entryName = slash < 0 ? module.path() : module.path().substring(slash + 1);
-      TreeLookup listing =
-          directory.isEmpty()
-              ? root
-              : listings.computeIfAbsent(directory, path -> gitHost.tree(project, name, sha, path));
-      if (listing.status() == FileLookup.Status.ABSENT) {
-        // The directory comes from .gitmodules, not from a listing, so a path this commit does not
-        // hold is an answer — the same stale-section case as the missing entry below.
-        LOG.debugf(
-            "%s declares the submodule %s at %s, which this revision does not list",
-            name, module.name(), module.path());
-        continue;
-      }
-      if (!listing.found()) {
-        throw new UnservedManifest(name, directory + "/", listing.status(), listing.message());
-      }
-      Optional<TreeLookup.TreeEntry> entry = listing.entry(entryName);
-      if (entry.isEmpty()) {
-        // Declared in the file and not present in the tree: an ordinary state for a submodule
-        // removed in a commit that left the section behind.
-        LOG.debugf(
-            "%s declares the submodule %s at %s, where the tree holds nothing",
-            name, module.name(), module.path());
-        continue;
-      }
-      String pinned = entry.get().isGitlink() ? entry.get().sha() : null;
-      if (pinned == null || pinned.isBlank()) {
+      if (!unpinned.isEmpty()) {
         // ONE line per repository rather than one per submodule: on a git host that reports no
-        // object names this is every submodule of every repository, every scan, and a wrapper
-        // declares dozens.
-        unpinned.add(module.name());
-        continue;
+        // object names this is every submodule of every repository, every scan.
+        LOG.warnf(
+            "%s declares %d submodule(s) the git host reports no gitlink sha for (%s);"
+                + " they are not inventoried",
+            name, unpinned.size(), String.join(", ", unpinned));
       }
-      pins.add(
-          new ParsedPin(
-              Ecosystem.GITLINK,
-              module.path(),
-              module.name(),
-              pinned.trim(),
-              null,
-              GITLINK_LOCATION + module.path(),
-              false));
+      return gitlinks;
     }
-    if (!unpinned.isEmpty()) {
-      LOG.warnf(
-          "%s declares %d submodule(s) the git host reports no gitlink sha for (%s);"
-              + " they are not inventoried",
-          name, unpinned.size(), String.join(", ", unpinned));
-    }
-    return pins;
-  }
-
-  /** One pin per (manifest, name, location) — see the call site for why there are duplicates. */
-  private static List<ParsedPin> dedupe(List<ParsedPin> pins) {
-    java.util.Map<String, ParsedPin> byLine = new java.util.LinkedHashMap<>();
-    for (ParsedPin pin : pins) {
-      byLine.putIfAbsent(pin.manifestPath() + " " + pin.name() + " " + pin.location(), pin);
-    }
-    return new ArrayList<>(byLine.values());
-  }
-
-  /**
-   * Both spellings of a qualified build file, because this platform writes both:
-   * {@code node.Dockerfile} beside {@code Dockerfile.projects}. Neither is a convention anybody
-   * here owns — they are docker's two — and a repository that picked the other one is not a
-   * repository whose base image goes uninventoried.
-   */
-  static boolean isDockerfile(String name) {
-    return "Dockerfile".equals(name)
-        || name.endsWith(".Dockerfile")
-        || name.startsWith("Dockerfile.");
-  }
-
-  /**
-   * A manifest a LISTING named, read — and anything but its content is {@link UnservedManifest}.
-   *
-   * <p>Every caller has already seen the file in the tree at this very sha, so ABSENT here is not
-   * an answer about the file but a contradiction between two answers of the git host's, and GONE
-   * is the commit vanishing between them. Neither says the file is not there; both say this read
-   * could not be made. See {@link UnservedManifest} for why that has to stop the scan.
-   */
-  private FileLookup listed(String project, String name, String sha, String path) {
-    FileLookup file = gitHost.blob(project, name, sha, path);
-    if (!file.found()) {
-      throw new UnservedManifest(name, path, file.status(), file.message());
-    }
-    return file;
   }
 
   /**
@@ -661,6 +549,11 @@ public class ManifestScanner {
           null,
           false,
           false);
+    }
+
+    /** The library's own "listed and not read", already a sentence. */
+    UnservedManifest(String message) {
+      super(message, null, false, false);
     }
   }
 
