@@ -89,12 +89,18 @@ public class DependencyBumpAutomation implements ReleaseRequestAutomation {
    */
   public static final String SWITCH = "qits.maintenance.automations.dependency-bump.enabled";
 
-  /** The manifests the four parsers edit: every pom, the npm pair, both Dockerfile spellings. */
+  /**
+   * The manifests the four parsers edit: every pom, the npm manifest with either lock it may keep
+   * ({@code package-lock.json} for npm/yarn-shaped roots, {@code pnpm-lock.yaml} for a pnpm one —
+   * only one is ever present, and naming both costs nothing on the one that is not), both Dockerfile
+   * spellings.
+   */
   public static final List<String> MANIFESTS =
       List.of(
           ":(glob)**/pom.xml",
           ":(glob)**/package.json",
           ":(glob)**/" + ManifestScanner.PACKAGE_LOCK,
+          ":(glob)**/" + ManifestScanner.PNPM_LOCK,
           ":(glob)**/Dockerfile",
           ":(glob)**/Dockerfile.*",
           ":(glob)**/*.Dockerfile");
@@ -320,8 +326,11 @@ public class DependencyBumpAutomation implements ReleaseRequestAutomation {
   private static final Logger LOG = Logger.getLogger(DependencyBumpAutomation.class);
 
   /**
-   * The files a change list touches: each change's manifest, and beside an npm manifest its lock,
-   * which the step rewrites with it. A gitlink's "manifest" is its path, which is what is staged.
+   * The files a change list touches: each change's manifest, and beside an npm manifest BOTH lock
+   * spellings it might keep — {@code package-lock.json} or {@code pnpm-lock.yaml}, whichever the
+   * step actually rewrites. Naming the one a repository does not have is harmless: the qits-ci
+   * postlude stages a commit path only if a file sits there, and skips any that match nothing. A
+   * gitlink's "manifest" is its path, which is what is staged.
    */
   static List<String> commitPaths(List<Change> changes) {
     Set<String> paths = new LinkedHashSet<>();
@@ -331,6 +340,7 @@ public class DependencyBumpAutomation implements ReleaseRequestAutomation {
         int slash = change.manifestPath().lastIndexOf('/');
         String directory = slash < 0 ? "" : change.manifestPath().substring(0, slash + 1);
         paths.add(directory + ManifestScanner.PACKAGE_LOCK);
+        paths.add(directory + ManifestScanner.PNPM_LOCK);
       }
     }
     return List.copyOf(paths);

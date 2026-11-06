@@ -65,6 +65,14 @@ public class ManifestScanner {
   /** The lock beside a root package.json. Without it a manifest has ranges and no versions. */
   public static final String PACKAGE_LOCK = ManifestReader.PACKAGE_LOCK;
 
+  /**
+   * The lock a pnpm-managed npm manifest keeps instead of {@link #PACKAGE_LOCK}. Defined here
+   * rather than read off {@code ManifestReader} because the qits-bootstrap-graph version pinned by
+   * this repository's root pom does not resolve pnpm pins yet — the name is the only part of that
+   * support this class needs ahead of the library catching up.
+   */
+  public static final String PNPM_LOCK = "pnpm-lock.yaml";
+
   private static final Logger LOG = Logger.getLogger(ManifestScanner.class);
 
   /** The one directory below the root that a Dockerfile is looked for in. */

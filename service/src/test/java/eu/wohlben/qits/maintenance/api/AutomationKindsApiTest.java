@@ -69,6 +69,7 @@ class AutomationKindsApiTest {
                 ":(glob)**/pom.xml",
                 ":(glob)**/package.json",
                 ":(glob)**/package-lock.json",
+                ":(glob)**/pnpm-lock.yaml",
                 ":(glob)**/Dockerfile",
                 ":(glob)**/Dockerfile.*",
                 ":(glob)**/*.Dockerfile"));
