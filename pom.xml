@@ -144,7 +144,7 @@
              lineage and the durable-consumer tables — so joining it added
              `postgresql:eventstream:qits_platform_maintenance_eventstream` to
              .config/qits/deployments.yml. See service/pom.xml. -->
-        <qits.eventstream.version>2026.1103.231226</qits.eventstream.version>
+        <qits.eventstream.version>2026.1106.12426</qits.eventstream.version>
         <!-- The manifest parsers, the discovery over one repository's files and the project graph
              BumpOrder walks (qits-3), released out of components/qits-bootstrap/qits-bootstrap-javalib.
              Plain Java over jackson-databind and snakeyaml, both aligned by the same quarkus-bom. -->
