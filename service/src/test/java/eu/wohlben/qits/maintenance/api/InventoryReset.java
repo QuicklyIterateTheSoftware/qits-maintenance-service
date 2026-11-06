@@ -1,5 +1,6 @@
 package eu.wohlben.qits.maintenance.api;
 
+import eu.wohlben.qits.maintenance.automation.SettleGate;
 import eu.wohlben.qits.maintenance.entity.MtArtifact;
 import eu.wohlben.qits.maintenance.entity.MtArtifactComponent;
 import eu.wohlben.qits.maintenance.entity.MtArtifactEdge;
@@ -21,8 +22,11 @@ import eu.wohlben.qits.maintenance.entity.MtSbomCheckRun;
 import eu.wohlben.qits.maintenance.entity.MtSbomTicket;
 import eu.wohlben.qits.maintenance.entity.MtSbomTicketVersion;
 import eu.wohlben.qits.maintenance.entity.MtScan;
+import io.quarkus.narayana.jta.QuarkusTransaction;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
+import java.time.Duration;
 
 /**
  * Empties the store between test methods.
@@ -38,8 +42,21 @@ import jakarta.transaction.Transactional;
 @ApplicationScoped
 public class InventoryReset {
 
-  @Transactional
+  @Inject SettleGate settles;
+
+  /**
+   * The settle gate's memory first (qits-1892), then the store. A settle still in flight from the
+   * previous test is waited out — it would write its rows after the delete — and every answer the
+   * gate keeps is forgotten: it is keyed by request id alone, and every automation suite and the
+   * provider states use the same request and fold, so a kept answer from one class was served as
+   * the next class's trigger answer instead of the rows that class had just seeded.
+   */
   public void clear() {
+    settles.awaitQuiet(Duration.ofSeconds(30));
+    QuarkusTransaction.joiningExisting().run(this::deleteAll);
+  }
+
+  private void deleteAll() {
     // The graph first: mt_artifact_component and mt_artifact_edge are the only rows in this schema
     // with a real foreign key, and it points at mt_artifact. (The release trains' node table held
     // the other one; V8 dropped both of their tables when the feature was retired.)

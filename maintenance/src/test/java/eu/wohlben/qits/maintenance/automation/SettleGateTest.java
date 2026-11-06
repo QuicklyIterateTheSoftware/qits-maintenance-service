@@ -453,4 +453,37 @@ class SettleGateTest {
     assertEquals("decided by settle 2", later.automations().getFirst().detail());
     assertEquals(2, calls.get());
   }
+
+  /**
+   * (qits-1892) The reset waits out a settle in flight and forgets what it kept: the next ask of the
+   * same fold is settled afresh, not given an answer from before the reset.
+   */
+  @Test
+  void aQuietGateKeepsNothingAndHasNothingInFlight() throws Exception {
+    Held held = new Held();
+    gate = keeping(held, SHORT);
+
+    assertEquals(
+        SettleGate.SETTLING, gate.settle(REQUEST_A, fold(FOLD_1)).automations().getFirst().detail());
+    assertTrue(held.entered(REQUEST_A, FOLD_1).await(10, TimeUnit.SECONDS));
+    Future<Boolean> quiet = callers.submit(() -> gate.awaitQuiet(LONG));
+    held.open(REQUEST_A, FOLD_1);
+
+    assertTrue(quiet.get(10, TimeUnit.SECONDS), "the settle in flight was waited out");
+    assertTrue(!gate.inFlight(REQUEST_A));
+    // Without the reset this ask would be served settle 1's kept answer.
+    ReleaseRequestAutomationsDto after = gate.settle(REQUEST_A, fold(FOLD_1));
+    assertEquals("decided by settle 2", after.automations().getFirst().detail());
+  }
+
+  /** A settle that does not end inside the timeout is reported, not waited for past it. */
+  @Test
+  void aQuietGateThatTimesOutSaysSo() {
+    Held held = new Held();
+    gate = keeping(held, SHORT);
+
+    gate.settle(REQUEST_A, fold(FOLD_1));
+    assertTrue(!gate.awaitQuiet(SHORT), "the held settle did not end");
+    held.open(REQUEST_A, FOLD_1);
+  }
 }

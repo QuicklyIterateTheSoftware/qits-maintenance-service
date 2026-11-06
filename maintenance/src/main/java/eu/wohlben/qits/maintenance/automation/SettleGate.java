@@ -8,6 +8,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.event.Observes;
 import jakarta.inject.Inject;
 import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -230,6 +231,37 @@ public class SettleGate {
   /** Whether a settle of that request is in flight — how a test knows one has ended. */
   boolean inFlight(String requestId) {
     return flights.containsKey(requestId);
+  }
+
+  /**
+   * Waits — bounded — for every settle in flight to end, then forgets every kept answer: the gate
+   * as a fresh start finds it (qits-1892).
+   *
+   * <p>What a test suite's reset calls beside emptying the store. The gate's two tables are memory,
+   * not rows, so they outlive every {@code deleteAll} and every test class that shares the running
+   * application. A kept answer is keyed by request id and served to the next ask of its fold within
+   * {@value #DEFAULT_KEPT} — and serving one starts a background settle whose own answer is kept in
+   * turn — so one settle that outlasted its budget in one test handed its stale rows, and the next
+   * kept answer after that, to whichever later test asked about the same request and fold. Nothing
+   * in a deployment asks this, as nothing there asks {@code WorkQueue.awaitIdle}.
+   *
+   * @return whether every settle ended inside the timeout (the kept answers are forgotten either way)
+   */
+  public boolean awaitQuiet(Duration timeout) {
+    long deadline = System.nanoTime() + timeout.toNanos();
+    boolean quiet = true;
+    while (quiet && !flights.isEmpty()) {
+      for (Flight flight : List.copyOf(flights.values())) {
+        long left = deadline - System.nanoTime();
+        if (left <= 0 || !outlast(flight, left)) {
+          quiet = false;
+          break;
+        }
+      }
+    }
+    // AFTER THE FLIGHTS: a settle that ends stores its answer here as it ends.
+    finished.clear();
+    return quiet;
   }
 
   /** The budget the door waits for a settle. */
