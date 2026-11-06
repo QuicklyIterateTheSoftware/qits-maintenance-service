@@ -40,7 +40,9 @@ import org.junit.jupiter.api.Test;
  * a {@code maintenance/<group>} branch. The group door is gone (404), the dispatcher opens no group
  * bump, a GROUP row found active is closed unsent and unreleased, and the legacy sweep withdraws the
  * bump-only requests standing on group branches, leaves a person's open, deletes the branches,
- * retires their rows — and does nothing at all the second time.
+ * retires their rows — and does nothing at all the second time. It also settles the release state
+ * of every green GROUP bump still listed as pending on a request nothing re-read since R5
+ * (qits-1895).
  */
 @QuarkusTest
 class GroupRetirementTest {
@@ -349,6 +351,191 @@ class GroupRetirementTest {
     assertFalse(LegacyGroupBranchSweep.bumpOnly(List.of(), "main"));
   }
 
+  // --- the release-state reconcile (qits-1895) ---------------------------------------------------
+
+  /** A request FINALIZED long ago ends the bump: written, and gone from the pending listing. */
+  @Test
+  void aGroupBumpWhoseRequestFinalizedLeavesThePendingListing() {
+    listBranches("\"main\"");
+    UUID id = awaitingRelease(BUMP_ONLY, "PENDING", Instant.now().minus(Duration.ofDays(27)));
+    assertTrue(pending(id), "the stale row is listed before the pass");
+    scriptRequest(BUMP_ONLY, "FINALIZED", "main", DEPENDENCIES);
+
+    LegacyGroupBranchSweep.Result result = sweep.sweep();
+
+    MtBump row = store.bump(id).orElseThrow();
+    assertEquals("FINALIZED", row.releaseState);
+    assertEquals(List.of(Fixture.REPOSITORY + " " + id + " FINALIZED"), result.reconciled());
+    assertFalse(pending(id), "a finalized request's bump is pending no more");
+    assertEquals(BUMP_ONLY, row.releaseRequestId, "the request id is kept");
+  }
+
+  /** WITHDRAWN is written as a state like any other, and the request id stays where it is. */
+  @Test
+  void aWithdrawnRequestIsWrittenAsAStateAndKeepsItsId() {
+    listBranches("\"main\"");
+    UUID id = awaitingRelease(BUMP_ONLY, null, null);
+    scriptRequest(BUMP_ONLY, "WITHDRAWN", "main", DEPENDENCIES);
+
+    sweep.sweep();
+
+    MtBump row = store.bump(id).orElseThrow();
+    assertEquals("WITHDRAWN", row.releaseState);
+    assertEquals(BUMP_ONLY, row.releaseRequestId);
+    assertFalse(pending(id));
+  }
+
+  /** A request still open only re-stamps the row, which stays pending. */
+  @Test
+  void aStillOpenRequestReStampsTheRowAndKeepsItPending() {
+    listBranches("\"main\"");
+    Instant before = Instant.now().minus(Duration.ofDays(27));
+    UUID id = awaitingRelease(BUMP_ONLY, "PENDING", before);
+    scriptRequest(BUMP_ONLY, "READY", "main", DEPENDENCIES);
+
+    LegacyGroupBranchSweep.Result result = sweep.sweep();
+
+    MtBump row = store.bump(id).orElseThrow();
+    assertEquals("READY", row.releaseState);
+    assertTrue(row.releaseStateAt.isAfter(before), "re-stamped: " + row.releaseStateAt);
+    assertTrue(pending(id), "an open request keeps its bump pending");
+    assertEquals(List.of(Fixture.REPOSITORY + " " + id + " READY"), result.reconciled());
+  }
+
+  /** A request qits-projects holds no longer (404) is UNKNOWN: nothing left to ask. */
+  @Test
+  void aRequestQitsProjectsDoesNotHoldIsUnknown() {
+    listBranches("\"main\"");
+    UUID id = awaitingRelease(BUMP_ONLY, "PENDING", Instant.now().minus(Duration.ofDays(27)));
+    peers.answer(
+        PeerTarget.PROJECTS,
+        Fixture.RELEASE_REQUESTS_PATH + "/" + BUMP_ONLY,
+        FakePeers.Scripted.status(404, "{}"));
+
+    sweep.sweep();
+
+    MtBump row = store.bump(id).orElseThrow();
+    assertEquals(LegacyGroupBranchSweep.UNKNOWN, row.releaseState);
+    assertTrue(row.releaseDetail.contains(BUMP_ONLY), row.releaseDetail);
+    assertFalse(pending(id));
+  }
+
+  /**
+   * A bump whose repository has no row, or a row with no catalog id, cannot be asked about: UNKNOWN
+   * without a request made.
+   */
+  @Test
+  void aBumpWhoseRepositoryCannotBeAddressedIsUnknownWithoutAsking() {
+    listBranches("\"main\"");
+    UUID gone = awaitingRelease("qits-gone", BUMP_ONLY, "PENDING", Instant.now());
+    UUID uncatalogued = awaitingRelease(PERSONS, null, null);
+    QuarkusTransaction.requiringNew()
+        .run(
+            () ->
+                eu.wohlben.qits.maintenance.entity.MtRepository.update(
+                    "catalogId = null where name = ?1", Fixture.REPOSITORY));
+
+    sweep.sweep();
+
+    MtBump goneRow = store.bump(gone).orElseThrow();
+    assertEquals(LegacyGroupBranchSweep.UNKNOWN, goneRow.releaseState);
+    assertTrue(goneRow.releaseDetail.contains("qits-gone"), goneRow.releaseDetail);
+    MtBump uncataloguedRow = store.bump(uncatalogued).orElseThrow();
+    assertEquals(LegacyGroupBranchSweep.UNKNOWN, uncataloguedRow.releaseState);
+    assertTrue(
+        uncataloguedRow.releaseDetail.contains("no catalog id"), uncataloguedRow.releaseDetail);
+    assertFalse(pending(gone));
+    assertFalse(pending(uncatalogued));
+    assertFalse(peers.called(PeerTarget.PROJECTS, Fixture.RELEASE_REQUESTS_PATH + "/" + BUMP_ONLY));
+    assertFalse(peers.called(PeerTarget.PROJECTS, Fixture.RELEASE_REQUESTS_PATH + "/" + PERSONS));
+  }
+
+  /** A read that fails for any other reason writes nothing; the next pass asks again. */
+  @Test
+  void aTransientFailureLeavesTheRowForTheNextPass() {
+    listBranches("\"main\"");
+    Instant before = Instant.now().minus(Duration.ofDays(27));
+    UUID id = awaitingRelease(BUMP_ONLY, "PENDING", before);
+    UUID other = awaitingRelease(PERSONS, "CONFLICTED", before);
+    // Read back what the column holds: the database keeps microseconds, the Instant nanoseconds.
+    Instant stored = store.bump(id).orElseThrow().releaseStateAt;
+    peers.answer(
+        PeerTarget.PROJECTS,
+        Fixture.RELEASE_REQUESTS_PATH + "/" + BUMP_ONLY,
+        FakePeers.Scripted.status(500, "boom"));
+    peers.answer(
+        PeerTarget.PROJECTS,
+        Fixture.RELEASE_REQUESTS_PATH + "/" + PERSONS,
+        FakePeers.Scripted.unreachable("connection refused"));
+
+    LegacyGroupBranchSweep.Result result = sweep.sweep();
+
+    for (UUID each : List.of(id, other)) {
+      MtBump row = store.bump(each).orElseThrow();
+      assertEquals(stored, row.releaseStateAt, "not re-stamped");
+      assertTrue(pending(each), "still pending");
+    }
+    assertEquals("PENDING", store.bump(id).orElseThrow().releaseState);
+    assertEquals("CONFLICTED", store.bump(other).orElseThrow().releaseState);
+    assertTrue(result.reconciled().isEmpty(), result.toString());
+
+    scriptRequest(BUMP_ONLY, "OBSOLETE", "main", DEPENDENCIES);
+    sweep.sweep();
+    assertEquals("OBSOLETE", store.bump(id).orElseThrow().releaseState);
+  }
+
+  /** A settled row no longer matches: the second pass asks about nothing and is idle. */
+  @Test
+  void theSecondPassAsksAboutNoSettledBump() {
+    listBranches("\"main\"");
+    UUID id = awaitingRelease(BUMP_ONLY, "PENDING", Instant.now());
+    scriptRequest(BUMP_ONLY, "FINALIZED", "main", DEPENDENCIES);
+    String path = Fixture.RELEASE_REQUESTS_PATH + "/" + BUMP_ONLY;
+
+    LegacyGroupBranchSweep.Result first = sweep.sweep();
+    assertEquals(1, first.reconciled().size(), first.toString());
+    long asked = peers.urls().stream().filter(url -> url.endsWith(path)).count();
+    assertEquals(1, asked);
+
+    LegacyGroupBranchSweep.Result second = sweep.sweep();
+
+    assertTrue(second.idle(), second.toString());
+    assertEquals(
+        asked, peers.urls().stream().filter(url -> url.endsWith(path)).count(), "asked once");
+    assertEquals("FINALIZED", store.bump(id).orElseThrow().releaseState);
+  }
+
+  /**
+   * An automation row's request id is the request it belongs to, and a {@code converged} / {@code
+   * refused} GROUP row owes nothing: none of them is asked about or written.
+   */
+  @Test
+  void automationRowsAndEndedGroupRowsAreNeverAskedAbout() {
+    listBranches("\"main\"");
+    UUID automation =
+        bumpRow(Fixture.REPOSITORY, BumpMode.AUTOMATION, "SUCCEEDED", BUMP_ONLY, "PENDING", null);
+    UUID converged =
+        bumpRow(Fixture.REPOSITORY, BumpMode.GROUP, "SUCCEEDED", ReleaseRequestClient.CONVERGED,
+            null, null);
+    UUID refused =
+        bumpRow(Fixture.REPOSITORY, BumpMode.GROUP, "SUCCEEDED", ReleaseRequestClient.REFUSED,
+            "PENDING", null);
+    UUID failed = bumpRow(Fixture.REPOSITORY, BumpMode.GROUP, "FAILED", PERSONS, null, null);
+    scriptRequest(BUMP_ONLY, "FINALIZED", "main", DEPENDENCIES);
+    scriptRequest(PERSONS, "FINALIZED", "main", DEPENDENCIES);
+
+    LegacyGroupBranchSweep.Result result = sweep.sweep();
+
+    assertTrue(result.reconciled().isEmpty(), result.toString());
+    assertTrue(result.idle(), result.toString());
+    assertFalse(peers.called(PeerTarget.PROJECTS, Fixture.RELEASE_REQUESTS_PATH + "/" + BUMP_ONLY));
+    assertFalse(peers.called(PeerTarget.PROJECTS, Fixture.RELEASE_REQUESTS_PATH + "/" + PERSONS));
+    assertEquals("PENDING", store.bump(automation).orElseThrow().releaseState);
+    assertEquals(null, store.bump(converged).orElseThrow().releaseState);
+    assertEquals("PENDING", store.bump(refused).orElseThrow().releaseState);
+    assertEquals(null, store.bump(failed).orElseThrow().releaseState);
+  }
+
   // --- fixtures -----------------------------------------------------------------------------------
 
   /**
@@ -425,6 +612,39 @@ class GroupRetirementTest {
   private static String deletePath(String branch) {
     return DESCRIBE + "/branches/" + branch + "?projectId=" + Fixture.PROJECT + "&repoName="
         + Fixture.REPOSITORY;
+  }
+
+  private boolean pending(UUID id) {
+    return store.pendingBumps(20).stream().anyMatch(row -> row.id.equals(id));
+  }
+
+  /** A green GROUP bump of the fixture repository standing on a request, as R5 left them. */
+  private UUID awaitingRelease(String requestId, String state, Instant stateAt) {
+    return awaitingRelease(Fixture.REPOSITORY, requestId, state, stateAt);
+  }
+
+  private UUID awaitingRelease(
+      String repository, String requestId, String state, Instant stateAt) {
+    return bumpRow(repository, BumpMode.GROUP, "SUCCEEDED", requestId, state, stateAt);
+  }
+
+  /** A finished row with a release request id and a cached state, written straight in. */
+  private UUID bumpRow(
+      String repository, BumpMode mode, String status, String requestId, String state,
+      Instant stateAt) {
+    UUID id = legacyGroupBump(status, null);
+    QuarkusTransaction.requiringNew()
+        .run(
+            () -> {
+              MtBump row = MtBump.findById(id);
+              row.repository = repository;
+              row.mode = mode.name();
+              row.releaseRequestId = requestId;
+              row.releaseState = state;
+              row.releaseStateAt = stateAt;
+              row.resultSha = Fixture.BUMPED_SHA;
+            });
+    return id;
   }
 
   /**

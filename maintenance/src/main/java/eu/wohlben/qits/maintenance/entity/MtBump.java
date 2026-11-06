@@ -205,13 +205,20 @@ public class MtBump extends PanacheEntityBase {
 
   /**
    * What qits-projects last said about that request — {@code PENDING}, {@code READY}, {@code
-   * RELEASED}, {@code REJECTED}, {@code FAILED}, {@code CONFLICTED}, {@code WITHDRAWN}.
+   * RELEASED}, {@code FINALIZED}, {@code OBSOLETE}, {@code REJECTED}, {@code FAILED}, {@code
+   * CONFLICTED}, {@code WITHDRAWN} — or {@code UNKNOWN}, written when qits-projects holds no such
+   * request or the repository can no longer be addressed (qits-1895).
    *
-   * <p><b>A cached observation and never a verdict.</b> The dispatcher writes it when it asks,
-   * because a person reading a bump that has been standing for hours needs to see why; nothing gates
-   * on the column, and the gate re-asks. That matters because qits-projects re-arms a rejected
-   * request the moment its fold changes, so a stored REJECTED would be a stale reason to keep a
-   * repository out of the estate's nights for ever.
+   * <p><b>A cached observation and never a verdict.</b> A person reading a bump that has been
+   * standing for hours needs to see why; nothing gates on the column. That matters because
+   * qits-projects re-arms a rejected request the moment its fold changes, so a stored REJECTED would
+   * be a stale reason to keep a repository out of the estate's nights for ever.
+   *
+   * <p><b>Only a GROUP row carries one, and the legacy group-branch sweep is its writer</b>
+   * (qits-1895). The group path that kept it current went with qits-1133 R5; what the bump listing
+   * still reads it for is whether a green GROUP row is pending, so {@code LegacyGroupBranchSweep}
+   * re-reads every row whose state is null or open until the request has closed. An automation row's
+   * request id is the request it belongs to, and nothing records a state for it.
    */
   @Column(name = "release_state", length = 32)
   public String releaseState;

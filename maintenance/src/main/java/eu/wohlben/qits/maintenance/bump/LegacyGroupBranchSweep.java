@@ -2,6 +2,7 @@ package eu.wohlben.qits.maintenance.bump;
 
 import eu.wohlben.qits.maintenance.automation.AutomationService;
 import eu.wohlben.qits.maintenance.entity.MtBranch;
+import eu.wohlben.qits.maintenance.entity.MtBump;
 import eu.wohlben.qits.maintenance.entity.MtRepository;
 import eu.wohlben.qits.maintenance.githost.GitHostRefs;
 import eu.wohlben.qits.maintenance.model.BranchState;
@@ -44,12 +45,24 @@ import org.jboss.logging.Logger;
  *   <li><b>The {@code mt_branch} row is RETIRED</b> ({@link MaintenanceStore#retireBranch}), a state
  *       nothing rewrites, and the group's bumps still owed a release ask are closed — so nothing
  *       resurrects either.
+ *   <li><b>Every green GROUP bump still listed as awaiting its release is reconciled</b>
+ *       (qits-1895), after the per-repository work. Nothing re-read those rows once R5 removed the
+ *       group path, so a bump whose request FINALIZED weeks ago stayed in the pending listing on
+ *       the state it last cached. Each row {@link MaintenanceStore#groupBumpsAwaitingRelease} names
+ *       — the release arm of {@link MaintenanceStore#pendingBumps}, exactly — is asked about once
+ *       ({@link ReleaseRequestClient#state}) and the answer written with {@link
+ *       MaintenanceStore#bumpReleaseState}, whatever it is: a closed state (WITHDRAWN among them,
+ *       written as a state) ends the row, an open one only re-stamps it. A request qits-projects
+ *       answers 404 for, or a repository with no row or no catalog id to address it by, is written
+ *       {@code UNKNOWN} with a sentence saying why — there is nothing left to ask, and an UNKNOWN
+ *       row is pending no more. Any other failure writes nothing and the next pass asks again.
  * </ol>
  *
  * <p><b>Idempotent by construction, and one-shot per branch.</b> The git host's ref list is the
  * input: a deleted branch is not listed on the next pass, and a row whose branch is not listed is
- * retired without a word to anybody. A second pass after a clean first one withdraws nothing,
- * deletes nothing and writes nothing.
+ * retired without a word to anybody, and a settled bump row no longer matches the reconcile query.
+ * A second pass after a clean first one withdraws nothing, deletes nothing, asks about no settled
+ * bump and writes nothing.
  *
  * <p><b>It waits rather than guesses.</b> A branch a RELEASED request names is mid-pipeline and that
  * release's landing deletes it; and an unreadable listing, an unreadable request or a withdrawal
@@ -75,6 +88,13 @@ public class LegacyGroupBranchSweep {
   /** Released and not yet landed: its sources are deleted by the landing. */
   private static final String RELEASED = "RELEASED";
 
+  /**
+   * What a GROUP bump's release state reads when there is nothing left to ask (qits-1895): the
+   * request is gone from qits-projects, or the repository cannot be addressed. Not an open state, so
+   * the row leaves the pending listing.
+   */
+  public static final String UNKNOWN = "UNKNOWN";
+
   @Inject MaintenanceStore store;
 
   @Inject GitHostRefs refs;
@@ -89,38 +109,92 @@ public class LegacyGroupBranchSweep {
    * @param keptOpen {@code <repository> <request>} for every person's request left open
    * @param retired {@code <repository> <branch>} for every row retired this pass
    * @param waiting {@code <repository> <branch>} for every branch left for a later pass, with why
+   * @param reconciled {@code <repository> <bump id> <state>} for every GROUP bump whose release
+   *     state was written this pass (qits-1895) — a still-open state re-stamped included
    */
   public record Result(
       List<String> withdrawn,
       List<String> deleted,
       List<String> keptOpen,
       List<String> retired,
-      List<String> waiting) {
+      List<String> waiting,
+      List<String> reconciled) {
 
     public boolean idle() {
-      return withdrawn.isEmpty() && deleted.isEmpty() && keptOpen.isEmpty() && retired.isEmpty();
+      return withdrawn.isEmpty()
+          && deleted.isEmpty()
+          && keptOpen.isEmpty()
+          && retired.isEmpty()
+          && reconciled.isEmpty();
     }
   }
 
-  /** One pass over every repository the catalog gave an id. */
+  /** One pass over every repository the catalog gave an id, then the GROUP bump reconcile. */
   public Result sweep() {
     Result result =
         new Result(new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>(),
-            new ArrayList<>());
+            new ArrayList<>(), new ArrayList<>());
+    Map<String, MtRepository> byName = new LinkedHashMap<>();
     for (MtRepository repository : store.repositories()) {
+      byName.put(repository.name, repository);
       if (repository.catalogId == null || repository.catalogId.isBlank()) {
         continue;
       }
       sweep(repository, result);
     }
+    reconcile(byName, result);
     if (!result.idle() || !result.waiting().isEmpty()) {
       LOG.infof(
           "legacy group-branch sweep (qits-1133): %d request(s) withdrawn, %d branch(es) deleted,"
-              + " %d person's request(s) left open, %d row(s) retired, %d branch(es) waiting",
+              + " %d person's request(s) left open, %d row(s) retired, %d branch(es) waiting,"
+              + " %d group bump release state(s) reconciled (qits-1895)",
           result.withdrawn().size(), result.deleted().size(), result.keptOpen().size(),
-          result.retired().size(), result.waiting().size());
+          result.retired().size(), result.waiting().size(), result.reconciled().size());
     }
     return result;
+  }
+
+  /**
+   * Re-reads the release request of every green GROUP bump the pending listing still holds, and
+   * writes what qits-projects answers (qits-1895) — see the class header's last step.
+   *
+   * @param byName every repository row this pass read, by name: how a bump, which names its
+   *     repository, finds the catalog id its request is addressed under
+   */
+  private void reconcile(Map<String, MtRepository> byName, Result result) {
+    for (MtBump row : store.groupBumpsAwaitingRelease()) {
+      String where = row.repository + " " + row.id;
+      MtRepository repository = byName.get(row.repository);
+      if (repository == null) {
+        settle(row, UNKNOWN, "qits-1895: the repository " + row.repository + " is no longer in"
+            + " the inventory, so release request " + row.releaseRequestId + " cannot be asked"
+            + " about", result);
+        continue;
+      }
+      if (repository.catalogId == null || repository.catalogId.isBlank()) {
+        settle(row, UNKNOWN, "qits-1895: the repository " + row.repository + " has no catalog id,"
+            + " so release request " + row.releaseRequestId + " cannot be asked about", result);
+        continue;
+      }
+      ReleaseRequestClient.ReleaseState state =
+          releases.state(repository.catalogId, row.releaseRequestId);
+      if (state.readable()) {
+        settle(row, state.state(), state.detail(), result);
+      } else if (state.unknown()) {
+        settle(row, UNKNOWN, "qits-1895: qits-projects holds no release request "
+            + row.releaseRequestId + " for " + row.repository, result);
+      } else {
+        LOG.debugf("Left the release state of group bump %s for the next pass: %s", where,
+            state.sentence());
+      }
+    }
+  }
+
+  private void settle(MtBump row, String state, String detail, Result result) {
+    store.bumpReleaseState(row.id, state, detail, Instant.now());
+    LOG.infof("Recorded release request %s of group bump %s %s as %s (qits-1895)",
+        row.releaseRequestId, row.repository, row.id, state);
+    result.reconciled().add(row.repository + " " + row.id + " " + state);
   }
 
   private void sweep(MtRepository repository, Result result) {

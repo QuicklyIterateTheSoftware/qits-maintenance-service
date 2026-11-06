@@ -5,6 +5,7 @@ import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.bootstrap.graph.manifest.ParsedPin;
 import eu.wohlben.qits.db.DbRetry;
 import eu.wohlben.qits.maintenance.bump.CiClient;
+import eu.wohlben.qits.maintenance.bump.ReleaseRequestClient;
 import eu.wohlben.qits.maintenance.entity.MtArtifact;
 import eu.wohlben.qits.maintenance.entity.MtArtifactComponent;
 import eu.wohlben.qits.maintenance.entity.MtArtifactEdge;
@@ -99,6 +100,19 @@ import java.util.UUID;
 public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, String> {
 
   private static final ObjectMapper JSON = new ObjectMapper();
+
+  /**
+   * The release-request states in which a green GROUP bump is still listed as pending —
+   * qits-projects' re-armable set, the states in which a request still takes a branch. Read by
+   * {@link #pendingBumps} and {@link #groupBumpsAwaitingRelease} alike, so the list a person reads
+   * and the rows the legacy sweep reconciles cannot drift apart (qits-1895).
+   */
+  public static final List<String> GROUP_RELEASE_OPEN =
+      List.of("PENDING", "READY", "REJECTED", "FAILED", "CONFLICTED");
+
+  /** The {@code release_request_id} sentinels that say no request is owed at all. */
+  private static final List<String> GROUP_RELEASE_ENDED =
+      List.of(ReleaseRequestClient.CONVERGED, ReleaseRequestClient.REFUSED);
 
   // --- the inventory ------------------------------------------------------------------------
 
@@ -1716,10 +1730,18 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
   /**
    * Records what qits-projects last said about the release request this bump opened.
    *
-   * <p><b>Bookkeeping for a reader, never a gate.</b> The dispatcher acts on the answer it has just
-   * received and writes it here so that a bump standing since the morning explains itself in the
-   * listing; see {@link MtBump#releaseState}. A row whose state has not moved is still re-stamped,
-   * because "when was this last true" is half of what the column is worth.
+   * <p><b>Bookkeeping for a reader, never a gate.</b> Nothing gates on the column; see {@link
+   * MtBump#releaseState}. A row whose state has not moved is still re-stamped, because "when was
+   * this last true" is half of what the column is worth.
+   *
+   * <p><b>The one writer left is the legacy group-branch sweep</b> (qits-1895). The group path that
+   * used to keep it current went with qits-1133 R5, which left every green GROUP row standing on
+   * whatever state it last read — and {@link #pendingBumps} lists such a row for as long as that
+   * state is open. {@code LegacyGroupBranchSweep} re-reads each one ({@link
+   * #groupBumpsAwaitingRelease}) and writes the answer here: a closed state — WITHDRAWN included,
+   * which is written as a state and no longer clears the request id — ends the row, an open one
+   * only re-stamps it, and {@code UNKNOWN} is what it writes when qits-projects holds no such
+   * request or the repository cannot be addressed.
    */
   @ActivateRequestContext
   public void bumpReleaseState(UUID id, String state, String detail, Instant at) {
@@ -1733,45 +1755,6 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
           row.releaseState = state;
           row.releaseDetail = detail;
           row.releaseStateAt = at;
-          getEntityManager().flush();
-        });
-  }
-
-  /**
-   * Forgets the release request a bump recorded, because qits-projects says it was WITHDRAWN.
-   *
-   * <p><b>A withdrawn request counts as no request at all</b> (owner decision 2026-10-04, qits-886).
-   * {@link #bumpReleaseAsked} cannot say so — a null there means "leave the column alone" — so this
-   * is the one writer that puts the column back to null. That returns the row to {@link
-   * #bumpsOwedARelease}, and the sweep asks for a fresh request while the branch is still pushed and
-   * ahead of main, or writes {@code converged} when it is not.
-   *
-   * <p>The observation columns are cleared with it: a null request id beside a WITHDRAWN state would
-   * read on the bump page as a release that stopped, when what it is is an ask that is owed again.
-   * The message says what happened instead.
-   *
-   * <p><b>Only the request that was read is cleared.</b> If the column no longer holds it — the sweep
-   * already asked again and stored the fresh one — this writes nothing.
-   *
-   * @param requestId the request qits-projects answered WITHDRAWN for
-   * @param message the bump's sentence, saying so
-   */
-  @ActivateRequestContext
-  public void bumpReleaseWithdrawn(UUID id, String requestId, String message) {
-    DbRetry.runInNewTx(
-        "forget the withdrawn release request of bump " + id,
-        () -> {
-          MtBump row = MtBump.findById(id);
-          if (row == null || !requestId.equals(row.releaseRequestId)) {
-            return;
-          }
-          row.releaseRequestId = null;
-          row.releaseState = null;
-          row.releaseDetail = null;
-          row.releaseStateAt = null;
-          if (message != null) {
-            row.message = message;
-          }
           getEntityManager().flush();
         });
   }
@@ -1803,8 +1786,13 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
    * The newest bumps still on their way. A bump is pending while it is asked for or running, and
    * after a green run while its branch is not released: the release is still owed (a pushed commit
    * and no answer yet), or the release request is still open. {@code converged} and {@code refused}
-   * end it, as do a request that shipped, a failure and nothing to do. A withdrawn request does not:
-   * the dispatcher clears it, which puts the bump back to an ask that is owed.
+   * end it, as do a request that shipped, a failure and nothing to do.
+   *
+   * <p>The release arm is a GROUP bump's only, and since qits-1133 R5 nothing opens one: the rows it
+   * matches are history, and the cached {@link MtBump#releaseState} it judges them by is written by
+   * {@code LegacyGroupBranchSweep}'s reconcile step (qits-1895), which re-reads every row this arm
+   * holds ({@link #groupBumpsAwaitingRelease}, the same predicate) until its request has closed —
+   * WITHDRAWN, shipped, or {@code UNKNOWN} when qits-projects holds no such request.
    */
   @ActivateRequestContext
   public List<MtBump> pendingBumps(int limit) {
@@ -1821,12 +1809,43 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
                       Sort.by("startedAt").descending(),
                       List.of(BumpStatus.REQUESTED.name(), BumpStatus.RUNNING.name()),
                       BumpStatus.SUCCEEDED.name(),
-                      List.of("converged", "refused"),
-                      List.of("PENDING", "READY", "REJECTED", "FAILED", "CONFLICTED"),
+                      GROUP_RELEASE_ENDED,
+                      GROUP_RELEASE_OPEN,
                       BumpMode.GROUP.name())
                   .page(0, limit)
                   .list();
           return pending;
+        });
+  }
+
+  /**
+   * <b>Every green GROUP bump whose release request is still open as far as the row knows</b> — the
+   * release arm of {@link #pendingBumps} with no limit and none of its other arms: {@code mode =
+   * GROUP}, SUCCEEDED, a real request id (not null, {@code converged} or {@code refused}), and a
+   * cached {@link MtBump#releaseState} that is null or in {@link #GROUP_RELEASE_OPEN}.
+   *
+   * <p>What {@code LegacyGroupBranchSweep} reconciles (qits-1895): nothing has re-read these rows
+   * since qits-1133 R5 removed the group path, so a request FINALIZED weeks ago still lists its bump
+   * as pending. A row the sweep settles no longer matches, which is what makes the step idempotent.
+   * Oldest first, so a log line reads in the order the rows were opened.
+   */
+  @ActivateRequestContext
+  public List<MtBump> groupBumpsAwaitingRelease() {
+    return DbRetry.inNewTx(
+        "read the group bumps awaiting a release",
+        () -> {
+          List<MtBump> awaiting =
+              MtBump.find(
+                      "status = ?1 and mode = ?2 and releaseRequestId is not null and"
+                          + " releaseRequestId not in ?3 and (releaseState is null or"
+                          + " releaseState in ?4)",
+                      Sort.by("startedAt"),
+                      BumpStatus.SUCCEEDED.name(),
+                      BumpMode.GROUP.name(),
+                      GROUP_RELEASE_ENDED,
+                      GROUP_RELEASE_OPEN)
+                  .list();
+          return awaiting;
         });
   }
 
