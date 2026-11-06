@@ -77,7 +77,7 @@
         <qits.system-golden-masters.version>2026.1102.183359</qits.system-golden-masters.version>
         <!-- The shared JVM consumer helper (qits-integrations-quarkus-javalib): golden-master reader,
              row builder, pact-file compare. Test scope. -->
-        <qits.pact-consumer.version>2026.1019.82625</qits.pact-consumer.version>
+        <qits.pact-consumer.version>2026.1106.507</qits.pact-consumer.version>
         <!-- THE CONSUMER PACTS this provider verifies (epic qits-546, ticket qits-1149): each
              consumer publishes its pact against qits-maintenance as
              eu.wohlben.qits:<consumer>-pacts-qits-maintenance-service, and
@@ -96,19 +96,19 @@
              five come from qits-integrations-quarkus except qits-userflows, which publishes itself.
              The url is a property so the image build can point it at the address the builder
              container can actually reach — see docker/Dockerfile and .qits-maven-settings.xml. -->
-        <qits.db-core.version>2026.1002.70617</qits.db-core.version>
-        <qits.auth-core.version>2026.1105.105731</qits.auth-core.version>
-        <qits.arch-rules.version>2026.1030.30851</qits.arch-rules.version>
+        <qits.db-core.version>2026.1106.507</qits.db-core.version>
+        <qits.auth-core.version>2026.1106.507</qits.auth-core.version>
+        <qits.arch-rules.version>2026.1106.507</qits.arch-rules.version>
         <!-- Service-to-service HTTP that says who is calling: QitsHttpClients.wrap turns a raw
              java.net.http.HttpClient into one that opens a CLIENT span and sends traceparent plus
              X-Qits-Caller; the server filter (jandex-discovered off this jar alone) records an
              inbound caller on the server span. Not released yet (qits-1198). -->
-        <qits.http-core.version>2026.1103.132907</qits.http-core.version>
+        <qits.http-core.version>2026.1106.507</qits.http-core.version>
         <!-- qits-telemetry-core (epic qits-428): the three OTLP/HTTP exporters as CDI beans whose
              header supplier carries the `qits` oidc client's current bearer, so spans, logs and
              metrics reach qits-observability at its edge host. Published by
              qits-integrations-quarkus, like qits-http-core above. -->
-        <qits.telemetry-core.version>2026.1103.201640</qits.telemetry-core.version>
+        <qits.telemetry-core.version>2026.1106.507</qits.telemetry-core.version>
         <!-- The user-story framework (test scope, service/ only). The five story classes under
              service/src/test/.../stories/ plus TokenValidationBootstrapIT are userflows, so a
              `mvn verify -DskipITs=false -Dit.test=<the list>` also regenerates
@@ -127,7 +127,7 @@
         <!-- The recording service mocks the story catalogue boots against (the generic MockService
              plus idp.MockIdp), published by qits-integrations-quarkus beside qits-auth-core and
              qits-arch-rules. -->
-        <qits.service-mock.version>2026.1002.70617</qits.service-mock.version>
+        <qits.service-mock.version>2026.1106.507</qits.service-mock.version>
         <!-- THE PLATFORM EVENT BUS (qits-eventstream), released out of
              components/qits-eventstream/qits-eventstream-javalib into the same platform Maven
              repository as the four jars above. This service SUBSCRIBES and publishes nothing: two
@@ -148,7 +148,7 @@
         <!-- The manifest parsers, the discovery over one repository's files and the project graph
              BumpOrder walks (qits-3), released out of components/qits-bootstrap/qits-bootstrap-javalib.
              Plain Java over jackson-databind and snakeyaml, both aligned by the same quarkus-bom. -->
-        <qits.bootstrap-graph.version>2026.1105.144428</qits.bootstrap-graph.version>
+        <qits.bootstrap-graph.version>2026.1106.228</qits.bootstrap-graph.version>
         <qits.maven.repository.url>https://registry.qits.wohlben.eu/artifacts/maven/maven</qits.maven.repository.url>
         <maven.compiler.release>25</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
