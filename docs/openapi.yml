@@ -1162,7 +1162,7 @@ paths:
           type: string
       responses:
         "200":
-          description: Every kind with a row at the fold
+          description: Every kind with a row or a deferral at the fold
           content:
             application/json:
               schema:

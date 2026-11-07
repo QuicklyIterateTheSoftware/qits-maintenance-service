@@ -155,15 +155,18 @@ public class ReleaseRequestAutomationController {
 
   /**
    * Where a request's automations stand at a fold — the newest fold anything was asked about when
-   * {@code foldSha} is not given. A kind with no row at that fold is not listed; for qits-projects'
-   * gate an absent kind is a hold and a reason to post the fold again.
+   * {@code foldSha} is not given. A kind the trigger deferred at that fold is listed DEFERRED with
+   * the trigger's sentence, to every caller (qits-1920), unless it has a row there — the re-run
+   * door's — which is what it reads as instead; the trigger still answers DEFERRED only to a caller
+   * that accepts it. Any other kind with no row at that fold is not listed; for qits-projects' gate
+   * an absent kind is a hold and a reason to post the fold again.
    */
   @GET
   @Path("/{requestId}/automations")
   @Operation(
       operationId = "listReleaseRequestAutomations",
       summary = "A release request's automations at one fold")
-  @APIResponse(responseCode = "200", description = "Every kind with a row at the fold")
+  @APIResponse(responseCode = "200", description = "Every kind with a row or a deferral at the fold")
   @APIResponse(responseCode = "400", description = "Not a request id, or not a sha")
   @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:desk-admin", "qits:desk", "qits:system", "qits:agent"})
   public ReleaseRequestAutomationsDto automations(

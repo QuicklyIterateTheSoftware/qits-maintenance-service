@@ -11,6 +11,7 @@ import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.notNullValue;
+import static org.hamcrest.Matchers.nullValue;
 
 import eu.wohlben.qits.maintenance.api.Fixture;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
@@ -138,6 +139,56 @@ class ReleaseRequestAutomationControllerTest {
         .then()
         .statusCode(200)
         .body("mode", equalTo("AUTOMATION"));
+  }
+
+  /**
+   * <b>A deferral is on the read door too</b> (qits-1920): a trigger that accepts DEFERRED for a
+   * repository whose QA checks the screenshots is answered DEFERRED, and the read — with the fold
+   * named or not, by any caller — lists the kind the same, with the same sentence.
+   */
+  @Test
+  void aTriggerThatDefersAndTheReadAgree() {
+    AutomationFixture.scriptFile(
+        peers, FOLD_A, QaChecks.RELEASE_YML,
+        """
+        archetype: app
+        release-request:
+          - image: qits/build-images/node-browser-base:latest
+            check-outputs: [screenshot-baselines]
+            script: npm test
+        """);
+    String detail =
+        given()
+            .header("Authorization", SuiteBearers.platform())
+            .contentType(ContentType.JSON)
+            .body(
+                TRIGGER_BODY.replace(
+                    "\"workItem\":null",
+                    "\"workItem\":null,\"accepts\":[\"WAITING\",\"NOT_APPLICABLE\",\"DEFERRED\"]"))
+            .when()
+            .post(DOOR)
+            .then()
+            .statusCode(200)
+            .body(SCREENSHOTS + ".state", equalTo("DEFERRED"))
+            .body(SCREENSHOTS + ".bumpId", nullValue())
+            .extract()
+            .path(SCREENSHOTS + ".detail");
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    for (String path : new String[] {DOOR + "?foldSha=" + FOLD_A, DOOR}) {
+      given()
+          .header("Authorization", SuiteBearers.operator())
+          .when()
+          .get(path)
+          .then()
+          .statusCode(200)
+          .body("foldSha", equalTo(FOLD_A))
+          .body(SCREENSHOTS + ".state", equalTo("DEFERRED"))
+          .body(SCREENSHOTS + ".detail", equalTo(detail))
+          .body(SCREENSHOTS + ".bumpId", nullValue())
+          .body("automations.find { it.kind == '" + DependencyBumpAutomation.KIND + "' }.state",
+              equalTo("FRESH"));
+    }
   }
 
   /**

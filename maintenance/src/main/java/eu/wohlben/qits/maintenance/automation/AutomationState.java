@@ -4,7 +4,7 @@ import eu.wohlben.qits.maintenance.model.BumpStatus;
 
 /**
  * One kind's outcome at one fold, as qits-projects' gate reads it — a reading of the {@code mt_bump}
- * row(s) behind it rather than a column of its own.
+ * row(s) behind it rather than a column of its own (a DEFERRED kind excepted, see there).
  *
  * <p><b>The rows keep the bump vocabulary</b> because they ARE bump rows, followed by the same poll
  * and read by {@code GET /bumps/{id}}: a green run that wrote nothing is NOTHING_TO_DO there and FRESH
@@ -39,9 +39,14 @@ public enum AutomationState {
   NOT_APPLICABLE,
   /**
    * A kind QA checks for this repository (qits-1180): it applies, but it is not run before QA,
-   * because QA runs the same generator and fails when the output is stale. Answered, never stored,
-   * and on the wire only to a trigger that {@code accepts} it — anyone else gets today's answer, and
-   * the kind runs as it always did. The re-run door still runs it on demand.
+   * because QA runs the same generator and fails when the output is stale. The trigger answers it
+   * only to a caller that {@code accepts} it — anyone else gets today's answer, and the kind runs as
+   * it always did. The re-run door still runs it on demand.
+   *
+   * <p><b>Stored, but not as a bump row</b> (qits-1920): each deferral is kept in {@code
+   * mt_automation_deferral}, so the read door lists the kind DEFERRED at that fold to every caller,
+   * and a fold where every kind was deferred is still the newest fold it answers. A row of the kind
+   * at the same fold — the re-run door's — is what the kind reads as instead.
    */
   DEFERRED;
 

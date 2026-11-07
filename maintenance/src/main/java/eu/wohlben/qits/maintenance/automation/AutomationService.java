@@ -13,6 +13,7 @@ import eu.wohlben.qits.maintenance.dto.AutomationKindsDto.KindDto;
 import eu.wohlben.qits.maintenance.dto.FailureDto;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto.AutomationDto;
+import eu.wohlben.qits.maintenance.entity.MtAutomationDeferral;
 import eu.wohlben.qits.maintenance.entity.MtBump;
 import eu.wohlben.qits.maintenance.entity.MtReleaseRequest;
 import eu.wohlben.qits.maintenance.entity.MtRepository;
@@ -513,7 +514,7 @@ public class AutomationService {
     reofferHeldReruns(requestId, active, foldSha, hold);
     return answer(
         requestId, foldSha, unknown, waiting, notApplicable,
-        deferred == null ? Map.of() : deferred, accepts);
+        deferred == null ? Map.of() : deferred, Map.of(), accepts);
   }
 
   /**
@@ -550,7 +551,7 @@ public class AutomationService {
     for (ReleaseRequestAutomation kind : kinds()) {
       unknown.put(kind.kind(), detail);
     }
-    return answer(requestId, foldSha, unknown, Map.of(), Map.of(), Map.of(), Set.of());
+    return answer(requestId, foldSha, unknown, Map.of(), Map.of(), Map.of(), Map.of(), Set.of());
   }
 
   /**
@@ -624,8 +625,9 @@ public class AutomationService {
    * A kind QA checks, at a fold that defers it (qits-1180): no plan and no run. When the previous
    * fold's outcome carries over — an on-demand run there COMMITTED, and only its output changed
    * since — it is recorded FRESH exactly as today, so that run's result still shows on the request.
-   * Otherwise it is answered DEFERRED and not stored, so a later on-demand run on this fold is
-   * answered from its row.
+   * Otherwise it is answered DEFERRED and the deferral is stored beside the rows, never as one
+   * (qits-1920): the read door lists it, and a later on-demand run on this fold has a row, which is
+   * what the fold then reads as.
    */
   private void defer(
       ReleaseRequestAutomation kind,
@@ -644,11 +646,12 @@ public class AutomationService {
         return;
       }
     }
-    deferred.put(
-        kind.kind(),
+    String why =
         "checked by QA: " + kind.label().toLowerCase(java.util.Locale.ROOT)
             + " is not run before QA for " + subject.repository().name
-            + "; run it on demand to regenerate");
+            + "; run it on demand to regenerate";
+    deferred.put(kind.kind(), why);
+    store.recordDeferral(subject.requestId(), subject.foldSha(), kind.kind(), why, Instant.now());
   }
 
   /**
@@ -832,17 +835,28 @@ public class AutomationService {
   /**
    * Where one request's automations stand at one fold — the newest fold anything was asked about
    * when none is named.
+   *
+   * <p><b>A kind the trigger deferred at the fold is listed DEFERRED</b> (qits-1920), with the
+   * trigger's sentence, to every caller: the stored deferral is a fact about the fold, not an answer
+   * shaped for the caller that asked. A kind with a row at the fold — the re-run door's — is read
+   * from the row instead, and a fold where every kind was deferred is still the newest fold.
    */
   public ReleaseRequestAutomationsDto automations(String requestId, String foldSha) {
     requireRequestId(requestId);
     String fold =
         foldSha == null || foldSha.isBlank()
-            ? store.newestAutomation(requestId).map(row -> row.foldSha).orElse(null)
+            ? store.newestAutomationFold(requestId).orElse(null)
             : requireSha("foldSha", foldSha);
     if (fold == null) {
       return new ReleaseRequestAutomationsDto(requestId, null, List.of());
     }
-    return answer(requestId, fold, Map.of(), Map.of(), Map.of(), Map.of(), Set.of());
+    Map<String, String> deferred = new LinkedHashMap<>();
+    Map<String, Instant> deferredAt = new LinkedHashMap<>();
+    for (MtAutomationDeferral row : store.deferrals(requestId, fold)) {
+      deferred.putIfAbsent(row.automationKind, row.detail);
+      deferredAt.putIfAbsent(row.automationKind, row.createdAt);
+    }
+    return answer(requestId, fold, Map.of(), Map.of(), Map.of(), deferred, deferredAt, Set.of());
   }
 
   // --- the re-run door --------------------------------------------------------------------------
@@ -2208,6 +2222,10 @@ public class AutomationService {
    * @param waiting DERIVED kinds held behind their SOURCE kinds, with why: WAITING to a caller that
    *     accepts it, REQUESTED to one that does not
    * @param notApplicable kinds that do not apply, with why: listed only for a caller that accepts it
+   * @param deferred kinds QA checks, with why: the trigger fills it only for a caller that accepts
+   *     DEFERRED, the read door from the fold's stored deferrals (qits-1920)
+   * @param deferredAt when each stored deferral was made, for the read door's entries; a kind
+   *     missing here is answered now
    */
   private ReleaseRequestAutomationsDto answer(
       String requestId,
@@ -2216,6 +2234,7 @@ public class AutomationService {
       Map<String, String> waiting,
       Map<String, String> notApplicable,
       Map<String, String> deferred,
+      Map<String, Instant> deferredAt,
       Set<AutomationState> accepts) {
     Map<String, List<MtBump>> byKind = new TreeMap<>();
     for (MtBump row : store.automations(requestId, foldSha)) {
@@ -2238,9 +2257,13 @@ public class AutomationService {
       } else if (unknown.containsKey(kind)) {
         entries.add(answered(kind, label, AutomationState.UNKNOWN, unknown.get(kind), null));
       } else if (deferred.containsKey(kind)) {
-        // Only ever filled for a caller that accepts DEFERRED (see trigger).
+        // The trigger fills it only for a caller that accepts DEFERRED; the read door lists the
+        // fold's stored deferrals to everyone (qits-1920). A row of the kind wins, above.
         String why = deferred.get(kind);
-        entries.add(answered(kind, label, AutomationState.DEFERRED, why, why));
+        entries.add(
+            answered(
+                kind, label, AutomationState.DEFERRED, why, why,
+                deferredAt.getOrDefault(kind, Instant.now())));
       } else if (waiting.containsKey(kind)) {
         // THE OLD READER IS TOLD REQUESTED: "not run yet", which it holds the request on and asks
         // again about — exactly what WAITING asks of it. UNKNOWN would say nobody could decide,
@@ -2261,9 +2284,14 @@ public class AutomationService {
   /** An entry with no row behind it: answered, never stored. */
   private static AutomationDto answered(
       String kind, String label, AutomationState state, String detail, String reason) {
+    return answered(kind, label, state, detail, reason, Instant.now());
+  }
+
+  /** An entry with no {@code mt_bump} row behind it, as of {@code at}. */
+  private static AutomationDto answered(
+      String kind, String label, AutomationState state, String detail, String reason, Instant at) {
     return new AutomationDto(
-        kind, label, state.name(), detail, null, List.of(), null, null, Instant.now(), null,
-        reason);
+        kind, label, state.name(), detail, null, List.of(), null, null, at, null, reason);
   }
 
   /**

@@ -9,6 +9,7 @@ import eu.wohlben.qits.maintenance.bump.ReleaseRequestClient;
 import eu.wohlben.qits.maintenance.entity.MtArtifact;
 import eu.wohlben.qits.maintenance.entity.MtArtifactComponent;
 import eu.wohlben.qits.maintenance.entity.MtArtifactEdge;
+import eu.wohlben.qits.maintenance.entity.MtAutomationDeferral;
 import eu.wohlben.qits.maintenance.entity.MtBranch;
 import eu.wohlben.qits.maintenance.entity.MtBump;
 import eu.wohlben.qits.maintenance.entity.MtFinalizedRelease;
@@ -2225,6 +2226,77 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
                             BumpMode.AUTOMATION.name(),
                             requestId)
                         .firstResult()));
+  }
+
+  /**
+   * The fold the read door answers when it is not told which (qits-1920): the newer of the newest
+   * automation row's fold and the newest deferral's, by {@code startedAt} against {@code createdAt}.
+   * A fold where every kind was deferred has no {@link MtBump} row, and without the deferrals the
+   * door fell back to an older fold. Empty when the request has neither.
+   */
+  @ActivateRequestContext
+  public Optional<String> newestAutomationFold(String requestId) {
+    if (requestId == null) {
+      return Optional.empty();
+    }
+    Optional<MtBump> row = newestAutomation(requestId);
+    Optional<MtAutomationDeferral> deferral =
+        DbRetry.inNewTx(
+            "read the newest automation deferral of one request",
+            () ->
+                Optional.ofNullable(
+                    (MtAutomationDeferral)
+                        MtAutomationDeferral.find(
+                                "requestId = ?1", Sort.by("createdAt").descending(), requestId)
+                            .firstResult()));
+    if (deferral.isPresent()
+        && (row.isEmpty() || deferral.get().createdAt.isAfter(row.get().startedAt))) {
+      return Optional.of(deferral.get().foldSha);
+    }
+    return row.map(bump -> bump.foldSha);
+  }
+
+  /**
+   * Records that the trigger answered one kind DEFERRED at one fold (qits-1920), {@code on conflict
+   * do nothing}: qits-projects asks about the same fold again until its answer is final, and the
+   * first deferral's sentence and moment stand.
+   *
+   * @return whether this call wrote the row, rather than finding it there
+   */
+  @ActivateRequestContext
+  public boolean recordDeferral(
+      String requestId, String foldSha, String kind, String detail, Instant now) {
+    return DbRetry.inNewTx(
+        "record the deferral of " + kind + " for " + requestId,
+        () ->
+            getEntityManager()
+                .createNativeQuery(
+                    "insert into mt_automation_deferral"
+                        + " (id, request_id, fold_sha, automation_kind, detail, created_at)"
+                        + " values (?1, ?2, ?3, ?4, ?5, ?6)"
+                        + " on conflict (request_id, fold_sha, automation_kind) do nothing")
+                .setParameter(1, UUID.randomUUID())
+                .setParameter(2, requestId)
+                .setParameter(3, foldSha)
+                .setParameter(4, kind)
+                .setParameter(5, detail)
+                .setParameter(6, now)
+                .executeUpdate()
+                > 0);
+  }
+
+  /** Every kind deferred at one fold of one request, oldest first (qits-1920). */
+  @ActivateRequestContext
+  public List<MtAutomationDeferral> deferrals(String requestId, String foldSha) {
+    if (requestId == null || foldSha == null) {
+      return List.of();
+    }
+    return DbRetry.inNewTx(
+        "read the automation deferrals of one fold",
+        () ->
+            MtAutomationDeferral.<MtAutomationDeferral>find(
+                    "requestId = ?1 and foldSha = ?2", Sort.by("createdAt"), requestId, foldSha)
+                .list());
   }
 
   /**

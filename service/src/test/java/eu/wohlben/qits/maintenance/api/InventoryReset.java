@@ -4,6 +4,7 @@ import eu.wohlben.qits.maintenance.automation.SettleGate;
 import eu.wohlben.qits.maintenance.entity.MtArtifact;
 import eu.wohlben.qits.maintenance.entity.MtArtifactComponent;
 import eu.wohlben.qits.maintenance.entity.MtArtifactEdge;
+import eu.wohlben.qits.maintenance.entity.MtAutomationDeferral;
 import eu.wohlben.qits.maintenance.entity.MtBranch;
 import eu.wohlben.qits.maintenance.entity.MtBump;
 import eu.wohlben.qits.maintenance.entity.MtGitlinkPin;
@@ -67,6 +68,7 @@ public class InventoryReset {
     MtArtifactEdge.deleteAll();
     MtArtifactComponent.deleteAll();
     MtArtifact.deleteAll();
+    MtAutomationDeferral.deleteAll();
     MtBump.deleteAll();
     // What this service remembers about release requests (V21): who opened one, its upstream
     // restarts. A leftover "opened by maintenance" would plan external upgrades in the next test.

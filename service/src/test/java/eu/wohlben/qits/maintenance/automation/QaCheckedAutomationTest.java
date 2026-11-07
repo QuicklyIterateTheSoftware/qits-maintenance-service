@@ -162,6 +162,83 @@ class QaCheckedAutomationTest {
     assertEquals(0, triggers());
   }
 
+  // --- the read door lists a deferral (qits-1920) ---------------------------------------------
+
+  /**
+   * <b>The read door lists what the trigger deferred</b> (qits-1920): to every caller, as DEFERRED
+   * with the trigger's sentence and no row — the listing {@code qits maintenance automations}
+   * prints. A repeated trigger for the same fold writes the deferral once.
+   */
+  @Test
+  void theReadDoorListsADeferredKindToEveryCaller() {
+    ReleaseRequestAutomationsDto answer = trigger(FOLD_A, null, null, WITH_DEFERRED);
+    trigger(FOLD_A, null, null, WITH_DEFERRED);
+
+    ReleaseRequestAutomationsDto read = automations.automations(REQUEST, FOLD_A);
+    assertEquals(FOLD_A, read.foldSha());
+    for (String kind : List.of(EntityDiagramAutomation.KIND, ScreenshotBaselinesAutomation.KIND)) {
+      AutomationDto entry = AutomationFixture.entry(read, kind);
+      assertEquals(AutomationState.DEFERRED.name(), entry.state(), entry.detail());
+      assertEquals(AutomationFixture.entry(answer, kind).detail(), entry.detail());
+      assertEquals(entry.detail(), entry.reason());
+      assertNull(entry.bumpId());
+      assertTrue(rows(FOLD_A, kind).isEmpty(), kind + ": still no bump row");
+    }
+    assertEquals(2, store.deferrals(REQUEST, FOLD_A).size(), "one deferral per kind, not per ask");
+    assertEquals(
+        FOLD_A, automations.automations(REQUEST, null).foldSha(), "the default fold is the same");
+    assertEquals(0, triggers(), "and nothing ran");
+  }
+
+  /**
+   * <b>A row wins over a deferral</b> (qits-1920): the re-run door's row at the same fold is what
+   * the read door lists for that kind. The kind it did not run is still DEFERRED.
+   */
+  @Test
+  void aRowAtTheSameFoldIsListedInsteadOfTheDeferral() {
+    trigger(FOLD_A, null, null, WITH_DEFERRED);
+    UUID id = pressScreenshots();
+
+    ReleaseRequestAutomationsDto read = automations.automations(REQUEST, FOLD_A);
+    AutomationDto screenshots = AutomationFixture.entry(read, ScreenshotBaselinesAutomation.KIND);
+    assertEquals(id.toString(), screenshots.bumpId(), "listed from the re-run's row");
+    assertTrue(
+        DISPATCHED.contains(screenshots.state()),
+        screenshots.state() + ": " + screenshots.detail());
+    assertEquals(
+        1,
+        read.automations().stream()
+            .filter(entry -> ScreenshotBaselinesAutomation.KIND.equals(entry.kind()))
+            .count(),
+        "listed once");
+    assertEquals(
+        AutomationState.DEFERRED.name(), state(read, EntityDiagramAutomation.KIND));
+  }
+
+  /**
+   * <b>The default fold reads deferrals too</b> (qits-1920): a fold where every kind was deferred
+   * has no bump row, and the read door with no fold named used to fall back to an older fold that
+   * had one. The newer of the two — the newest row and the newest deferral — is the fold.
+   */
+  @Test
+  void theDefaultFoldIsTheNewerOfRowsAndDeferrals() {
+    trigger(FOLD_A, null, null, WITHOUT_DEFERRED);
+    assertTrue(store.deferrals(REQUEST, FOLD_A).isEmpty(), "a caller without DEFERRED defers nothing");
+    assertEquals(FOLD_A, automations.automations(REQUEST, null).foldSha());
+
+    // A fold that deferred its one applying kind and stored nothing else.
+    store.recordDeferral(
+        REQUEST, FOLD_B, ScreenshotBaselinesAutomation.KIND, "checked by QA: deferred at B",
+        java.time.Instant.now());
+
+    ReleaseRequestAutomationsDto read = automations.automations(REQUEST, null);
+    assertEquals(FOLD_B, read.foldSha(), "the deferral is newer than every row at fold A");
+    assertEquals(1, read.automations().size(), read.automations().toString());
+    AutomationDto entry = AutomationFixture.entry(read, ScreenshotBaselinesAutomation.KIND);
+    assertEquals(AutomationState.DEFERRED.name(), entry.state());
+    assertEquals("checked by QA: deferred at B", entry.detail());
+  }
+
   private static final Set<String> DISPATCHED =
       Set.of(AutomationState.REQUESTED.name(), AutomationState.RUNNING.name());
 
