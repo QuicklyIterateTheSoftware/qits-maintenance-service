@@ -1,5 +1,6 @@
 package eu.wohlben.qits.maintenance.entity;
 
+import eu.wohlben.qits.db.exposure.Projection;
 import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -18,6 +19,7 @@ import java.util.UUID;
  * that join, and {@code latest/AdoptionGate}, which reads these rows as the package → repository
  * map the registry poll is gated through.
  */
+@Projection(of = "qits-ci:CiReleaseAnnouncement")
 @Entity
 @Table(name = "mt_published_artifact")
 public class MtPublishedArtifact extends PanacheEntityBase {

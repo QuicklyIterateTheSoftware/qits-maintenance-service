@@ -1,5 +1,6 @@
 package eu.wohlben.qits.maintenance.entity;
 
+import eu.wohlben.qits.db.exposure.Projection;
 import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -20,6 +21,7 @@ import java.util.UUID;
  * <p>Unique on {@code (repository, version)} and written {@code on conflict do nothing}, because
  * FINALIZED is often announced twice under two event ids.
  */
+@Projection(of = "qits-projects:ReleaseRequest")
 @Entity
 @Table(name = "mt_finalized_release")
 public class MtFinalizedRelease extends PanacheEntityBase {
