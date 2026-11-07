@@ -830,18 +830,6 @@
           "site" : "BumpDispatcher.standing(Instant)"
         },
         {
-          "type" : "eu.wohlben.qits.maintenance.dto.DependencyDto",
-          "kind" : "via",
-          "via" : "eu.wohlben.qits.maintenance.model.PinKind",
-          "site" : "DependencyController.dependencies(String, String)"
-        },
-        {
-          "type" : "eu.wohlben.qits.maintenance.dto.DependencyDto$DependencyPinDto",
-          "kind" : "via",
-          "via" : "eu.wohlben.qits.maintenance.model.PinKind",
-          "site" : "Inventory.dependencies(String, PinKind)"
-        },
-        {
           "type" : "eu.wohlben.qits.maintenance.dto.GroupDto",
           "kind" : "mapper",
           "via" : null,
@@ -854,24 +842,6 @@
           "site" : "Inventory.pin(MtPin, Map, List)"
         },
         {
-          "type" : "eu.wohlben.qits.maintenance.dto.PinSourceDto",
-          "kind" : "via",
-          "via" : "eu.wohlben.qits.maintenance.model.PinKind",
-          "site" : "Inventory.pins()"
-        },
-        {
-          "type" : "eu.wohlben.qits.maintenance.dto.PinSourceDto$ArtifactPinDto",
-          "kind" : "via",
-          "via" : "eu.wohlben.qits.maintenance.model.PinKind",
-          "site" : "Inventory.pins()"
-        },
-        {
-          "type" : "eu.wohlben.qits.maintenance.dto.PinSourceDto$RepositoryStateDto",
-          "kind" : "via",
-          "via" : "eu.wohlben.qits.maintenance.model.PinKind",
-          "site" : "Inventory.pins()"
-        },
-        {
           "type" : "eu.wohlben.qits.maintenance.dto.RepositoryDetailDto",
           "kind" : "via",
           "via" : "eu.wohlben.qits.maintenance.dto.GroupDto",
@@ -882,12 +852,6 @@
           "kind" : "via",
           "via" : "eu.wohlben.qits.maintenance.dto.GroupDto",
           "site" : "Inventory.repositories()"
-        },
-        {
-          "type" : "eu.wohlben.qits.maintenance.model.PinKind",
-          "kind" : "mapper",
-          "via" : null,
-          "site" : "PendingChanges.kindOf(MtGroup)"
         },
         {
           "type" : "eu.wohlben.qits.maintenance.pending.Change",
@@ -972,41 +936,6 @@
           "method" : "GET",
           "path" : "/bumps",
           "dto" : "eu.wohlben.qits.maintenance.pending.Change",
-          "kind" : "returns"
-        },
-        {
-          "operationId" : "listDependencies",
-          "method" : "GET",
-          "path" : "/dependencies",
-          "dto" : "eu.wohlben.qits.maintenance.dto.DependencyDto",
-          "kind" : "returns"
-        },
-        {
-          "operationId" : "listDependencies",
-          "method" : "GET",
-          "path" : "/dependencies",
-          "dto" : "eu.wohlben.qits.maintenance.dto.DependencyDto$DependencyPinDto",
-          "kind" : "returns"
-        },
-        {
-          "operationId" : "listDependencyPins",
-          "method" : "GET",
-          "path" : "/pins",
-          "dto" : "eu.wohlben.qits.maintenance.dto.PinSourceDto",
-          "kind" : "returns"
-        },
-        {
-          "operationId" : "listDependencyPins",
-          "method" : "GET",
-          "path" : "/pins",
-          "dto" : "eu.wohlben.qits.maintenance.dto.PinSourceDto$ArtifactPinDto",
-          "kind" : "returns"
-        },
-        {
-          "operationId" : "listDependencyPins",
-          "method" : "GET",
-          "path" : "/pins",
-          "dto" : "eu.wohlben.qits.maintenance.dto.PinSourceDto$RepositoryStateDto",
           "kind" : "returns"
         },
         {
@@ -1899,12 +1828,6 @@
           "site" : "DownstreamResolver.of(String)"
         },
         {
-          "type" : "eu.wohlben.qits.maintenance.automation.AutomationState",
-          "kind" : "assembler",
-          "via" : null,
-          "site" : "AutomationService.foldState(String, String, String)"
-        },
-        {
           "type" : "eu.wohlben.qits.maintenance.bump.BumpDispatcher$Assessment",
           "kind" : "assembler",
           "via" : null,
@@ -2051,8 +1974,8 @@
         {
           "type" : "eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto$AutomationDto",
           "kind" : "via",
-          "via" : "eu.wohlben.qits.maintenance.automation.AutomationState",
-          "site" : "AutomationService.aggregate(String, String, List)"
+          "via" : "eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto",
+          "site" : "ReleaseRequestAutomationsDto.automations()"
         },
         {
           "type" : "eu.wohlben.qits.maintenance.dto.RepositoryDependentsDto",
