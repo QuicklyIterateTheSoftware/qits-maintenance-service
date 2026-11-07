@@ -42,7 +42,10 @@ class AutomationKindsApiTest {
         .body("kinds.find { it.kind == 'screenshot-baselines' }.label", org.hamcrest.Matchers.is("Screenshot baselines"))
         .body(
             "kinds.find { it.kind == 'screenshot-baselines' }.committablePaths",
-            contains(":(glob)**/__screenshots__/**", ":(glob)**/testing/browser/renderer.txt"))
+            contains(
+                ":(glob)**/__screenshots__/**",
+                ":(glob)**/testing/browser/renderer.txt",
+                ":(glob)**/testing/browser/routes.json"))
         .body(
             "kinds.find { it.kind == 'screenshot-baselines' }.approvalRoles",
             contains("agent", "person"))

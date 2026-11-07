@@ -60,7 +60,8 @@
       "label": "Screenshot baselines",
       "committablePaths": [
         ":(glob)**/__screenshots__/**",
-        ":(glob)**/testing/browser/renderer.txt"
+        ":(glob)**/testing/browser/renderer.txt",
+        ":(glob)**/testing/browser/routes.json"
       ],
       "approvalRoles": [
         "agent",
