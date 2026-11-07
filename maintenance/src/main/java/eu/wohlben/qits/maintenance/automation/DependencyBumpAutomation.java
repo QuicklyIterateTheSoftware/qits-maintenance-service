@@ -16,6 +16,7 @@ import eu.wohlben.qits.maintenance.manifest.RepositoryConfig;
 import eu.wohlben.qits.maintenance.model.PinKind;
 import eu.wohlben.qits.maintenance.model.RepositoryArchetype;
 import eu.wohlben.qits.maintenance.pending.Change;
+import eu.wohlben.qits.maintenance.pending.PactAdoptions;
 import eu.wohlben.qits.maintenance.pending.PendingChanges;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -51,6 +52,10 @@ import org.jboss.logging.Logger;
  *   <li><b>Writes</b> through the shared core's {@code automations/dependency-bump.yml}: the payload
  *       carries {@code changes} in exactly the {@code MaintenanceBump} entry shape ({@link Change})
  *       and {@code commitPaths}, the manifests those changes touch.
+ *   <li><b>Adopts a consumer's first pact jar</b> (qits-1952): a pact a consumer declares against
+ *       this repository and the fold does not pin is planned as one more change, {@code from} null
+ *       and location {@code pact-adopt:<name>} ({@link PactAdoptions}); with one in the list,
+ *       {@code commitPaths} is every pom the fold's discovery read.
  *   <li><b>Proves its changelogs before anything is sent</b> (qits-893): its commit is a bump commit
  *       like any other, so at dispatch {@link AutomationService} resolves each change's range
  *       through {@link eu.wohlben.qits.maintenance.bump.changelog.ChangelogRanges} and each change
@@ -291,16 +296,27 @@ public class DependencyBumpAutomation implements ReleaseRequestAutomation {
     boolean wrapper = wrapper(subject);
     Map<String, MtLatest> latest = PendingChanges.index(store.allLatest());
     List<MtPin> rows = new ArrayList<>();
+    List<MtPin> declaredAtFold = new ArrayList<>();
     for (ParsedPin pin : read.pins()) {
+      PinKind kind = config.kindOf(pin);
+      declaredAtFold.add(asRow(pin, kind));
       if (wrapper && pin.ecosystem() == Ecosystem.GITLINK) {
         continue;
       }
-      PinKind kind = config.kindOf(pin);
       if (kind != PinKind.INTERNAL) {
         continue;
       }
       rows.add(asRow(pin, kind));
     }
+    // THE PACT JARS A CONSUMER DECLARES AND THIS FOLD DOES NOT PIN YET (qits-1952): one transient
+    // pin each, judged by the same rule. "Not pinned" and "a sibling to clone" are asked of the FOLD,
+    // every kind and location, so the re-fold this kind's own commit makes finds the pin it wrote
+    // and plans nothing more — the loop's terminator, as for every move.
+    rows.addAll(
+        PactAdoptions.adoptions(
+            subject.repository().name,
+            declaredAtFold,
+            store.pactConsumers(subject.repository().name)));
     // A property several artifacts read is decided ONCE, against what every one of them has
     // published (qits-1206): a content-addressed reactor's release uploads only the modules that
     // changed, so one reader's latest can be a version its sibling was never uploaded at. Only such
@@ -317,7 +333,9 @@ public class DependencyBumpAutomation implements ReleaseRequestAutomation {
               + (blocked.isEmpty() ? "" : "; not moved: " + String.join("; ", blocked)));
     }
     return Plan.runs(
-        List.of(new Plan.Run(null, changes, Map.of(COMMIT_PATHS, commitPaths(changes)))));
+        List.of(
+            new Plan.Run(
+                null, changes, Map.of(COMMIT_PATHS, commitPaths(changes, read.poms())))));
   }
 
   /** The payload field naming the files a run may stage, as the engine and qits-ci both read it. */
@@ -333,7 +351,20 @@ public class DependencyBumpAutomation implements ReleaseRequestAutomation {
    * gitlink's "manifest" is its path, which is what is staged.
    */
   static List<String> commitPaths(List<Change> changes) {
+    return commitPaths(changes, List.of());
+  }
+
+  /**
+   * The same, and with a pact adoption among the changes EVERY pom the fold's discovery read
+   * (qits-1952): the step clones the sibling pact pin into the root pom and into each module pom
+   * that carries the sibling's versionless test dependency — a line that is no pin of its own, so
+   * no change names its manifest — and the postlude stages only what is listed here.
+   */
+  static List<String> commitPaths(List<Change> changes, List<String> poms) {
     Set<String> paths = new LinkedHashSet<>();
+    if (changes.stream().anyMatch(PactAdoptions::isAdoption)) {
+      paths.addAll(poms);
+    }
     for (Change change : changes) {
       paths.add(change.manifestPath());
       if (Ecosystem.NPM.wireName().equals(change.ecosystem())) {

@@ -331,9 +331,35 @@ public class ScanService {
         gitlinkPins,
         read.bumps(),
         now);
+    pactEdges(entry.name(), read);
     if (atMain && read.headSha() != null && !read.headSha().isBlank()) {
       keepMain(entry, read, gitlinkPins);
       mainHeadLatest(entry, read.headSha());
+    }
+  }
+
+  /**
+   * <b>The pacts this repository declares as a consumer, stored</b> (qits-1952) — replaced wholesale
+   * from the {@code release.yml} the read found at its head, so an edge the consumer stopped
+   * declaring is gone and never adopted. A read that could not serve the file says null and keeps
+   * what was stored.
+   *
+   * <p><b>A NEW edge re-plans its provider</b>: the provider may now be owed the consumer's first
+   * pact pin, and an open request of its is the one that should carry it. With none open the
+   * dispatcher's next walk finds the adoption pending and opens one, like any owed bump. Its
+   * failure is a WARN and not the repository's, as for the gitlink latest below.
+   */
+  private void pactEdges(String repository, ManifestScanner.Read read) {
+    if (read.pactProviders() == null) {
+      return;
+    }
+    try {
+      for (String provider : store.replacePactEdges(repository, read.pactProviders())) {
+        LOG.infof("%s declares a pact against %s; the provider is re-planned", repository, provider);
+        upstream.pactDeclared(repository, provider);
+      }
+    } catch (RuntimeException e) {
+      LOG.warnf("The pact edges of %s could not be stored: %s", repository, e.toString());
     }
   }
 

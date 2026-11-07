@@ -34,6 +34,7 @@ import eu.wohlben.qits.maintenance.manifest.Globs;
 import eu.wohlben.qits.maintenance.model.BranchState;
 import eu.wohlben.qits.maintenance.model.PinKind;
 import eu.wohlben.qits.maintenance.model.RepositoryStatus;
+import eu.wohlben.qits.maintenance.pending.PactAdoptions;
 import eu.wohlben.qits.maintenance.pending.PendingChanges;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -86,11 +87,20 @@ public class Inventory {
   /** Every repository, with its groups and what each has pending. */
   public List<RepositoryDto> repositories() {
     Map<String, MtLatest> latest = PendingChanges.index(store.allLatest());
+    Map<String, List<String>> pactConsumers =
+        PactAdoptions.consumersByProvider(store.pactEdges());
     List<RepositoryDto> listing = new ArrayList<>();
     for (MtRepository row : store.repositories()) {
       List<MtPin> pins = store.pins(row.name);
       List<MtGroup> groups = store.groups(row.name);
-      List<GroupDto> groupDtos = groups(row.name, pins, latest, groups);
+      // An owed pact adoption counts as pending (qits-1952); it is no pin, so it is not listed as one.
+      List<GroupDto> groupDtos =
+          groups(
+              row.name,
+              PactAdoptions.withAdoptions(
+                  row.name, pins, pactConsumers.getOrDefault(row.name, List.of())),
+              latest,
+              groups);
       listing.add(
           new RepositoryDto(
               row.name,
@@ -123,7 +133,12 @@ public class Inventory {
     Map<String, MtLatest> latest = PendingChanges.index(store.allLatest());
     List<MtPin> pins = store.pins(name);
     List<MtGroup> groups = store.groups(name);
-    List<GroupDto> groupDtos = groups(name, pins, latest, groups);
+    List<GroupDto> groupDtos =
+        groups(
+            name,
+            PactAdoptions.withAdoptions(name, pins, store.pactConsumers(name)),
+            latest,
+            groups);
     List<PinDto> pinDtos = new ArrayList<>();
     for (MtPin pin : pins) {
       pinDtos.add(pin(pin, latest, groups));

@@ -2,11 +2,13 @@ package eu.wohlben.qits.maintenance.automation;
 
 import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.maintenance.bump.ReleaseRequestClient;
+import eu.wohlben.qits.maintenance.entity.MtPactEdge;
 import eu.wohlben.qits.maintenance.entity.MtPin;
 import eu.wohlben.qits.maintenance.entity.MtRepository;
 import eu.wohlben.qits.maintenance.model.BumpTrigger;
 import eu.wohlben.qits.maintenance.model.PinKind;
 import eu.wohlben.qits.maintenance.model.RepositoryArchetype;
+import eu.wohlben.qits.maintenance.pending.PactAdoptions;
 import eu.wohlben.qits.maintenance.pending.PendingChanges;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import eu.wohlben.qits.maintenance.work.WorkQueue;
@@ -112,20 +114,23 @@ public class UpstreamReplan {
   /**
    * Every consumer of one dependency, each open request of each re-planned. Only an INTERNAL pin
    * makes a consumer: the bump never moves an EXTERNAL one (qits-1164), so its latest moving can
-   * change no plan.
+   * change no plan. A consumer's pact jar also makes its PROVIDER one before any pin exists — see
+   * {@link #adopters} (qits-1952).
    */
   public void replanConsumers(Ecosystem ecosystem, String name) {
     if (!dependencyBump.enabled()) {
       return;
     }
     Set<String> consumers = new TreeSet<>();
-    for (MtPin pin : store.allPins()) {
+    List<MtPin> pins = store.allPins();
+    for (MtPin pin : pins) {
       if (ecosystem.wireName().equals(pin.ecosystem)
           && name.equals(pin.name)
           && PendingChanges.kindOf(pin) == PinKind.INTERNAL) {
         consumers.add(pin.repository);
       }
     }
+    consumers.addAll(adopters(ecosystem, name, pins));
     for (String consumer : consumers) {
       try {
         Outcome outcome = replan(consumer, DependencyBumpAutomation.KIND);
@@ -142,6 +147,58 @@ public class UpstreamReplan {
             ecosystem.wireName(), name, e.toString());
       }
     }
+  }
+
+  /**
+   * <b>The providers owed this jar as a FIRST pin</b> (qits-1952): a consumer's pact jar {@code
+   * eu.wohlben.qits:<C>-pacts-<P>} has no pin in {@code P} until a bump adopts it, so the pin walk
+   * above never finds {@code P} — and that was the whole bug: the jar's first adopted release
+   * re-planned nobody. Every stored edge {@code C → P} whose coordinate is this name, where {@code P}
+   * pins nothing of that name, is a provider to re-plan; once the pin exists it is found above like
+   * any other consumer. Whether {@code P} has a sibling to clone is the plan's to decide.
+   */
+  private Set<String> adopters(Ecosystem ecosystem, String name, List<MtPin> pins) {
+    Set<String> providers = new TreeSet<>();
+    if (ecosystem != Ecosystem.MAVEN || !name.startsWith(PactAdoptions.GROUP + ":")) {
+      return providers;
+    }
+    for (MtPactEdge edge : store.pactEdges()) {
+      if (!name.equals(
+          PactAdoptions.coordinate(edge.consumerRepository, edge.providerRepository))) {
+        continue;
+      }
+      boolean pinned =
+          pins.stream()
+              .anyMatch(
+                  pin ->
+                      edge.providerRepository.equals(pin.repository)
+                          && ecosystem.wireName().equals(pin.ecosystem)
+                          && name.equals(pin.name));
+      if (!pinned) {
+        providers.add(edge.providerRepository);
+      }
+    }
+    return providers;
+  }
+
+  /**
+   * A consumer's scan stored a NEW pact edge (qits-1952): its provider's open requests are re-planned
+   * for the adoption that may now be owed. A no-op while dependency-bump is off.
+   */
+  public void pactDeclared(String consumer, String provider) {
+    if (!dependencyBump.enabled() || provider == null) {
+      return;
+    }
+    queue.submit(
+        "re-plan " + provider + " for the pact " + consumer + " declares",
+        () -> {
+          try {
+            replan(provider, DependencyBumpAutomation.KIND);
+          } catch (RuntimeException e) {
+            LOG.warnf("The re-plan of %s for the pact %s declares failed: %s", provider, consumer,
+                e.toString());
+          }
+        });
   }
 
   /**

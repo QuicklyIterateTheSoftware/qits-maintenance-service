@@ -56,6 +56,12 @@ import java.util.function.Predicate;
  * <p><b>A maven property two artifacts read is decided once, for both</b> (qits-1206), by {@link
  * #resolve}: its one line moves every reader, and a content-addressed reactor need not have
  * published all of them at the version one of them is offered.
+ *
+ * <p><b>A pact jar nobody pins yet is offered as an ADOPTION</b> (qits-1952): {@link PactAdoptions}
+ * turns each declared, unpinned consumer pact into a transient pin with no version, which the
+ * caller appends to the provider's pins and this class then judges like any other — offered the
+ * coordinate's adopted latest, as a change with {@code from} null and a {@code pact-adopt:}
+ * location.
  */
 public final class PendingChanges {
 
@@ -361,6 +367,11 @@ public final class PendingChanges {
       return Optional.empty();
     }
     MtLatest row = latest.get(key(pin.ecosystem, pin.name));
+    if (PactAdoptions.isAdoption(pin)) {
+      // A FIRST PIN HAS NO VERSION TO BE BEHIND (qits-1952): it is owed the coordinate's adopted
+      // latest, whatever that is, and nothing while no release of the jar has finalized.
+      return PactAdoptions.offered(row);
+    }
     if (row == null || row.latest == null || row.latest.isBlank()) {
       return Optional.empty();
     }
