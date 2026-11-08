@@ -1,0 +1,32 @@
+{
+  "outcome": "DISPATCH",
+  "summary": "the next bump is contract-service (4 of 4 CI slot(s) free for bumps)",
+  "capacity": 4,
+  "free": 4,
+  "ciQueued": 0,
+  "owed": 1,
+  "held": 0,
+  "picks": [
+    {
+      "repository": "contract-service",
+      "cycleBroken": false,
+      "blockedBy": []
+    }
+  ],
+  "standing": [
+    {
+      "repository": "contract-service",
+      "reason": "READY",
+      "blockedBy": [],
+      "changes": [
+        {
+          "ecosystem": "maven",
+          "name": "eu.wohlben.qits:qits-eventstream",
+          "from": "2026.811.1",
+          "to": "2026.821.3"
+        }
+      ]
+    }
+  ],
+  "refused": []
+}

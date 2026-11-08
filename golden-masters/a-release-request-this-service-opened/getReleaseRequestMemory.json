@@ -1,0 +1,22 @@
+{
+  "requestId": "00000000-0000-4000-8000-000000000001",
+  "repository": "contract-service",
+  "opened": true,
+  "purpose": "MAIN_ONLY",
+  "branch": "main",
+  "changes": [
+    {
+      "ecosystem": "maven",
+      "name": "eu.wohlben.qits:qits-eventstream",
+      "from": "2026.811.1",
+      "to": "2026.821.3"
+    }
+  ],
+  "openedAt": "2026-01-01T00:00:00Z",
+  "upstreamRestarts": 0,
+  "upstreamRestartedAt": null,
+  "starved": false,
+  "withdrawnAt": null,
+  "withdrawnReason": null,
+  "updatedAt": "2026-01-01T00:00:00Z"
+}

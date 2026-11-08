@@ -3,6 +3,54 @@
   "provider": "qits-maintenance",
   "states": [
     {
+      "name": "a finished scan",
+      "slug": "a-finished-scan",
+      "params": {
+        "repoName": "contract-service",
+        "scanId": "00000000-0000-4000-8000-000000000001"
+      },
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "getScan",
+          "method": "GET",
+          "path": "/maintenance/api/scans/{scanId}",
+          "status": 200,
+          "file": "a-finished-scan/getScan.json",
+          "frozen": {
+            "ids": [
+              "$.id"
+            ],
+            "instants": [
+              "$.startedAt",
+              "$.finishedAt"
+            ],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        },
+        {
+          "operationId": "requestScan",
+          "method": "POST",
+          "path": "/maintenance/api/scans",
+          "body": {
+            "scope": "INTERNAL",
+            "repository": "{repoName}"
+          },
+          "status": 202,
+          "file": "a-finished-scan/requestScan.json",
+          "frozen": {
+            "ids": [
+              "$.id"
+            ],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
       "name": "a provider whose deployed consumers publish pacts",
       "slug": "a-provider-whose-deployed-consumers-publish-pacts",
       "params": {
@@ -22,6 +70,35 @@
           "frozen": {
             "ids": [],
             "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "a release request this service opened",
+      "slug": "a-release-request-this-service-opened",
+      "params": {
+        "repoName": "contract-service",
+        "requestId": "00000000-0000-4000-8000-000000000001"
+      },
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "getReleaseRequestMemory",
+          "method": "GET",
+          "path": "/maintenance/api/release-requests/{requestId}",
+          "status": 200,
+          "file": "a-release-request-this-service-opened/getReleaseRequestMemory.json",
+          "frozen": {
+            "ids": [
+              "$.requestId"
+            ],
+            "instants": [
+              "$.openedAt",
+              "$.updatedAt"
+            ],
             "strings": [],
             "listFilteredTo": null
           }
@@ -277,6 +354,26 @@
       "dependsOn": [],
       "operations": [
         {
+          "operationId": "getAdoptionByRelease",
+          "method": "GET",
+          "path": "/maintenance/api/adoption/by-release",
+          "query": {
+            "repository": "{repoName}",
+            "version": "2026.905.1"
+          },
+          "status": 200,
+          "file": "a-repository-with-downstream-components/getAdoptionByRelease.json",
+          "frozen": {
+            "ids": [
+              "$.catalogId",
+              "$.adopters[*].catalogId"
+            ],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        },
+        {
           "operationId": "getRepositoryDownstream",
           "method": "GET",
           "path": "/maintenance/api/repositories/{repositoryId}/downstream",
@@ -287,6 +384,97 @@
               "$.catalogId",
               "$.downstream[*].catalogId"
             ],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        },
+        {
+          "operationId": "listRepositories",
+          "method": "GET",
+          "path": "/maintenance/api/repositories",
+          "status": 200,
+          "file": "a-repository-with-downstream-components/listRepositories.json",
+          "frozen": {
+            "ids": [],
+            "instants": [
+              "$[*].lastScanAt"
+            ],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        },
+        {
+          "operationId": "listRepositoryDependents",
+          "method": "GET",
+          "path": "/maintenance/api/repositories/{repoName}/dependents",
+          "status": 200,
+          "file": "a-repository-with-downstream-components/listRepositoryDependents.json",
+          "frozen": {
+            "ids": [],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "a stored SBOM check report",
+      "slug": "a-stored-sbom-check-report",
+      "params": {
+        "repoName": "contract-service"
+      },
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "getSbomCheckReport",
+          "method": "GET",
+          "path": "/maintenance/api/sbom-check",
+          "status": 200,
+          "file": "a-stored-sbom-check-report/getSbomCheckReport.json",
+          "frozen": {
+            "ids": [],
+            "instants": [
+              "$.ranAt"
+            ],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        },
+        {
+          "operationId": "runSbomCheck",
+          "method": "POST",
+          "path": "/maintenance/api/sbom-check/runs",
+          "status": 202,
+          "file": "a-stored-sbom-check-report/runSbomCheck.json",
+          "frozen": {
+            "ids": [],
+            "instants": [
+              "$.ranAt"
+            ],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "bumps owed to a repository",
+      "slug": "bumps-owed-to-a-repository",
+      "params": {
+        "repoName": "contract-service"
+      },
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "getBumpStanding",
+          "method": "GET",
+          "path": "/maintenance/api/bumps/standing",
+          "status": 200,
+          "file": "bumps-owed-to-a-repository/getBumpStanding.json",
+          "frozen": {
+            "ids": [],
             "instants": [],
             "strings": [],
             "listFilteredTo": null
@@ -302,6 +490,71 @@
       },
       "dependsOn": [],
       "operations": [
+        {
+          "operationId": "ingestArtifactSbom",
+          "method": "POST",
+          "path": "/maintenance/api/artifacts/ingest",
+          "body": {
+            "ecosystem": "maven",
+            "name": "eu.wohlben.qits:qits-eventstream",
+            "version": "2026.811.1"
+          },
+          "status": 202,
+          "file": "manifests-that-pin-artifacts/ingestArtifactSbom.json",
+          "frozen": {
+            "ids": [
+              "$.id"
+            ],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        },
+        {
+          "operationId": "listArtifacts",
+          "method": "GET",
+          "path": "/maintenance/api/artifacts",
+          "status": 200,
+          "file": "manifests-that-pin-artifacts/listArtifacts.json",
+          "frozen": {
+            "ids": [],
+            "instants": [
+              "$[*].occurredAt"
+            ],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        },
+        {
+          "operationId": "listDependencies",
+          "method": "GET",
+          "path": "/maintenance/api/dependencies",
+          "status": 200,
+          "file": "manifests-that-pin-artifacts/listDependencies.json",
+          "frozen": {
+            "ids": [],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        },
+        {
+          "operationId": "listDependencyDependents",
+          "method": "GET",
+          "path": "/maintenance/api/dependencies/dependents",
+          "query": {
+            "ecosystem": "maven",
+            "name": "eu.wohlben.qits:qits-eventstream"
+          },
+          "status": 200,
+          "file": "manifests-that-pin-artifacts/listDependencyDependents.json",
+          "frozen": {
+            "ids": [],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        },
         {
           "operationId": "listDependencyPins",
           "method": "GET",
@@ -376,6 +629,28 @@
             ],
             "strings": [],
             "listFilteredTo": null
+          }
+        },
+        {
+          "operationId": "listBumps",
+          "method": "GET",
+          "path": "/maintenance/api/bumps",
+          "query": {
+            "limit": "20",
+            "repository": "contract-service"
+          },
+          "status": 200,
+          "file": "pending-bumps/listBumps.json",
+          "frozen": {
+            "ids": [
+              "$[*].id"
+            ],
+            "instants": [
+              "$[*].startedAt",
+              "$[*].finishedAt"
+            ],
+            "strings": [],
+            "listFilteredTo": "$"
           }
         },
         {

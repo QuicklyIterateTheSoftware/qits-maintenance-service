@@ -113,7 +113,8 @@ class GoldenMasterRecordingTest {
    * The pending bumps as the bumps menu asks for them: the newest 20, of every repository, filtered
    * to the state's own bumps; one of them in full; the estate reads qits-artifacts,
    * qits-orchestrator and qits-projects make; and a release request's automations as qits-projects
-   * and the CLI settle, read and re-run them.
+   * and the CLI settle, read and re-run them; and every other operation the landing app SDK and
+   * qits-maintenance-frontend call, so each one has a golden master (qits-1930).
    */
   static final List<Interaction> INTERACTIONS =
       List.of(
@@ -224,6 +225,116 @@ class GoldenMasterRecordingTest {
               "listDeployedPacts",
               "/maintenance/api/deployed-pacts",
               Map.of("provider", "{provider}"),
+              null),
+          // Every other operation (qits-1930): the landing app SDK, and qits-maintenance-frontend
+          // through its MaintenanceApi.
+          // The adoption journey of one release (MaintenanceApi.adoptionByRelease).
+          Interaction.read(
+              ProviderStates.A_REPOSITORY_WITH_DOWNSTREAM_COMPONENTS,
+              "getAdoptionByRelease",
+              "/maintenance/api/adoption/by-release",
+              Map.of("repository", "{repoName}", "version", "2026.905.1"),
+              null),
+          // Every artifact this platform publishes (MaintenanceApi.artifacts); one row per name.
+          new Interaction(
+              ProviderStates.MANIFESTS_THAT_PIN_ARTIFACTS,
+              "listArtifacts",
+              "GET",
+              "/maintenance/api/artifacts",
+              200,
+              null,
+              "$:name"),
+          // The landing app SDK's ingestArtifactSbom: read one released artifact's sbom now.
+          Interaction.write(
+              ProviderStates.MANIFESTS_THAT_PIN_ARTIFACTS,
+              "ingestArtifactSbom",
+              "/maintenance/api/artifacts/ingest",
+              202,
+              "{\"ecosystem\":\"maven\",\"name\":\"eu.wohlben.qits:qits-eventstream\","
+                  + "\"version\":\"2026.811.1\"}"),
+          // One repository's newest bumps (MaintenanceApi.bumps).
+          Interaction.read(
+              ProviderStates.PENDING_BUMPS,
+              "listBumps",
+              "/maintenance/api/bumps",
+              Map.of("repository", "contract-service", "limit", "20"),
+              "$"),
+          // The dispatcher's standing (qits-1696): what an agent reads about a stuck bump.
+          Interaction.read(
+              ProviderStates.BUMPS_OWED_TO_A_REPOSITORY,
+              "getBumpStanding",
+              "/maintenance/api/bumps/standing",
+              Map.of(),
+              null),
+          // The dependencies page (MaintenanceApi.dependencies), unfiltered; one row per name.
+          new Interaction(
+              ProviderStates.MANIFESTS_THAT_PIN_ARTIFACTS,
+              "listDependencies",
+              "GET",
+              "/maintenance/api/dependencies",
+              200,
+              null,
+              "$:name"),
+          // Who embeds one dependency (MaintenanceApi.artifactDependents).
+          Interaction.read(
+              ProviderStates.MANIFESTS_THAT_PIN_ARTIFACTS,
+              "listDependencyDependents",
+              "/maintenance/api/dependencies/dependents",
+              Map.of("ecosystem", "maven", "name", "eu.wohlben.qits:qits-eventstream"),
+              null),
+          // What this service remembers about a release request it opened (qits-1954).
+          Interaction.read(
+              ProviderStates.A_RELEASE_REQUEST_THIS_SERVICE_OPENED,
+              "getReleaseRequestMemory",
+              "/maintenance/api/release-requests/{requestId}",
+              Map.of(),
+              null),
+          // The repositories page (MaintenanceApi.repositories); one row per name.
+          new Interaction(
+              ProviderStates.A_REPOSITORY_WITH_DOWNSTREAM_COMPONENTS,
+              "listRepositories",
+              "GET",
+              "/maintenance/api/repositories",
+              200,
+              null,
+              "$:name"),
+          // Who embeds what one repository publishes (MaintenanceApi.repositoryDependents).
+          Interaction.read(
+              ProviderStates.A_REPOSITORY_WITH_DOWNSTREAM_COMPONENTS,
+              "listRepositoryDependents",
+              "/maintenance/api/repositories/{repoName}/dependents",
+              Map.of(),
+              null),
+          // The SBOM check's report and its button, as the landing app SDK reads and presses them.
+          Interaction.read(
+              ProviderStates.A_STORED_SBOM_CHECK_REPORT,
+              "getSbomCheckReport",
+              "/maintenance/api/sbom-check",
+              Map.of(),
+              null),
+          new Interaction(
+              ProviderStates.A_STORED_SBOM_CHECK_REPORT,
+              "runSbomCheck",
+              "POST",
+              "/maintenance/api/sbom-check/runs",
+              Map.of(),
+              202,
+              null,
+              null,
+              List.of(),
+              null),
+          // The scan button (MaintenanceApi.startScan) and the scan it is followed through.
+          Interaction.write(
+              ProviderStates.A_FINISHED_SCAN,
+              "requestScan",
+              "/maintenance/api/scans",
+              202,
+              "{\"scope\":\"INTERNAL\",\"repository\":\"{repoName}\"}"),
+          Interaction.read(
+              ProviderStates.A_FINISHED_SCAN,
+              "getScan",
+              "/maintenance/api/scans/{scanId}",
+              Map.of(),
               null));
 
   private static final ObjectMapper JSON = new ObjectMapper();

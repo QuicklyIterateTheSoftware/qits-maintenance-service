@@ -1,0 +1,11 @@
+{
+  "repository": "contract-ui-jslib",
+  "artifacts": [
+    {
+      "ecosystem": "npm",
+      "name": "@qits/contract-ui",
+      "latest": null,
+      "dependents": []
+    }
+  ]
+}
