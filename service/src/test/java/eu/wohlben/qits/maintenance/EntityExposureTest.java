@@ -20,7 +20,7 @@ import java.util.Set;
 @AnalyzeClasses(packages = "eu.wohlben.qits.maintenance", importOptions = ImportOption.DoNotIncludeTests.class)
 class EntityExposureTest {
 
-  static final Set<String> KNOWN_GAPS = Set.of("MtReleaseRequest qits-1954");
+  static final Set<String> KNOWN_GAPS = Set.of();
 
   @ArchTest
   static final ArchRule EXPOSED = EntityExposureRules.everyDomainEntityIsExposed(KNOWN_GAPS);

@@ -487,6 +487,39 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AutomationDto"
+    ReleaseRequestMemoryDto:
+      type: object
+      properties:
+        requestId:
+          type: string
+        repository:
+          type: string
+        opened:
+          type: boolean
+        purpose:
+          type: string
+        branch:
+          type: string
+        changes:
+          type: array
+          items:
+            type: object
+            additionalProperties: {}
+        openedAt:
+          $ref: "#/components/schemas/Instant"
+        upstreamRestarts:
+          type: integer
+          format: int32
+        upstreamRestartedAt:
+          $ref: "#/components/schemas/Instant"
+        starved:
+          type: boolean
+        withdrawnAt:
+          $ref: "#/components/schemas/Instant"
+        withdrawnReason:
+          type: string
+        updatedAt:
+          $ref: "#/components/schemas/Instant"
     RepositoryDependentsDto:
       type: object
       properties:
@@ -1106,6 +1139,43 @@ paths:
         - qits:desk
         - qits:system
         - qits:agent
+  /maintenance/api/release-requests/{requestId}:
+    get:
+      summary: What qits-maintenance remembers about one release request
+      operationId: getReleaseRequestMemory
+      parameters:
+      - name: requestId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: "Whether it opened the request and why, its upstream restarts,\
+            \ its withdrawal"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReleaseRequestMemoryDto"
+        "400":
+          description: Not a request id
+        "404":
+          description: "Nothing remembered about the request: never opened, restarted\
+            \ or withdrawn here"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      tags:
+      - Release Request Automation Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+        - qits:admin-agent
+        - qits:desk-admin
+        - qits:desk
+        - qits:system
+        - qits:agent
   /maintenance/api/release-requests/{requestId}/automations:
     post:
       summary: Settle a release request's automations at one fold
@@ -1461,4 +1531,4 @@ paths:
         - qits:agent
 info:
   title: qits-platform-maintenance API
-  version: 2026.1020.162040
+  version: 2026.1108.40035

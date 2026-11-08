@@ -3,8 +3,11 @@ package eu.wohlben.qits.maintenance.api;
 import eu.wohlben.qits.maintenance.automation.AutomationService;
 import eu.wohlben.qits.maintenance.automation.SettleGate;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto;
+import eu.wohlben.qits.maintenance.dto.ReleaseRequestMemoryDto;
 import eu.wohlben.qits.maintenance.error.BadRequestException;
+import eu.wohlben.qits.maintenance.error.NoSuchReleaseRequestException;
 import eu.wohlben.qits.maintenance.model.BumpTrigger;
+import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
@@ -25,9 +28,12 @@ import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
  * <b>A release request's automations</b> (epic qits-978): the every-fold trigger qits-projects posts,
  * the read its gate sweeps, and the operator's re-run.
  *
- * <p>Served under {@code /maintenance/api/release-requests}. The request is qits-projects' and this
- * service holds nothing about it but the rows its automations wrote, so the noun is the request and
- * the repository travels in the body — the trigger names it, and a re-run may.
+ * <p>Served under {@code /maintenance/api/release-requests}. The request is qits-projects'. This
+ * service holds the rows its automations wrote and, since V21 (qits-1133), a memory of its own side
+ * of the request — whether it opened it and why, the upstream restarts of its pre-run, and whether
+ * it withdrew it — readable at {@link #memory(String)}. Nothing here is the request itself, so the
+ * noun is the request and the repository travels in the body — the trigger names it, and a re-run
+ * may.
  *
  * <p><b>The same three roles as every door here</b>, {@code qits:admin}, {@code qits:system} and
  * {@code qits:agent}. The trigger is a machine's (qits-projects, on every fold) and the re-run a
@@ -36,8 +42,8 @@ import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
  * qits:admin-agent} is admitted too (qits-628 follow-up): an ADMIN workspace's coding agent carries
  * it alongside {@code qits:agent}, and for now it may use everything {@code qits:admin} may use.
  *
- * <p><b>{@code qits:desk} (qits-1596) is admitted only on the READ</b> ({@link
- * #automations(String, String)}), not on the trigger or the re-run. Those two are this service's
+ * <p><b>{@code qits:desk} (qits-1596) is admitted only on the READS</b> ({@link
+ * #automations(String, String)} and {@link #memory(String)}), not on the trigger or the re-run. Those two are this service's
  * actual write surface: a {@code REQUESTED} kind dispatches a bump row through {@link
  * eu.wohlben.qits.maintenance.bump.CiClient}, which is what pushes a branch into the repository on
  * qits-ci's side. The desk is admitted everywhere the coordinator is admitted EXCEPT a door that
@@ -56,6 +62,8 @@ public class ReleaseRequestAutomationController {
 
   /** The trigger's gate: one settle per request, off this thread, answered within a budget. */
   @Inject SettleGate settles;
+
+  @Inject MaintenanceStore store;
 
   /**
    * One fold, as qits-projects posts it after every fold of a request.
@@ -151,6 +159,38 @@ public class ReleaseRequestAutomationController {
             request.accepts(),
             request.backingBranch(),
             request.qualifiedId()));
+  }
+
+  /**
+   * <b>What this service remembers about one release request</b> (qits-1954): whether it opened the
+   * request and why, the changes a {@code MAIN_ONLY} one was opened for, the upstream restarts of
+   * its pre-run and whether the starvation guard now holds it, and whether this service withdrew
+   * it. A request an upstream release restarted but this service did not open is answered too, with
+   * {@code opened} false. A request it remembers nothing about is a 404 — which says nothing about
+   * whether qits-projects has it.
+   */
+  @GET
+  @Path("/{requestId}")
+  @Operation(
+      operationId = "getReleaseRequestMemory",
+      summary = "What qits-maintenance remembers about one release request")
+  @APIResponse(
+      responseCode = "200",
+      description = "Whether it opened the request and why, its upstream restarts, its withdrawal")
+  @APIResponse(responseCode = "400", description = "Not a request id")
+  @APIResponse(
+      responseCode = "404",
+      description = "Nothing remembered about the request: never opened, restarted or withdrawn here")
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:desk-admin", "qits:desk", "qits:system", "qits:agent"})
+  public ReleaseRequestMemoryDto memory(@PathParam("requestId") String requestId) {
+    String id = requestId == null ? null : requestId.trim();
+    if (id == null || id.isEmpty()) {
+      throw new BadRequestException("name the release request");
+    }
+    return store
+        .releaseRequest(id)
+        .map(ReleaseRequestMemoryDto::from)
+        .orElseThrow(() -> new NoSuchReleaseRequestException(id));
   }
 
   /**
