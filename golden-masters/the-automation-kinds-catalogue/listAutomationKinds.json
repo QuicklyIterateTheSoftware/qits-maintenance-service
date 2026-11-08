@@ -61,7 +61,8 @@
       "committablePaths": [
         ":(glob)**/__screenshots__/**",
         ":(glob)**/testing/browser/renderer.txt",
-        ":(glob)**/testing/browser/routes.json"
+        ":(glob)**/testing/browser/routes.json",
+        ":(glob)**/testing/browser/freezes/**"
       ],
       "approvalRoles": [
         "agent",

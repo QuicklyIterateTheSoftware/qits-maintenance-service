@@ -13,7 +13,8 @@ class PathspecsTest {
       List.of(
           ":(glob)**/__screenshots__/**",
           ":(glob)**/testing/browser/renderer.txt",
-          ":(glob)**/testing/browser/routes.json");
+          ":(glob)**/testing/browser/routes.json",
+          ":(glob)**/testing/browser/freezes/**");
 
   @Test
   void globMagicSpansDirectoriesOnlyWithTwoStars() {
@@ -23,8 +24,11 @@ class PathspecsTest {
     assertTrue(Pathspecs.matchesAny(SCREENSHOTS, "testing/browser/renderer.txt"));
     assertTrue(Pathspecs.matchesAny(SCREENSHOTS, "src/testing/browser/routes.json"));
     assertTrue(Pathspecs.matchesAny(SCREENSHOTS, "testing/browser/routes.json"));
+    assertTrue(Pathspecs.matchesAny(SCREENSHOTS, "src/testing/browser/freezes/home.html"));
+    assertTrue(Pathspecs.matchesAny(SCREENSHOTS, "testing/browser/freezes/manifest.json"));
     assertFalse(Pathspecs.matchesAny(SCREENSHOTS, "src/app/x.ts"));
     assertFalse(Pathspecs.matchesAny(SCREENSHOTS, "src/app/__screenshots__"), "the directory alone");
+    assertFalse(Pathspecs.matchesAny(SCREENSHOTS, "src/testing/browser/freezes"), "the directory alone");
     assertFalse(Pathspecs.matchesAny(SCREENSHOTS, "src/testing/browser/renderer.txt.bak"));
     assertFalse(Pathspecs.matchesAny(SCREENSHOTS, "src/testing/browser/routes.json.bak"));
     assertFalse(Pathspecs.matches(":(glob)src/*.ts", "src/app/x.ts"), "one star stays in a segment");
