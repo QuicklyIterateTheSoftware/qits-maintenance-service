@@ -98,7 +98,8 @@ import org.jboss.logging.Logger;
  *
  * <p>The kinds are settled in their {@link Stage} order: every SOURCE kind first ({@code
  * estate-pins}, {@code dependency-bump} — build inputs), then every DERIVED one ({@code
- * screenshot-baselines}, {@code entity-diagram} — output built from those inputs). A DERIVED kind is
+ * screenshot-baselines}, {@code entity-diagram}, {@code entity-exposure} — output built from those
+ * inputs). A DERIVED kind is
  * neither planned nor stored while any applicable SOURCE kind is not FRESH at the fold: it answers
  * WAITING, and the ask after the sources settle decides it. A SOURCE commit is a new fold, so the
  * DERIVED kinds run again on what it wrote; their carry-over is over their own stage's paths (and

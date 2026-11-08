@@ -20,7 +20,8 @@ public record AutomationKindsDto(List<KindDto> kinds) {
    * One kind, as the catalogue serves it.
    *
    * @param kind the wire name: {@code screenshot-baselines}, {@code entity-diagram}, {@code
-   *     estate-pins}, {@code dependency-bump}
+   *     estate-pins}, {@code dependency-bump}, {@code cli-tapes}, {@code golden-recordings-maven},
+   *     {@code golden-recordings-npm}, {@code entity-exposure}
    * @param label what the release request page prints: {@code Screenshot baselines}
    * @param committablePaths the git pathspecs a run of this kind may commit; nothing else is ever
    *     staged

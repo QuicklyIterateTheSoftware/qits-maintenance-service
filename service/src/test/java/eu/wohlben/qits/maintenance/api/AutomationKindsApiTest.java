@@ -35,6 +35,7 @@ class AutomationKindsApiTest {
                 "cli-tapes",
                 "dependency-bump",
                 "entity-diagram",
+                "entity-exposure",
                 "estate-pins",
                 "golden-recordings-maven",
                 "golden-recordings-npm",
@@ -58,6 +59,15 @@ class AutomationKindsApiTest {
             contains(":(glob)tapes/golden/**", ":(glob)tapes/recordings/**"))
         .body(
             "kinds.find { it.kind == 'cli-tapes' }.approvalRoles", contains("agent", "person"))
+        .body(
+            "kinds.find { it.kind == 'entity-exposure' }.label",
+            org.hamcrest.Matchers.is("Entity exposure map"))
+        .body(
+            "kinds.find { it.kind == 'entity-exposure' }.committablePaths",
+            contains("docs/entities.json"))
+        .body(
+            "kinds.find { it.kind == 'entity-exposure' }.approvalRoles",
+            contains("agent", "person"))
         .body("kinds.find { it.kind == 'estate-pins' }.approvalRoles", empty())
         .body("kinds.find { it.kind == 'dependency-bump' }.approvalRoles", empty())
         .body(
