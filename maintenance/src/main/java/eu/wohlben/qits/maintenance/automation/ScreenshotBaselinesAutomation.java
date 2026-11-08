@@ -36,17 +36,21 @@ import java.util.Set;
  * {@code **}{@code /testing/browser/routes.json} — the route ledger @qits/angular's browser harness
  * writes beside the references, which the app's pacts read their {@code qits-trigger.route} from —
  * and nothing else — qits-ci's postlude stages the payload's {@code commitPaths} and only those.
- * The renderer record and the references are this kind's output and no other kind's input. The
- * route ledger is not: it IS {@code golden-recordings-npm}'s input (qits-1957), because the app's
- * golden masters stamp its routes into the pacts, so a join of this kind that changed {@code
- * routes.json} re-plans that kind, which re-records the pacts against it. It does not loop: this
- * kind declares no inputs and carries over a fold that changed only automation output — its own
- * paths and the pacts alike — which is what lets the re-fold either join causes be carried here
- * rather than run again.
+ * Nothing any other kind reads is in either: the renderer record, the route ledger and the
+ * references are this kind's output and no other kind's input, which is what lets the re-fold its
+ * own join causes be carried rather than run again.
  */
 @ApplicationScoped
 public class ScreenshotBaselinesAutomation implements ReleaseRequestAutomation {
 
+  /**
+   * The kind id. <b>Its route ledger is one other kind's input</b> (qits-1957), whatever the class
+   * javadoc's invariant says of its outputs: the app's golden masters stamp {@code routes.json}'s
+   * routes into the pacts, so {@code golden-recordings-npm} declares it among its inputs and a join
+   * of this kind that changed it re-plans that kind, which re-records the pacts against it. It does
+   * not loop: this kind declares no inputs and carries over a fold that changed only automation
+   * output, its own paths and the pacts alike.
+   */
   public static final String KIND = "screenshot-baselines";
 
   /** The script the run calls, in the fold's {@code package.json}. */
