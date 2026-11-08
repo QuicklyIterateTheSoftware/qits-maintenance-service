@@ -1260,9 +1260,24 @@
       "marking" : "domain",
       "reason" : null,
       "projectionOf" : null,
-      "knownGap" : "qits-1954",
-      "dtos" : [ ],
-      "operations" : [ ]
+      "knownGap" : null,
+      "dtos" : [
+        {
+          "type" : "eu.wohlben.qits.maintenance.dto.ReleaseRequestMemoryDto",
+          "kind" : "factory",
+          "via" : null,
+          "site" : "ReleaseRequestMemoryDto.from(MtReleaseRequest)"
+        }
+      ],
+      "operations" : [
+        {
+          "operationId" : "getReleaseRequestMemory",
+          "method" : "GET",
+          "path" : "/release-requests/{requestId}",
+          "dto" : "eu.wohlben.qits.maintenance.dto.ReleaseRequestMemoryDto",
+          "kind" : "returns"
+        }
+      ]
     },
     {
       "entity" : "eu.wohlben.qits.maintenance.entity.MtRepository",
@@ -1435,6 +1450,12 @@
           "site" : "ReleaseRequestAutomationsDto.automations()"
         },
         {
+          "type" : "eu.wohlben.qits.maintenance.dto.ReleaseRequestMemoryDto",
+          "kind" : "factory",
+          "via" : null,
+          "site" : "ReleaseRequestMemoryDto.from(MtReleaseRequest)"
+        },
+        {
           "type" : "eu.wohlben.qits.maintenance.dto.RepositoryDependentsDto",
           "kind" : "assembler",
           "via" : null,
@@ -1515,6 +1536,13 @@
           "method" : "GET",
           "path" : "/bumps/standing",
           "dto" : "eu.wohlben.qits.maintenance.dto.BumpStandingDto",
+          "kind" : "returns"
+        },
+        {
+          "operationId" : "getReleaseRequestMemory",
+          "method" : "GET",
+          "path" : "/release-requests/{requestId}",
+          "dto" : "eu.wohlben.qits.maintenance.dto.ReleaseRequestMemoryDto",
           "kind" : "returns"
         },
         {
