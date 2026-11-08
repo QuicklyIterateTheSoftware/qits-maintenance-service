@@ -16,6 +16,7 @@ import eu.wohlben.qits.maintenance.dto.PinDto;
 import eu.wohlben.qits.maintenance.dto.DeployedPactsDto;
 import eu.wohlben.qits.maintenance.dto.PinSourceDto;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto;
+import eu.wohlben.qits.maintenance.dto.ReleaseRequestMemoryDto;
 import eu.wohlben.qits.maintenance.dto.RepositoryDependentsDto;
 import eu.wohlben.qits.maintenance.dto.RepositoryDetailDto;
 import eu.wohlben.qits.maintenance.dto.RepositoryDto;
@@ -50,6 +51,7 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
       ReleaseRequestAutomationController.RunRequest.class,
       ReleaseRequestAutomationsDto.class,
       ReleaseRequestAutomationsDto.AutomationDto.class,
+      ReleaseRequestMemoryDto.class,
       // The automation kinds catalogue (epic qits-1038): qits-projects' AutomationContentSource
       // reads it to open approval requirements from a kind's own declaration.
       AutomationKindsDto.class,
