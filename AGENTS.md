@@ -305,10 +305,12 @@ to the pool, and a settle that fails within the budget rethrows its own exceptio
 
 **THE PRE-RUN HAS TWO STAGES (qits-1133), AND `dependency-bump` IS THE FOURTH KIND.** Every kind
 says its `Stage`: SOURCE (`estate-pins`, `dependency-bump` — build inputs) is settled first, DERIVED
-(`screenshot-baselines`, `entity-diagram`, qits-881's `cli-tapes` — built from those inputs) is neither planned nor stored
+(`screenshot-baselines`, `entity-diagram`, qits-881's `cli-tapes`, qits-1516's `golden-recordings-*`, qits-1958's
+`entity-exposure` — built from those inputs) is neither planned nor stored
 until every applicable SOURCE kind is FRESH at the fold, and answers WAITING until then. Carry-over is
 per stage: a DERIVED kind's union is its own stage's paths, so a SOURCE commit (a pom the bump moved)
 re-runs it, and a kind that declares `inputPaths()` (`entity-diagram`: `**/*.java`, `**/pom.xml`;
+`entity-exposure`: those two and `.config/qits/release.yml`, never the `docs/entities.json` it writes;
 `dependency-bump`: its manifests, `.gitmodules`, `maintenance.yml`, `repository.yml`; `estate-pins`: `.gitmodules` and
 its gitlinks) carries exactly when the fold
 touched none of them. `committablePaths` stay pairwise disjoint across ALL kinds; "no output is
@@ -343,6 +345,14 @@ its `release.yml` slot, else its own recipe copy, else qits-ci's packaged recipe
 stored, unless the previous fold's outcome carries over (then FRESH, as today). Applicability is still
 decided and their paths stay in the union. Any other caller gets today's pre-run. The re-run door
 runs them either way (`QaCheckedAutomationTest`).
+
+**`entity-exposure` (qits-1958) is not one of them.** It regenerates the entity exposure map
+(qits-1945) by running `EntityExposureTest` with `-Dgolden.update=true` at the fold, and applies
+exactly when the fold's `.config/qits/release.yml` declares `contracts.entities` — never from the
+repository's name. It commits exactly that declared path (`docs/entities.json` by convention). Its
+`checkedByQa()` is false, as for `golden-recordings-*`: the gate's own `EntityExposureTest.map`
+fails a stale map as a test failure, so the kind runs before QA instead of being DEFERRED. Its
+other rules still fail in update mode on an unmarked entity, so that run fails and commits nothing.
 
 **GROUP BUMPS ARE RETIRED (qits-1133: switched off in R2, removed in R5).** Nothing writes a
 `maintenance/<group>` branch, and there is no code left that could: no `BumpService.request`, no

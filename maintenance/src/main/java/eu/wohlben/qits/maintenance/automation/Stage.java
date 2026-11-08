@@ -13,7 +13,8 @@ package eu.wohlben.qits.maintenance.automation;
  *   <li><b>{@link #SOURCE}</b> — writes BUILD INPUTS: {@code estate-pins} and {@code
  *       dependency-bump}. Always planned; nothing to change is FRESH with no run.
  *   <li><b>{@link #DERIVED}</b> — writes output generated FROM the build inputs: {@code
- *       screenshot-baselines} and {@code entity-diagram}. Planned only once every applicable SOURCE
+ *       screenshot-baselines}, {@code entity-diagram}, {@code cli-tapes}, the {@code
+ *       golden-recordings-*} pair and {@code entity-exposure}. Planned only once every applicable SOURCE
  *       kind is FRESH at the fold; until then it answers {@link AutomationState#WAITING}. A SOURCE
  *       commit is a new fold, and that is what re-runs the DERIVED kinds.
  * </ul>

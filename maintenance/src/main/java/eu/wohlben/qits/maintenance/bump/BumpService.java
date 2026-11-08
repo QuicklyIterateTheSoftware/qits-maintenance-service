@@ -35,7 +35,8 @@ import org.jboss.logging.Logger;
  *
  * <p><b>An AUTOMATION row is {@link AutomationService}'s</b> (qits-978): its dispatch, its caps,
  * its payload and its ending are written once there for every kind — {@code dependency-bump}, {@code
- * estate-pins}, {@code screenshot-baselines}, {@code entity-diagram} — and this class only routes:
+ * estate-pins}, {@code screenshot-baselines}, {@code entity-diagram}, {@code entity-exposure} and
+ * the rest — and this class only routes:
  * {@link #dispatch} and the poll's ending hand such a row over, and {@link #sweep} reaches it like
  * any other active row. What is shared, and therefore lives here, is reading a CI run to its
  * verdict — through qits-ci's automatic retries (qits-760) — because every kind's run is judged the

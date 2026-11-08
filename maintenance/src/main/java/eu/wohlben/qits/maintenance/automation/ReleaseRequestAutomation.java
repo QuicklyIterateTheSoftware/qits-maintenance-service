@@ -8,7 +8,8 @@ import java.util.Set;
  * <b>A release-request automation</b> (epic qits-978): a regeneration that has to land INSIDE a
  * release request, run on every fold of that request, joined to it, and held against it until it is
  * fresh for the sha the request is about to release. Estate pins and screenshot baselines were the
- * first two; qits-760's entity diagram and qits-1133's dependency bump followed, each one more
+ * first two; qits-760's entity diagram, qits-1133's dependency bump, qits-881's CLI tapes,
+ * qits-1516's golden recordings and qits-1958's entity exposure map followed, each one more
  * implementation of this interface plus one kind file in qits-ci — no page, no gate and no door
  * changes.
  *
@@ -29,7 +30,8 @@ public interface ReleaseRequestAutomation {
 
   /**
    * Stable id, {@code [a-z0-9-]+}: the wire name, the row's {@code automation_kind} and the branch
-   * segment — {@code estate-pins}, {@code screenshot-baselines}, qits-760's {@code entity-diagram}.
+   * segment — {@code estate-pins}, {@code screenshot-baselines}, qits-760's {@code entity-diagram}, qits-1958's {@code
+   * entity-exposure}.
    */
   String kind();
 

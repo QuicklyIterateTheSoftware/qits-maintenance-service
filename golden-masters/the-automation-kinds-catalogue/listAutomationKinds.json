@@ -38,6 +38,17 @@
       ]
     },
     {
+      "kind": "entity-exposure",
+      "label": "Entity exposure map",
+      "committablePaths": [
+        "docs/entities.json"
+      ],
+      "approvalRoles": [
+        "agent",
+        "person"
+      ]
+    },
+    {
       "kind": "estate-pins",
       "label": "Estate pins",
       "committablePaths": [],
