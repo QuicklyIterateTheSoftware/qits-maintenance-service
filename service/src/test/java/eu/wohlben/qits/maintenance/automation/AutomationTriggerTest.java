@@ -217,7 +217,9 @@ class AutomationTriggerTest {
                 FOLD_B,
                 FOLD_A,
                 List.of(
-                    "src/app/home/__screenshots__/home.png", "src/testing/browser/renderer.txt")));
+                    "src/app/home/__screenshots__/home.png",
+                    "src/testing/browser/renderer.txt",
+                    "src/testing/browser/routes.json")));
 
     assertEquals(AutomationState.FRESH.name(), entry.state(), entry.detail());
     assertTrue(entry.detail().contains("carried"), entry.detail());

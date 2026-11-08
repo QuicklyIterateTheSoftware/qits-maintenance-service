@@ -32,11 +32,13 @@ import java.util.Set;
  *
  * <h2>What it may commit, and the invariant it keeps</h2>
  *
- * <p>{@code **}{@code /__screenshots__/**} and {@code **}{@code /testing/browser/renderer.txt}, and
- * nothing else — qits-ci's postlude stages the payload's {@code commitPaths} and only those. Nothing
- * any other kind reads is in either: the renderer record and the references are this kind's output
- * and no other kind's input, which is what lets the re-fold its own join causes be carried rather
- * than run again.
+ * <p>{@code **}{@code /__screenshots__/**}, {@code **}{@code /testing/browser/renderer.txt} and
+ * {@code **}{@code /testing/browser/routes.json} — the route ledger @qits/angular's browser harness
+ * writes beside the references, which the app's pacts read their {@code qits-trigger.route} from —
+ * and nothing else — qits-ci's postlude stages the payload's {@code commitPaths} and only those.
+ * Nothing any other kind reads is in either: the renderer record, the route ledger and the
+ * references are this kind's output and no other kind's input, which is what lets the re-fold its
+ * own join causes be carried rather than run again.
  */
 @ApplicationScoped
 public class ScreenshotBaselinesAutomation implements ReleaseRequestAutomation {
@@ -52,7 +54,10 @@ public class ScreenshotBaselinesAutomation implements ReleaseRequestAutomation {
   static final String PACKAGE_JSON = "package.json";
 
   private static final List<String> PATHS =
-      List.of(":(glob)**/__screenshots__/**", ":(glob)**/testing/browser/renderer.txt");
+      List.of(
+          ":(glob)**/__screenshots__/**",
+          ":(glob)**/testing/browser/renderer.txt",
+          ":(glob)**/testing/browser/routes.json");
 
   private static final ObjectMapper JSON = new ObjectMapper();
 
