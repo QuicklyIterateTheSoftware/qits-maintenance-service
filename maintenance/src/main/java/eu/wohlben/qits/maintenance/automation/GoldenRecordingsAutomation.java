@@ -136,8 +136,9 @@ public abstract class GoldenRecordingsAutomation implements ReleaseRequestAutoma
 
   /**
    * What {@code screenshot-baselines} writes under an app's sources that no pact spec reads: the
-   * references, the renderer record and the frozen pages (qits-1947). Its route ledger, {@code routes.json}, is NOT here — the
-   * app's golden masters stamp its routes into the pacts (qits-1957).
+   * references, the renderer record and the frozen pages (qits-1947). Its route ledger, {@code
+   * routes.json}, is NOT here — the app's golden masters stamp its routes into the pacts
+   * (qits-1957).
    */
   static final List<String> SCREENSHOT_OUTPUT =
       List.of(
