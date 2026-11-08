@@ -1,0 +1,16 @@
+{
+  "ranAt": "2026-01-01T00:00:00Z",
+  "filed": false,
+  "entries": [
+    {
+      "project": "qits",
+      "repository": "contract-service",
+      "ecosystem": "maven",
+      "name": "eu.wohlben.qits:contract-no-sbom",
+      "version": "2026.1001.1",
+      "reason": "MISSING"
+    }
+  ],
+  "warnings": [],
+  "tickets": []
+}

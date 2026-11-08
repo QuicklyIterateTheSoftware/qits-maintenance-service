@@ -1,6 +1,7 @@
 package eu.wohlben.qits.maintenance.automation;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.bootstrap.graph.Ecosystem;
@@ -27,7 +28,8 @@ import org.junit.jupiter.api.Test;
  * {@link GitHostReader} and a scripted {@link ManifestScanner} — no Quarkus, no network: the build
  * shape that splits the two, the golden-masters pin that makes either apply, the per-subject pacts
  * path, and the plan's comparison of the fold's pins against {@code main}'s — and, since qits-1782,
- * the three-part library-kit pacts that make a library's pin a recording input too.
+ * the three-part library-kit pacts that make a library's pin a recording input too, and, since
+ * qits-1957, the consumer's own recording sources compared tree against tree.
  */
 class GoldenRecordingsAutomationTest {
 
@@ -141,6 +143,44 @@ class GoldenRecordingsAutomationTest {
     @Override
     public TreeLookup tree(String project, String repository, String revision, String path) {
       return trees.getOrDefault(path, TreeLookup.absent());
+    }
+
+    /**
+     * Whole trees by revision (qits-1957). A revision with none is an empty recursive tree: no
+     * sources on either side, so a test that is not about them compares equal sources.
+     */
+    private final Map<String, TreeLookup> wholeTrees = new HashMap<>();
+
+    /** Every whole tree read, by revision. */
+    final List<String> wholeTreeReads = new ArrayList<>();
+
+    /** A recursive tree at {@code revision} holding these blobs, path to sha. */
+    Host wholeTree(String revision, Map<String, String> blobs) {
+      wholeTrees.put(
+          revision,
+          TreeLookup.foundRecursive(
+              SHA,
+              blobs.entrySet().stream()
+                  .map(
+                      blob -> {
+                        String path = blob.getKey();
+                        return new TreeLookup.TreeEntry(
+                            path.substring(path.lastIndexOf('/') + 1), "blob", "100644",
+                            blob.getValue(), path);
+                      })
+                  .toList()));
+      return this;
+    }
+
+    Host wholeTree(String revision, TreeLookup tree) {
+      wholeTrees.put(revision, tree);
+      return this;
+    }
+
+    @Override
+    public TreeLookup recursiveTree(String project, String repository, String revision) {
+      wholeTreeReads.add(revision);
+      return wholeTrees.getOrDefault(revision, TreeLookup.foundRecursive(SHA, List.of()));
     }
   }
 
@@ -310,7 +350,7 @@ class GoldenRecordingsAutomationTest {
       assertEquals(Target.OWN_BRANCH, kind.target(), kind.kind());
       assertEquals(List.of(), kind.committablePaths(), kind.kind());
       assertEquals(Set.of(), kind.approvalRoles(), kind.kind());
-      assertEquals(DependencyBumpAutomation.MANIFESTS, kind.inputPaths(), kind.kind());
+      assertTrue(kind.inputPaths().containsAll(DependencyBumpAutomation.MANIFESTS), kind.kind());
       assertEquals(false, kind.planIsTheChangeList(), kind.kind());
       assertEquals(false, kind.checkedByQa(), kind.kind());
     }
@@ -720,5 +760,244 @@ class GoldenRecordingsAutomationTest {
     npm.store = new Store().with("qits-ui-components-jslib", "main");
     npm.gitHost = new Host().releaseYml("qits-ui-components-jslib", UI_COMPONENTS_RELEASE_YML);
     assertEquals(Plan.Kind.RUN, npm.plan(subject).kind(), "by the npm name its release.yml lists");
+  }
+
+  // --- the recording sources (qits-1957) ------------------------------------------------------
+
+  private static final Map<String, String> NPM_APP =
+      Map.of(
+          "package.json", "1111111111111111111111111111111111111111",
+          "src/app/x/x.store.pact.spec.ts", "2222222222222222222222222222222222222222",
+          "src/testing/golden-masters.ts", "3333333333333333333333333333333333333333",
+          "src/testing/browser/routes.json", "4444444444444444444444444444444444444444",
+          "src/testing/browser/renderer.txt", "5555555555555555555555555555555555555555",
+          "src/app/x/__screenshots__/a.png", "6666666666666666666666666666666666666666",
+          "pacts/app_qits-projects-service.json", "7777777777777777777777777777777777777777",
+          "README.md", "8888888888888888888888888888888888888888");
+
+  private static final Map<String, String> MAVEN_CONSUMER =
+      Map.of(
+          "pom.xml", "1111111111111111111111111111111111111111",
+          "service/src/main/java/eu/wohlben/SomeClient.java",
+          "2222222222222222222222222222222222222222",
+          "service/src/test/java/eu/wohlben/SomeClientPactTest.java",
+          "3333333333333333333333333333333333333333",
+          "pacts/qits-maintenance-service_qits-githost-service.json",
+          "4444444444444444444444444444444444444444",
+          "docs/README.md", "5555555555555555555555555555555555555555");
+
+  /** {@code base} with one path's sha changed: what a fold that edited only that file holds. */
+  private static Map<String, String> edited(Map<String, String> base, String path) {
+    Map<String, String> out = new HashMap<>(base);
+    out.put(path, "9999999999999999999999999999999999999999");
+    return out;
+  }
+
+  /**
+   * An npm app whose pins agree with main's: the fold tree on the subject's host, main's on the
+   * kind's own, the way the plan reads them.
+   */
+  private AutomationSubject npmWithEqualPins(Map<String, String> fold, Map<String, String> main) {
+    npm.scanner =
+        new Scanner().at(SHA, npmGolden("2026.1022.1")).at("main", npmGolden("2026.1022.1"));
+    npm.gitHost = new Host().wholeTree("main", main);
+    return subject(new Host().blob("package.json", PACKAGE_WITH).wholeTree(SHA, fold));
+  }
+
+  private AutomationSubject mavenWithEqualPins(Map<String, String> fold, Map<String, String> main) {
+    maven.scanner =
+        new Scanner().at(SHA, mavenGolden("2026.1022.1")).at("main", mavenGolden("2026.1022.1"));
+    maven.gitHost = new Host().wholeTree("main", main);
+    return subject(new Host().blob("pom.xml", POM_WITH_PROPERTY).wholeTree(SHA, fold));
+  }
+
+  /** The route ledger screenshot-baselines writes is what the golden masters stamp into the pacts. */
+  @Test
+  void npmPinsEqualButANewRouteLedgerRuns() {
+    Plan plan =
+        npm.plan(npmWithEqualPins(edited(NPM_APP, "src/testing/browser/routes.json"), NPM_APP));
+
+    assertEquals(Plan.Kind.RUN, plan.kind(), plan.reason());
+    assertEquals(Map.of(), plan.runs().getFirst().extras(), "commitPaths are the kind's own");
+  }
+
+  @Test
+  void npmPinsEqualButAChangedPactSpecRuns() {
+    Plan plan =
+        npm.plan(npmWithEqualPins(edited(NPM_APP, "src/app/x/x.store.pact.spec.ts"), NPM_APP));
+
+    assertEquals(Plan.Kind.RUN, plan.kind(), plan.reason());
+  }
+
+  @Test
+  void npmPinsEqualButAnAddedOrRemovedSourceRuns() {
+    Map<String, String> added = new HashMap<>(NPM_APP);
+    added.put("src/app/y/y.store.pact.spec.ts", "aaaa000000000000000000000000000000000000");
+
+    assertEquals(Plan.Kind.RUN, npm.plan(npmWithEqualPins(added, NPM_APP)).kind(), "added");
+    assertEquals(Plan.Kind.RUN, npm.plan(npmWithEqualPins(NPM_APP, added)).kind(), "removed");
+  }
+
+  @Test
+  void mavenPinsEqualButAChangedClientRuns() {
+    Plan plan =
+        maven.plan(
+            mavenWithEqualPins(
+                edited(MAVEN_CONSUMER, "service/src/main/java/eu/wohlben/SomeClient.java"),
+                MAVEN_CONSUMER));
+
+    assertEquals(Plan.Kind.RUN, plan.kind(), plan.reason());
+  }
+
+  @Test
+  void equalPinsAndEqualSourcesAreFresh() {
+    Plan npmPlan = npm.plan(npmWithEqualPins(NPM_APP, NPM_APP));
+    assertEquals(Plan.Kind.FRESH, npmPlan.kind(), npmPlan.reason());
+    assertTrue(npmPlan.reason().contains("every source"), npmPlan.reason());
+
+    Plan mavenPlan = maven.plan(mavenWithEqualPins(MAVEN_CONSUMER, MAVEN_CONSUMER));
+    assertEquals(Plan.Kind.FRESH, mavenPlan.kind(), mavenPlan.reason());
+  }
+
+  /**
+   * What no pact spec reads is not compared: screenshot references and the renderer record, the
+   * recorded pacts themselves, a README — nor, for maven, a change outside {@code src/}.
+   */
+  @Test
+  void changesOutsideTheSourcesAreFresh() {
+    Map<String, String> fold = edited(NPM_APP, "src/app/x/__screenshots__/a.png");
+    fold = edited(fold, "src/testing/browser/renderer.txt");
+    fold = edited(fold, "pacts/app_qits-projects-service.json");
+    fold = edited(fold, "README.md");
+    Plan plan = npm.plan(npmWithEqualPins(fold, NPM_APP));
+    assertEquals(Plan.Kind.FRESH, plan.kind(), plan.reason());
+
+    Plan mavenPlan =
+        maven.plan(
+            mavenWithEqualPins(
+                edited(
+                    edited(MAVEN_CONSUMER, "docs/README.md"),
+                    "pacts/qits-maintenance-service_qits-githost-service.json"),
+                MAVEN_CONSUMER));
+    assertEquals(Plan.Kind.FRESH, mavenPlan.kind(), mavenPlan.reason());
+  }
+
+  /** Re-recording when nothing moved writes nothing: a tree that cannot be compared is a run. */
+  @Test
+  void anUnreadableOrNonRecursiveMainTreeRuns() {
+    AutomationSubject subject = npmWithEqualPins(NPM_APP, NPM_APP);
+    npm.gitHost = new Host().wholeTree("main", TreeLookup.unreachable("connection refused"));
+    assertEquals(Plan.Kind.RUN, npm.plan(subject).kind(), "unreachable");
+
+    npm.gitHost = new Host().wholeTree("main", TreeLookup.gone());
+    assertEquals(Plan.Kind.RUN, npm.plan(subject).kind(), "gone");
+
+    npm.gitHost = new Host().wholeTree("main", TreeLookup.found(SHA, List.of()));
+    assertEquals(Plan.Kind.RUN, npm.plan(subject).kind(), "an older git host's plain listing");
+  }
+
+  @Test
+  void anUnreadableOrNonRecursiveFoldTreeRuns() {
+    npmWithEqualPins(NPM_APP, NPM_APP);
+    Host unreachable =
+        new Host()
+            .blob("package.json", PACKAGE_WITH)
+            .wholeTree(SHA, TreeLookup.unreachable("connection refused"));
+    assertEquals(Plan.Kind.RUN, npm.plan(subject(unreachable)).kind(), "unreachable");
+
+    Host plain =
+        new Host()
+            .blob("package.json", PACKAGE_WITH)
+            .wholeTree(SHA, TreeLookup.found(SHA, List.of()));
+    assertEquals(
+        Plan.Kind.RUN, npm.plan(subject(plain)).kind(), "an older git host's plain listing");
+  }
+
+  /** A source the host names without its sha cannot be compared either. */
+  @Test
+  void aSourceWithoutItsShaRuns() {
+    AutomationSubject subject = npmWithEqualPins(NPM_APP, NPM_APP);
+    npm.gitHost =
+        new Host()
+            .wholeTree(
+                "main",
+                TreeLookup.foundRecursive(
+                    SHA,
+                    List.of(
+                        new TreeLookup.TreeEntry(
+                            "routes.json", "blob", null, null,
+                            "src/testing/browser/routes.json"))));
+    assertEquals(Plan.Kind.RUN, npm.plan(subject).kind());
+  }
+
+  /** The cheap answer first: a moved pin runs before either tree is read. */
+  @Test
+  void aMovedPinRunsWithoutReadingTheTrees() {
+    Host fold = new Host().blob("package.json", PACKAGE_WITH).wholeTree(SHA, NPM_APP);
+    Host main = new Host().wholeTree("main", NPM_APP);
+    npm.gitHost = main;
+    npm.scanner =
+        new Scanner().at(SHA, npmGolden("2026.1022.2")).at("main", npmGolden("2026.1022.1"));
+
+    assertEquals(Plan.Kind.RUN, npm.plan(subject(fold)).kind());
+    assertEquals(List.of(), fold.wholeTreeReads, "the fold's tree is not read");
+    assertEquals(List.of(), main.wholeTreeReads, "main's tree is not read");
+  }
+
+  /** The fold's tree is read once; main's, on the kind's own reader, at the target's main. */
+  @Test
+  void equalPinsReadBothTreesOnce() {
+    Host fold = new Host().blob("package.json", PACKAGE_WITH).wholeTree(SHA, NPM_APP);
+    Host main = new Host().wholeTree("main", NPM_APP);
+    npm.gitHost = main;
+    npm.scanner =
+        new Scanner().at(SHA, npmGolden("2026.1022.1")).at("main", npmGolden("2026.1022.1"));
+
+    assertEquals(Plan.Kind.FRESH, npm.plan(subject(fold)).kind());
+    assertEquals(List.of(SHA), fold.wholeTreeReads);
+    assertEquals(List.of("main"), main.wholeTreeReads);
+  }
+
+  /**
+   * What each kind declares it reads (qits-1957): a fold that touched one of these is planned
+   * again rather than carried, and the screenshot output under {@code src/} still carries.
+   */
+  @Test
+  void theInputsAreTheManifestsAndTheKindsOwnSources() {
+    AutomationSubject npmFold = subject(new Host().blob("package.json", PACKAGE_WITH));
+    List<String> npmInputs = npm.inputPaths(npmFold);
+    for (String read :
+        List.of(
+            "package.json", "package-lock.json", "src/testing/browser/routes.json",
+            "src/app/x/x.store.pact.spec.ts", "src/testing/golden-masters.ts", "angular.json",
+            "tsconfig.json", "tsconfig.spec.json", "vitest.config.ts")) {
+      assertTrue(Pathspecs.matchesAny(npmInputs, read), read);
+      assertTrue(Pathspecs.matchesAny(npm.inputPaths(), read), "static: " + read);
+    }
+    for (String unread :
+        List.of(
+            "src/app/x/__screenshots__/a.png", "src/testing/browser/renderer.txt",
+            "pacts/app_qits-projects-service.json", "README.md")) {
+      assertFalse(Pathspecs.matchesAny(npmInputs, unread), unread);
+      assertFalse(Pathspecs.matchesAny(npm.inputPaths(), unread), "static: " + unread);
+    }
+
+    AutomationSubject mavenFold = subject(new Host().blob("pom.xml", POM_WITH_PROPERTY));
+    List<String> mavenInputs = maven.inputPaths(mavenFold);
+    for (String read :
+        List.of(
+            "pom.xml", "service/pom.xml", "service/src/main/java/eu/wohlben/SomeClient.java",
+            "service/src/test/java/eu/wohlben/SomeClientPactTest.java")) {
+      assertTrue(Pathspecs.matchesAny(mavenInputs, read), read);
+      assertTrue(Pathspecs.matchesAny(maven.inputPaths(), read), "static: " + read);
+    }
+    for (String unread :
+        List.of("pacts/qits-maintenance-service_qits-githost-service.json", "docs/README.md")) {
+      assertFalse(Pathspecs.matchesAny(mavenInputs, unread), unread);
+      assertFalse(Pathspecs.matchesAny(maven.inputPaths(), unread), "static: " + unread);
+    }
+    assertFalse(
+        Pathspecs.matchesAny(mavenInputs, "src/testing/browser/routes.json"),
+        "the maven kind's own list takes no npm source");
   }
 }

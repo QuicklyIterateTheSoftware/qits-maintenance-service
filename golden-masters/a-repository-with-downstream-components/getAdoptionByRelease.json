@@ -1,0 +1,39 @@
+{
+  "repository": "contract-ui-jslib",
+  "catalogId": "00000000-0000-4000-8000-000000000001",
+  "version": "2026.905.1",
+  "packages": [
+    {
+      "ecosystem": "npm",
+      "name": "@qits/contract-ui"
+    }
+  ],
+  "adopters": [
+    {
+      "repository": "contract-frontend",
+      "catalogId": "00000000-0000-4000-8000-000000000002",
+      "repositoryStatus": "OK",
+      "archetype": "FRONTEND",
+      "depth": 1,
+      "via": [
+        "contract-ui-jslib"
+      ],
+      "state": "PENDING",
+      "adoptedVersion": null,
+      "adoptedAt": null
+    },
+    {
+      "repository": "contract-service",
+      "catalogId": "00000000-0000-4000-8000-000000000003",
+      "repositoryStatus": "OK",
+      "archetype": "SERVICE",
+      "depth": 2,
+      "via": [
+        "contract-frontend"
+      ],
+      "state": "PENDING",
+      "adoptedVersion": null,
+      "adoptedAt": null
+    }
+  ]
+}

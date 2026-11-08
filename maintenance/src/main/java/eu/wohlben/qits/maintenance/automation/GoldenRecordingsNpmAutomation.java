@@ -101,6 +101,16 @@ public class GoldenRecordingsNpmAutomation extends GoldenRecordingsAutomation {
         "package.json pins no @qits/*-golden-masters, so it records no pacts");
   }
 
+  /**
+   * {@code src/}, where the pact specs, the golden masters and the route ledger they stamp into the
+   * pacts live, and the build and test configuration — minus the screenshot references and the
+   * renderer record, which no pact spec reads (qits-1957).
+   */
+  @Override
+  List<String> sourceInputs() {
+    return NPM_SOURCES;
+  }
+
   @Override
   boolean goldenMasters(ParsedPin pin) {
     return pin.name() != null && PACKAGE.matcher(pin.name()).matches();

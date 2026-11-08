@@ -116,6 +116,15 @@ public class GoldenRecordingsMavenAutomation extends GoldenRecordingsAutomation 
    * A {@code qits.*-golden-masters.version} property, or a {@code *-golden-masters} pin of any
    * artifact through one, a {@code <version>} or {@code ${project.version}}.
    */
+  /**
+   * Every module's {@code src/main/}, where the REST clients whose requests the pacts pin live, and
+   * {@code src/test/}, where the contract tests that record them do (qits-1957).
+   */
+  @Override
+  List<String> sourceInputs() {
+    return MAVEN_SOURCES;
+  }
+
   @Override
   boolean goldenMasters(ParsedPin pin) {
     String location = pin.location() == null ? "" : pin.location();

@@ -231,4 +231,24 @@ class ConsumerPactVerificationTest {
   Map<String, String> aProviderWhoseDeployedConsumersPublishPacts() {
     return states.params(ProviderStates.A_PROVIDER_WHOSE_DEPLOYED_CONSUMERS_PUBLISH_PACTS);
   }
+
+  @State(ProviderStates.BUMPS_OWED_TO_A_REPOSITORY)
+  Map<String, String> bumpsOwedToARepository() {
+    return states.params(ProviderStates.BUMPS_OWED_TO_A_REPOSITORY);
+  }
+
+  @State(ProviderStates.A_RELEASE_REQUEST_THIS_SERVICE_OPENED)
+  Map<String, String> aReleaseRequestThisServiceOpened() {
+    return states.params(ProviderStates.A_RELEASE_REQUEST_THIS_SERVICE_OPENED);
+  }
+
+  @State(ProviderStates.A_STORED_SBOM_CHECK_REPORT)
+  Map<String, String> aStoredSbomCheckReport() {
+    return states.params(ProviderStates.A_STORED_SBOM_CHECK_REPORT);
+  }
+
+  @State(ProviderStates.A_FINISHED_SCAN)
+  Map<String, String> aFinishedScan() {
+    return states.params(ProviderStates.A_FINISHED_SCAN);
+  }
 }

@@ -45,7 +45,8 @@ class AutomationKindsApiTest {
             contains(
                 ":(glob)**/__screenshots__/**",
                 ":(glob)**/testing/browser/renderer.txt",
-                ":(glob)**/testing/browser/routes.json"))
+                ":(glob)**/testing/browser/routes.json",
+                ":(glob)**/testing/browser/freezes/**"))
         .body(
             "kinds.find { it.kind == 'screenshot-baselines' }.approvalRoles",
             contains("agent", "person"))

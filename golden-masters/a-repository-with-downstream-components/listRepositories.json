@@ -1,0 +1,46 @@
+[
+  {
+    "name": "contract-frontend",
+    "project": "qits",
+    "archetype": "FRONTEND",
+    "lastScanAt": "2026-01-01T00:00:00Z",
+    "headSha": "3f1a9c0b7d2e4f5a6b8c9d0e1f2a3b4c5d6e7f80",
+    "status": "OK",
+    "message": null,
+    "pending": 0,
+    "groups": []
+  },
+  {
+    "name": "contract-service",
+    "project": "qits",
+    "archetype": "SERVICE",
+    "lastScanAt": "2026-01-01T00:00:00Z",
+    "headSha": "3f1a9c0b7d2e4f5a6b8c9d0e1f2a3b4c5d6e7f80",
+    "status": "OK",
+    "message": null,
+    "pending": 0,
+    "groups": []
+  },
+  {
+    "name": "contract-ui-jslib",
+    "project": "qits",
+    "archetype": "LIBRARY",
+    "lastScanAt": "2026-01-01T00:00:00Z",
+    "headSha": "3f1a9c0b7d2e4f5a6b8c9d0e1f2a3b4c5d6e7f80",
+    "status": "OK",
+    "message": null,
+    "pending": 0,
+    "groups": []
+  },
+  {
+    "name": "qits-qits",
+    "project": "qits",
+    "archetype": "PROJECT",
+    "lastScanAt": "2026-01-01T00:00:00Z",
+    "headSha": "3f1a9c0b7d2e4f5a6b8c9d0e1f2a3b4c5d6e7f80",
+    "status": "OK",
+    "message": null,
+    "pending": 0,
+    "groups": []
+  }
+]

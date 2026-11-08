@@ -11,6 +11,7 @@ import eu.wohlben.qits.maintenance.githost.TreeLookup;
 import eu.wohlben.qits.maintenance.manifest.ManifestScanner;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import jakarta.inject.Inject;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -78,12 +79,21 @@ import org.yaml.snakeyaml.constructor.SafeConstructor;
  *       library-kit pact.
  *   <li><b>Plans</b> by comparing this ecosystem's recording inputs — its golden-masters pins and
  *       its library-kit pins — at the fold against the target's {@code main} head, both read
- *       through the scan's own discovery ({@link ManifestScanner#pinsAt}). All equal is FRESH with
- *       no run: the recorded pacts were recorded against exactly these golden masters and library
- *       kits, because {@code main}'s gate held them to it. Any difference — a moved pin, a new one,
- *       a removed one — is a run. A {@code main} whose pins cannot be read is a run too, and so is a
- *       fold whose {@code pacts/} cannot be listed: re-recording when nothing moved writes nothing,
- *       while not re-recording when something did is a red gate.
+ *       through the scan's own discovery ({@link ManifestScanner#pinsAt}), and then, once the pins
+ *       agree, the consumer's own recording SOURCES (qits-1957): every blob under {@link
+ *       #sourceInputs()}, path to sha, in the fold's whole tree ({@link FoldReader#recursiveTree})
+ *       against {@code main}'s. A pact is not a function of the pins alone — an npm app's {@code
+ *       src/testing/golden-masters.ts} stamps each route of {@code src/testing/browser/routes.json}
+ *       into the pacts its {@code *.store.pact.spec.ts} record, and a maven consumer's pacts are its
+ *       REST clients' requests — and a fold that moved only those shipped stale pacts in
+ *       qits-landing-app-rr-182. All equal is FRESH with no run: the recorded pacts were recorded
+ *       from exactly these golden masters, library kits and sources, because {@code main}'s gate
+ *       held them to it. Any difference — a moved pin, a new one, a removed one, a changed, added or
+ *       removed source — is a run, and a moved pin answers before either tree is read. A {@code
+ *       main} whose pins cannot be read is a run too, and so is a fold whose {@code pacts/} cannot
+ *       be listed, and either tree unread or answered non-recursively by an older git host:
+ *       re-recording when nothing moved writes nothing, while not re-recording when something did
+ *       is a red gate.
  *   <li><b>DERIVED</b>: the pin it reads is what {@code dependency-bump} writes, so it is planned
  *       only once the bump is FRESH at the fold, and runs against the pins the request will ship.
  *   <li><b>Writes</b> through the shared core's {@code automations/<kind>.yml} with {@code
@@ -93,12 +103,22 @@ import org.yaml.snakeyaml.constructor.SafeConstructor;
  *
  * <h2>What it reads, and what it writes</h2>
  *
- * <p>It reads the manifests ({@link DependencyBumpAutomation#MANIFESTS}), where the pins live; the
- * pacts are its output and not its input, so the re-fold its own commit causes touches none of its
- * inputs and carries over with no second run. The {@code pacts/} LISTING it also reads (qits-1782)
- * only says which libraries' pins count; a re-record rewrites the files that listing names, it does
- * not rename them, so that stays true. Neither does a library's {@code release.yml} (qits-1834): it
- * sits in the library's own repository, read at that repository's {@code main}, never at the fold.
+ * <p>It reads the manifests ({@link DependencyBumpAutomation#MANIFESTS}), where the pins live, and
+ * its build shape's {@link #sourceInputs() sources} (qits-1957) — an npm app's {@code src/}, {@code
+ * angular.json}, {@code tsconfig*.json} and {@code vitest*}, a maven consumer's {@code
+ * **}{@code /src/main/**} and {@code **}{@code /src/test/**} — and declares both as its {@link
+ * #inputPaths(AutomationSubject) inputs}, so a fold that touched any of them is planned again
+ * rather than carried. That includes {@code screenshot-baselines}' route ledger: its commit of a
+ * new {@code routes.json} re-plans this kind, which then re-records against it. The screenshot
+ * references and the renderer record are excluded ({@link #SCREENSHOT_OUTPUT}): no pact spec reads
+ * them, so a screenshot join that moved only those still carries. The pacts are its output and
+ * not its input — {@code pacts/} lies under no source pathspec — so the re-fold its own commit
+ * causes touches none of its inputs and carries over with no second run; and {@code
+ * screenshot-baselines}, which declares no inputs, carries over a fold that changed only
+ * automation output such as these pacts, so the two never chase each other. The {@code pacts/} LISTING it also reads (qits-1782) only says which
+ * libraries' pins count; a re-record rewrites the files that listing names, it does not rename
+ * them, so that stays true. Neither does a library's {@code release.yml} (qits-1834): it sits in
+ * the library's own repository, read at that repository's {@code main}, never at the fold.
  *
  * <p><b>Its static {@link #committablePaths()} is empty</b>, as {@code estate-pins}' is: both kinds
  * write {@code pacts/*.json}, so the all-kind disjointness the registry holds can only stand with
@@ -113,6 +133,39 @@ public abstract class GoldenRecordingsAutomation implements ReleaseRequestAutoma
 
   /** What every run of either kind may stage: the consumer's recorded pacts at the root. */
   static final List<String> PACTS = List.of(":(glob)pacts/*.json");
+
+  /**
+   * What {@code screenshot-baselines} writes under an app's sources that no pact spec reads: the
+   * references, the renderer record and the frozen pages (qits-1947). Its route ledger, {@code
+   * routes.json}, is NOT here — the app's golden masters stamp its routes into the pacts
+   * (qits-1957).
+   */
+  static final List<String> SCREENSHOT_OUTPUT =
+      List.of(
+          ":(exclude,glob)**/__screenshots__/**",
+          ":(exclude,glob)**/testing/browser/renderer.txt",
+          ":(exclude,glob)**/testing/browser/freezes/**");
+
+  /**
+   * An npm app's recording sources (qits-1957): the pact specs and the golden masters under {@code
+   * src/}, the route ledger they read, and the build and test configuration that decides what runs.
+   */
+  static final List<String> NPM_SOURCES =
+      concat(
+          List.of(":(glob)src/**", "angular.json", ":(glob)tsconfig*.json", ":(glob)vitest*"),
+          SCREENSHOT_OUTPUT);
+
+  /** A maven consumer's recording sources (qits-1957): its REST clients and its contract tests. */
+  static final List<String> MAVEN_SOURCES =
+      List.of(":(glob)**/src/main/**", ":(glob)**/src/test/**");
+
+  /**
+   * What either kind reads, for the static {@link #inputPaths()}: the manifests and both build
+   * shapes' sources. The npm exclusions apply to the whole list, which takes nothing a maven
+   * recording reads.
+   */
+  static final List<String> INPUTS =
+      concat(DependencyBumpAutomation.MANIFESTS, concat(MAVEN_SOURCES, NPM_SOURCES));
 
   static final String POM = "pom.xml";
 
@@ -135,7 +188,10 @@ public abstract class GoldenRecordingsAutomation implements ReleaseRequestAutoma
   /** Where a library repository lives and what its {@code main} is called. */
   @Inject MaintenanceStore store;
 
-  /** Reads a library's {@code release.yml}, for a coordinate the producers do not know. */
+  /**
+   * Reads a library's {@code release.yml}, for a coordinate the producers do not know, and the
+   * target's {@code main} tree the fold's sources are compared with (qits-1957).
+   */
   @Inject GitHostReader gitHost;
 
   /** The ecosystem whose golden-masters pins this kind follows. */
@@ -149,6 +205,12 @@ public abstract class GoldenRecordingsAutomation implements ReleaseRequestAutoma
 
   /** Whether one parsed pin is a golden-masters pin of this kind's ecosystem. */
   abstract boolean goldenMasters(ParsedPin pin);
+
+  /**
+   * The pathspecs, exclusions included, of the sources this build shape records its pacts from
+   * (qits-1957): what the plan compares besides the pins, and what a fold must not touch to carry.
+   */
+  abstract List<String> sourceInputs();
 
   /**
    * The shape first; then golden masters, then a library-kit pact (qits-1782). A golden-masters
@@ -210,10 +272,19 @@ public abstract class GoldenRecordingsAutomation implements ReleaseRequestAutoma
     return shape(subject.fold()).applied() ? PACTS : List.of();
   }
 
-  /** The manifests the pins live in; the pacts are output, not input. */
+  /**
+   * The manifests the pins live in and both build shapes' sources (qits-1957); the pacts are
+   * output, not input.
+   */
   @Override
   public List<String> inputPaths() {
-    return DependencyBumpAutomation.MANIFESTS;
+    return INPUTS;
+  }
+
+  /** The manifests and this kind's own sources: see the class javadoc. */
+  @Override
+  public List<String> inputPaths(AutomationSubject subject) {
+    return concat(DependencyBumpAutomation.MANIFESTS, sourceInputs());
   }
 
   @Override
@@ -233,7 +304,10 @@ public abstract class GoldenRecordingsAutomation implements ReleaseRequestAutoma
     return Set.of();
   }
 
-  /** The fold's recording inputs against {@code main}'s: see the class javadoc. */
+  /**
+   * The fold's recording inputs against {@code main}'s: the pins first, then the sources, whose two
+   * tree reads are made only once the pins agree. See the class javadoc.
+   */
   @Override
   public Plan plan(AutomationSubject subject) {
     String project = subject.repository().project;
@@ -258,13 +332,45 @@ public abstract class GoldenRecordingsAutomation implements ReleaseRequestAutoma
     Set<String> libraries = pacts.found() ? libraries(pacts) : Set.of();
     Map<String, String> producers = libraries.isEmpty() ? Map.of() : graph.producers();
     Map<String, Set<String>> declared = new HashMap<>();
-    if (inputs(atFold.pins(), libraries, producers, declared)
+    if (!inputs(atFold.pins(), libraries, producers, declared)
         .equals(inputs(atMain.pins(), libraries, producers, declared))) {
-      return Plan.fresh(
-          "every " + ecosystem().wireName() + " golden-masters and library-kit pin at the fold is "
-              + main + "'s, so the recorded pacts stand");
+      return Plan.run(Map.of());
     }
-    return Plan.run(Map.of());
+    // The pins agree; the sources the pacts are recorded from must too (qits-1957). A tree that
+    // cannot be compared is a run, for the same reason an unread main's pins are.
+    Map<String, String> atFoldSources = sources(subject.fold().recursiveTree());
+    if (atFoldSources == null) {
+      return Plan.run(Map.of());
+    }
+    Map<String, String> atMainSources = sources(gitHost.recursiveTree(project, name, main));
+    if (atMainSources == null || !atFoldSources.equals(atMainSources)) {
+      return Plan.run(Map.of());
+    }
+    return Plan.fresh(
+        "every " + ecosystem().wireName() + " golden-masters and library-kit pin and every source"
+            + " the recording reads at the fold is " + main + "'s, so the recorded pacts stand");
+  }
+
+  /**
+   * Every blob of a whole tree under {@link #sourceInputs()}, by path to its object name — or null
+   * when the tree is not a FOUND recursive listing, or names a source without its sha, since then
+   * an equal answer would not mean equal sources.
+   */
+  private Map<String, String> sources(TreeLookup tree) {
+    if (!tree.found() || !tree.recursive()) {
+      return null;
+    }
+    List<String> pathspecs = sourceInputs();
+    Map<String, String> out = new TreeMap<>();
+    for (TreeLookup.TreeEntry entry : tree.entries()) {
+      if (entry.isBlob() && Pathspecs.matchesAny(pathspecs, entry.relativePath())) {
+        if (entry.sha() == null) {
+          return null;
+        }
+        out.put(entry.relativePath(), entry.sha());
+      }
+    }
+    return out;
   }
 
   /**
@@ -387,6 +493,12 @@ public abstract class GoldenRecordingsAutomation implements ReleaseRequestAutoma
     return pacts.message() == null
         ? PACTS_DIRECTORY + "/ could not be listed at the fold (" + pacts.status() + ")"
         : pacts.message();
+  }
+
+  private static List<String> concat(List<String> first, List<String> second) {
+    List<String> out = new ArrayList<>(first);
+    out.addAll(second);
+    return List.copyOf(out);
   }
 
   static String unread(String path, FileLookup lookup) {

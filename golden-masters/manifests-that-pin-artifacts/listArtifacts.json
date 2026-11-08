@@ -1,0 +1,35 @@
+[
+  {
+    "ecosystem": "maven",
+    "name": "eu.wohlben.qits:qits-eventstream",
+    "repository": "qits-eventstream-javalib",
+    "latest": null,
+    "version": "2026.811.1",
+    "occurredAt": "2026-01-01T00:00:00Z",
+    "sbomStatus": "PENDING",
+    "dependentCount": 0,
+    "behindCount": 0
+  },
+  {
+    "ecosystem": "daemon",
+    "name": "qits-eventstream-daemon",
+    "repository": "qits-eventstream-javalib",
+    "latest": null,
+    "version": "2026.811.1",
+    "occurredAt": "2026-01-01T00:00:00Z",
+    "sbomStatus": "PENDING",
+    "dependentCount": 0,
+    "behindCount": 0
+  },
+  {
+    "ecosystem": "docker",
+    "name": "qits/eventstream-daemon",
+    "repository": "qits-eventstream-javalib",
+    "latest": null,
+    "version": "2026.811.1",
+    "occurredAt": "2026-01-01T00:00:00Z",
+    "sbomStatus": "PENDING",
+    "dependentCount": 0,
+    "behindCount": 0
+  }
+]

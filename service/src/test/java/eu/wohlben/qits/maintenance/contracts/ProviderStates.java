@@ -4,20 +4,27 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.bootstrap.graph.manifest.ParsedPin;
+import eu.wohlben.qits.maintenance.api.Fixture;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
 import eu.wohlben.qits.maintenance.automation.AutomationService;
 import eu.wohlben.qits.maintenance.automation.ReleaseRequestAutomation;
 import eu.wohlben.qits.maintenance.automation.ScreenshotBaselinesAutomation;
 import eu.wohlben.qits.maintenance.bump.ReleaseRequestClient;
 import eu.wohlben.qits.maintenance.entity.MtBump;
+import eu.wohlben.qits.maintenance.entity.MtReleaseRequest;
+import eu.wohlben.qits.maintenance.manifest.GroupConfig;
 import eu.wohlben.qits.maintenance.model.BumpMode;
 import eu.wohlben.qits.maintenance.model.GroupSource;
 import eu.wohlben.qits.maintenance.model.PinKind;
+import eu.wohlben.qits.maintenance.model.ReleaseOrigin;
 import eu.wohlben.qits.maintenance.model.RepositoryArchetype;
 import eu.wohlben.qits.maintenance.model.RepositoryStatus;
+import eu.wohlben.qits.maintenance.model.ScanScope;
+import eu.wohlben.qits.maintenance.model.ScanStatus;
 import eu.wohlben.qits.maintenance.peer.FakePeers;
 import eu.wohlben.qits.maintenance.peer.PeerTarget;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
+import eu.wohlben.qits.maintenance.sbomcheck.SbomCheckService;
 import eu.wohlben.qits.maintenance.work.WorkQueue;
 import io.quarkus.narayana.jta.QuarkusTransaction;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -76,6 +83,11 @@ public class ProviderStates {
   public static final String THE_AUTOMATION_KINDS_CATALOGUE = "the automation kinds catalogue";
   public static final String A_PROVIDER_WHOSE_DEPLOYED_CONSUMERS_PUBLISH_PACTS =
       "a provider whose deployed consumers publish pacts";
+  public static final String BUMPS_OWED_TO_A_REPOSITORY = "bumps owed to a repository";
+  public static final String A_RELEASE_REQUEST_THIS_SERVICE_OPENED =
+      "a release request this service opened";
+  public static final String A_STORED_SBOM_CHECK_REPORT = "a stored SBOM check report";
+  public static final String A_FINISHED_SCAN = "a finished scan";
 
   /** The work item the CLI's {@code qits maintenance automation run --work-item} names. */
   static final String WORK_ITEM = "qits-112";
@@ -125,6 +137,8 @@ public class ProviderStates {
 
   @Inject AutomationService automations;
 
+  @Inject SbomCheckService sbomCheck;
+
   public ProviderStates() {
     states.put(PENDING_BUMPS, this::pendingBumps);
     states.put(NO_PENDING_BUMPS, this::noPendingBumps);
@@ -143,6 +157,10 @@ public class ProviderStates {
     states.put(THE_AUTOMATION_KINDS_CATALOGUE, ProviderStates::automationKindsCatalogue);
     states.put(
         A_PROVIDER_WHOSE_DEPLOYED_CONSUMERS_PUBLISH_PACTS, this::deployedConsumersPublishingPacts);
+    states.put(BUMPS_OWED_TO_A_REPOSITORY, this::bumpsOwedToARepository);
+    states.put(A_RELEASE_REQUEST_THIS_SERVICE_OPENED, this::releaseRequestThisServiceOpened);
+    states.put(A_STORED_SBOM_CHECK_REPORT, this::storedSbomCheckReport);
+    states.put(A_FINISHED_SCAN, this::finishedScan);
   }
 
   /** Every state name this provider answers for. */
@@ -471,6 +489,118 @@ public class ProviderStates {
                 + "[\"2026.1030.204903\",\"2026.1030.192107\",\"2026.1029.90000\"]}]}"));
     Map<String, String> params = new TreeMap<>();
     params.put("provider", provider);
+    return new Setup(params, List.of());
+  }
+
+  /**
+   * One repository, {@code contract-service}, pinning {@code qits-eventstream} at {@code
+   * 2026.811.1} while {@code 2026.821.3} is released, nothing open for it in qits-projects, and the
+   * CI room empty: one target of {@link Fixture#POOL_SLOTS} slots all free and nothing queued. The
+   * dispatcher's decision is DISPATCH with that repository READY and its one pick — what {@code
+   * getBumpStanding} answers, sending nothing (qits-1696).
+   */
+  private Setup bumpsOwedToARepository() {
+    emptyEstate();
+    store.replaceInventory(
+        REPOSITORY,
+        "qits",
+        REPOSITORY_ID,
+        RepositoryArchetype.SERVICE.name(),
+        "main",
+        RepositoryStatus.OK,
+        HEAD_SHA,
+        null,
+        List.of(
+            ParsedPin.of(
+                Ecosystem.MAVEN,
+                "pom.xml",
+                "eu.wohlben.qits:qits-eventstream",
+                "2026.811.1",
+                null,
+                "property:qits.eventstream.version")),
+        List.of(GroupConfig.Group.ofKind(GroupConfig.DEFAULT_GROUP, PinKind.INTERNAL)),
+        GroupSource.DEFAULT,
+        pin -> PinKind.INTERNAL,
+        SCANNED);
+    store.recordLatestIfNewer(
+        Ecosystem.MAVEN, "eu.wohlben.qits:qits-eventstream", "2026.821.3", "test", SCANNED);
+    peers.answer(
+        PeerTarget.PROJECTS,
+        ReleaseRequestClient.REQUESTS_PATH_PREFIX
+            + REPOSITORY_ID
+            + ReleaseRequestClient.REQUESTS_PATH_SUFFIX,
+        FakePeers.Scripted.ok("{\"requests\":[]}"));
+    Fixture.scriptCiQueueEmpty(peers);
+    Map<String, String> params = new TreeMap<>();
+    params.put("repoName", REPOSITORY);
+    return new Setup(params, List.of());
+  }
+
+  /**
+   * One main-only release request this service opened for {@code contract-service}, carrying the
+   * pending set it was opened for — the {@code mt_release_request} row {@code
+   * getReleaseRequestMemory} answers (qits-1954). An estate state, so {@link #cleanUp()} forgets
+   * the row again.
+   */
+  private Setup releaseRequestThisServiceOpened() {
+    emptyEstate();
+    Map<String, String> change = new LinkedHashMap<>();
+    change.put("ecosystem", "maven");
+    change.put("name", "eu.wohlben.qits:qits-eventstream");
+    change.put("from", "2026.811.1");
+    change.put("to", "2026.821.3");
+    store.recordOpenedRequest(
+        REQUEST_ID, REPOSITORY, "main", MtReleaseRequest.MAIN_ONLY, List.of(change), SCANNED);
+    Map<String, String> params = new TreeMap<>();
+    params.put("repoName", REPOSITORY);
+    params.put("requestId", REQUEST_ID);
+    return new Setup(params, List.of());
+  }
+
+  /**
+   * One released maven jar of {@code contract-service}'s, still in qits-artifacts but with its
+   * SBOM MISSING, and one SBOM check run over it already stored (report-only, as the test module
+   * configures it): {@code getSbomCheckReport} answers that report, and {@code runSbomCheck} runs
+   * the check again and answers the same finding (qits-621).
+   */
+  private Setup storedSbomCheckReport() {
+    emptyEstate();
+    UUID id =
+        store.upsertArtifact(
+            Ecosystem.MAVEN,
+            "eu.wohlben.qits:contract-no-sbom",
+            "2026.1001.1",
+            REPOSITORY,
+            SCANNED,
+            new ReleaseOrigin("qits", "artifacts", null));
+    store.markArtifactMissing(id);
+    peers.answer(
+        PeerTarget.MAVEN_REGISTRY,
+        "/eu/wohlben/qits/contract-no-sbom/maven-metadata.xml",
+        FakePeers.Scripted.ok(
+            "<metadata><groupId>eu.wohlben.qits</groupId><artifactId>contract-no-sbom</artifactId>"
+                + "<versioning><versions><version>2026.1001.1</version></versions></versioning>"
+                + "</metadata>"));
+    sbomCheck.run(SCANNED);
+    Map<String, String> params = new TreeMap<>();
+    params.put("repoName", REPOSITORY);
+    return new Setup(params, List.of());
+  }
+
+  /**
+   * One manual INTERNAL scan of {@code contract-service} that SUCCEEDED, beside the repository's
+   * inventory row: {@code getScan} answers it, and {@code requestScan} queues another one of the
+   * same repository, which runs in the background against the scripted peers and is waited for by
+   * {@link #cleanUp()}.
+   */
+  private Setup finishedScan() {
+    emptyEstate();
+    scanned(REPOSITORY, REPOSITORY_ID, RepositoryArchetype.SERVICE);
+    UUID scan = store.openScan(ScanScope.INTERNAL, REPOSITORY, "MANUAL", SCANNED);
+    store.scanStatus(scan, ScanStatus.SUCCEEDED, null, SCANNED.plusSeconds(30));
+    Map<String, String> params = new TreeMap<>();
+    params.put("repoName", REPOSITORY);
+    params.put("scanId", scan.toString());
     return new Setup(params, List.of());
   }
 
