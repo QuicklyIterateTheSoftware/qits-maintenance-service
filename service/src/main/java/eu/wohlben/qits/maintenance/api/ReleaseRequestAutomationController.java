@@ -43,8 +43,9 @@ import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
  * it alongside {@code qits:agent}, and for now it may use everything {@code qits:admin} may use.
  *
  * <p><b>{@code qits:desk} (qits-1596) is admitted only on the READS</b> ({@link
- * #automations(String, String)} and {@link #memory(String)}), not on the trigger or the re-run. Those two are this service's
- * actual write surface: a {@code REQUESTED} kind dispatches a bump row through {@link
+ * #automations(String, String)} and {@link #memory(String)}), not on the trigger or the re-run.
+ * Those two are this service's actual write surface: a {@code REQUESTED} kind dispatches a bump
+ * row through {@link
  * eu.wohlben.qits.maintenance.bump.CiClient}, which is what pushes a branch into the repository on
  * qits-ci's side. The desk is admitted everywhere the coordinator is admitted EXCEPT a door that
  * ends in a ref being written, and this is that door — the coordinator's own {@code qits:admin-agent}
