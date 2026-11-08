@@ -888,6 +888,16 @@
       ]
     },
     {
+      "entity" : "eu.wohlben.qits.maintenance.entity.MtPactEdge",
+      "table" : "mt_pact_edge",
+      "marking" : "technical",
+      "reason" : "A scan-derived index of the contracts.pacts keys consumers' release.yml declare, read only by PactAdoptions to offer a provider its first pin; the release.yml is the record.",
+      "projectionOf" : null,
+      "knownGap" : null,
+      "dtos" : [ ],
+      "operations" : [ ]
+    },
+    {
       "entity" : "eu.wohlben.qits.maintenance.entity.MtPin",
       "table" : "mt_pin",
       "marking" : "domain",

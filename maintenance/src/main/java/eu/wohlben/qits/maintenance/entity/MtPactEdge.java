@@ -1,5 +1,6 @@
 package eu.wohlben.qits.maintenance.entity;
 
+import eu.wohlben.qits.db.exposure.Technical;
 import io.quarkus.hibernate.orm.panache.PanacheEntityBase;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -16,6 +17,10 @@ import java.util.UUID;
  * eu.wohlben.qits:<consumer>-pacts-<provider>}, which no pin move ever could. An edge the consumer
  * no longer declares is deleted by its next scan and so is never adopted.
  */
+@Technical(
+    reason =
+        "A scan-derived index of the contracts.pacts keys consumers' release.yml declare, read only"
+            + " by PactAdoptions to offer a provider its first pin; the release.yml is the record.")
 @Entity
 @Table(name = "mt_pact_edge")
 public class MtPactEdge extends PanacheEntityBase {
