@@ -23,7 +23,11 @@ import java.util.Set;
  * of the invariant carry-over rests on — <b>no automation's output is another automation's input
  * within its {@link Stage}</b> (qits-1133); the other half is each kind's own to document, and a kind
  * that declares {@link #inputPaths()} lets the registry test hold that half too. A DERIVED kind may
- * read SOURCE output: the stage ordering, not carry-over, is what keeps those two apart.
+ * read SOURCE output: the stage ordering, not carry-over, is what keeps those two apart. A DERIVED
+ * kind may also read another DERIVED kind's output when that kind carries over the reader's
+ * commits (qits-1957) — it declares no inputs and is held to the union rule, or its inputs take
+ * none of the reader's paths: the reader's precise inputs re-plan the reader after the writer's
+ * commit, and the reader's commit leaves the writer carried, so neither runs a second time.
  */
 public interface ReleaseRequestAutomation {
 

@@ -21,7 +21,8 @@ import org.junit.jupiter.api.Test;
  * well-formed, no two kinds may commit the same path — across ALL kinds, whatever their stage — and,
  * restated for the pre-run's two stages (qits-1133), no kind's output is the declared input of
  * another kind IN THE SAME STAGE, nor of any SOURCE kind. A DERIVED kind may read SOURCE output:
- * the stage ordering is what keeps those two apart, not carry-over.
+ * the stage ordering is what keeps those two apart, not carry-over. A DERIVED kind may read another
+ * DERIVED kind's output only when that writer carries over the reader's commits (qits-1957).
  */
 @QuarkusTest
 class AutomationRegistryTest {
@@ -119,6 +120,15 @@ class AutomationRegistryTest {
    * <b>No output feeds another kind in the same stage, and no DERIVED output feeds a SOURCE kind</b>
    * — read against the inputs a kind declares; a kind that declares none reads "everything" and is
    * held to the union rule instead, which disjoint outputs already satisfy.
+   *
+   * <p><b>One exception, inside DERIVED</b> (qits-1957): a DERIVED reader may read a DERIVED
+   * writer's output when the writer cannot loop back — it carries over the reader's commits,
+   * because it declares no inputs (the union rule, under which the reader's output is automation
+   * output) or because its inputs match none of the reader's committable paths. {@code
+   * golden-recordings-npm} reads the {@code routes.json} {@code screenshot-baselines} writes; the
+   * pacts it commits back leave {@code screenshot-baselines} carried. A kind's committable paths
+   * are read statically AND for both build shapes' subjects, since the golden kinds answer theirs
+   * per subject only.
    */
   @Test
   void noKindsOutputIsTheInputOfAKindItCouldLoopWith() {
@@ -128,11 +138,13 @@ class AutomationRegistryTest {
         if (writer == reader || reader.inputPaths() == null) {
           continue;
         }
-        boolean mayRead = writer.stage() == Stage.SOURCE && reader.stage() == Stage.DERIVED;
+        boolean mayRead =
+            reader.stage() == Stage.DERIVED
+                && (writer.stage() == Stage.SOURCE || carriesOver(writer, reader));
         if (mayRead) {
           continue;
         }
-        for (String pathspec : writer.committablePaths()) {
+        for (String pathspec : committable(writer)) {
           for (String witness : witnesses(pathspec)) {
             assertFalse(
                 Pathspecs.matchesAny(reader.inputPaths(), witness),
@@ -141,6 +153,48 @@ class AutomationRegistryTest {
         }
       }
     }
+  }
+
+  /** The exception holds for the one pair it was made for, and for that pair only. */
+  @Test
+  void goldenRecordingsReadsTheRouteLedgerScreenshotBaselinesWritesAndCannotLoopWithIt() {
+    ReleaseRequestAutomation screenshots =
+        automations.kind(ScreenshotBaselinesAutomation.KIND).orElseThrow();
+    ReleaseRequestAutomation golden =
+        automations.kind(GoldenRecordingsNpmAutomation.KIND).orElseThrow();
+    assertTrue(Pathspecs.matchesAny(golden.inputPaths(), "src/testing/browser/routes.json"));
+    assertTrue(
+        Pathspecs.matchesAny(screenshots.committablePaths(), "src/testing/browser/routes.json"));
+    assertTrue(carriesOver(screenshots, golden), "screenshot-baselines carries the pacts commit");
+    assertFalse(carriesOver(golden, screenshots), "golden-recordings re-plans on routes.json");
+  }
+
+  /**
+   * Whether {@code writer} carries over a fold made of {@code reader}'s commits: it declares no
+   * inputs, or its inputs take none of the reader's committable paths.
+   */
+  private static boolean carriesOver(
+      ReleaseRequestAutomation writer, ReleaseRequestAutomation reader) {
+    List<String> inputs = writer.inputPaths();
+    if (inputs == null) {
+      return true;
+    }
+    for (String pathspec : committable(reader)) {
+      for (String witness : witnesses(pathspec)) {
+        if (Pathspecs.matchesAny(inputs, witness)) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  /** A kind's committable paths, static and for a maven and an npm fold alike. */
+  private static Set<String> committable(ReleaseRequestAutomation kind) {
+    Set<String> paths = new java.util.LinkedHashSet<>(kind.committablePaths());
+    paths.addAll(kind.committablePaths(subject(Map.of("pom.xml", "<project/>"))));
+    paths.addAll(kind.committablePaths(subject(Map.of("package.json", "{}"))));
+    return paths;
   }
 
   /**
@@ -206,7 +260,10 @@ class AutomationRegistryTest {
     }
   }
 
-  /** Paths a pathspec matches: its wildcards filled in a couple of ways. */
+  /**
+   * Paths a pathspec matches: its wildcards filled in a couple of ways — and, for a leading {@code
+   * **}{@code /}, under {@code src/}, where an app keeps what its harness writes (qits-1957).
+   */
   static List<String> witnesses(String pathspec) {
     String spec = pathspec.startsWith(":(") ? pathspec.substring(pathspec.indexOf(')') + 1) : pathspec;
     String shallow =
@@ -215,6 +272,9 @@ class AutomationRegistryTest {
     String deep =
         spec.replace("**/", "a/b/").replace("/**", "/c/d.png").replace("**", "y").replace("*", "y")
             .replace("?", "y");
-    return List.of(shallow, deep);
+    if (!spec.startsWith("**/")) {
+      return List.of(shallow, deep);
+    }
+    return List.of(shallow, deep, "src/" + shallow);
   }
 }

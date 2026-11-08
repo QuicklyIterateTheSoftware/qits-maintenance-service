@@ -40,4 +40,30 @@ class PathspecsTest {
     assertFalse(Pathspecs.matches(":(literal)docs/*.md", "docs/a.md"));
     assertFalse(Pathspecs.matches(null, "x"));
   }
+
+  /** Git's exclusion magic takes a path back out of a list (qits-1957). */
+  @Test
+  void anExclusionTakesAPathBackOutOfTheList() {
+    List<String> sources =
+        List.of(
+            ":(glob)src/**",
+            ":(exclude,glob)**/__screenshots__/**",
+            ":(exclude,glob)**/testing/browser/renderer.txt");
+    assertTrue(Pathspecs.matchesAny(sources, "src/testing/browser/routes.json"));
+    assertTrue(Pathspecs.matchesAny(sources, "src/app/x/x.store.pact.spec.ts"));
+    assertFalse(Pathspecs.matchesAny(sources, "src/app/x/__screenshots__/a.png"));
+    assertFalse(Pathspecs.matchesAny(sources, "src/testing/browser/renderer.txt"));
+    assertFalse(Pathspecs.matchesAny(sources, "README.md"), "nothing includes it");
+    assertFalse(Pathspecs.matches(":(exclude,glob)**/__screenshots__/**", "a/__screenshots__/b"));
+    assertFalse(Pathspecs.matches(":!docs", "src/x"), "an exclusion alone includes nothing");
+  }
+
+  @Test
+  void theShortSpellingsAndAListOfExclusionsAloneReadAsGitReadsThem() {
+    assertFalse(Pathspecs.matchesAny(List.of("src", ":!src/gen"), "src/gen/a.ts"));
+    assertFalse(Pathspecs.matchesAny(List.of("src", ":^src/gen"), "src/gen/a.ts"));
+    assertTrue(Pathspecs.matchesAny(List.of("src", ":!src/gen"), "src/app/a.ts"));
+    assertTrue(Pathspecs.matchesAny(List.of(":(exclude)docs"), "src/x"), "everything else");
+    assertFalse(Pathspecs.matchesAny(List.of(":(exclude)docs"), "docs/a.md"));
+  }
 }

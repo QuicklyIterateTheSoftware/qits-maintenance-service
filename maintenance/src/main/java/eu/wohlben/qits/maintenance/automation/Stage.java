@@ -20,7 +20,12 @@ package eu.wohlben.qits.maintenance.automation;
  *
  * <p><b>The carry-over invariant is restated per stage</b>: no kind's output is another kind's input
  * <i>within a stage</i>. A DERIVED kind may read SOURCE output — that is what the stage is for — and
- * it is the ordering, not carry-over, that keeps the two from chasing each other.
+ * it is the ordering, not carry-over, that keeps the two from chasing each other. One exception is
+ * allowed within DERIVED (qits-1957): a reader that declares precise {@link
+ * ReleaseRequestAutomation#inputPaths() inputs} may read another DERIVED kind's output when that
+ * writer carries over the reader's commits — {@code golden-recordings-npm} reads the {@code
+ * routes.json} {@code screenshot-baselines} writes, and is planned again after it, while the pacts
+ * it commits leave {@code screenshot-baselines} carried. The chase ends after one step.
  */
 public enum Stage {
   SOURCE,
