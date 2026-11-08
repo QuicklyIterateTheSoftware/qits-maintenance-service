@@ -18,6 +18,7 @@ import eu.wohlben.qits.maintenance.entity.MtGitlinkTree;
 import eu.wohlben.qits.maintenance.entity.MtGroup;
 import eu.wohlben.qits.maintenance.entity.MtLatest;
 import eu.wohlben.qits.maintenance.entity.MtMainPin;
+import eu.wohlben.qits.maintenance.entity.MtPactEdge;
 import eu.wohlben.qits.maintenance.entity.MtPin;
 import eu.wohlben.qits.maintenance.entity.MtPublishedArtifact;
 import eu.wohlben.qits.maintenance.entity.MtRelease;
@@ -1178,6 +1179,79 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
     return DbRetry.inNewTx(
         "read every pin",
         () -> MtPin.findAll(Sort.by("repository").and("manifestPath").and("name")).list());
+  }
+
+  // --- declared pact edges (qits-1952) ------------------------------------------------------------
+
+  /**
+   * <b>Replaces the pact edges one consumer declares</b> with exactly these providers — the
+   * consumer's scan, from {@code contracts.pacts} in its {@code release.yml}. An edge the consumer
+   * stopped declaring is deleted here and so is never adopted (the qits-1765 rule).
+   *
+   * @param consumer the scanned repository
+   * @param providers every provider it declares now; blank names and itself are not edges
+   * @return the providers that were NOT declared before this write — what {@code UpstreamReplan}
+   *     re-plans, since each may now be owed an adoption; empty when nothing was added
+   */
+  @ActivateRequestContext
+  public List<String> replacePactEdges(String consumer, Collection<String> providers) {
+    java.util.TreeSet<String> wanted = new java.util.TreeSet<>();
+    for (String provider : providers == null ? List.<String>of() : providers) {
+      if (provider != null && !provider.isBlank() && !provider.trim().equals(consumer)) {
+        wanted.add(provider.trim());
+      }
+    }
+    return DbRetry.inNewTx(
+        "replace the pact edges of " + consumer,
+        () -> {
+          Set<String> before = new java.util.HashSet<>();
+          for (MtPactEdge edge :
+              MtPactEdge.<MtPactEdge>find("consumerRepository = ?1", consumer).list()) {
+            before.add(edge.providerRepository);
+          }
+          if (before.equals(wanted)) {
+            return List.<String>of();
+          }
+          MtPactEdge.delete("consumerRepository = ?1", consumer);
+          List<String> added = new ArrayList<>();
+          for (String provider : wanted) {
+            MtPactEdge edge = new MtPactEdge();
+            edge.id = UUID.randomUUID();
+            edge.consumerRepository = consumer;
+            edge.providerRepository = provider;
+            edge.persist();
+            if (!before.contains(provider)) {
+              added.add(provider);
+            }
+          }
+          getEntityManager().flush();
+          return List.copyOf(added);
+        });
+  }
+
+  /** Every declared pact edge, ordered by provider then consumer. */
+  @ActivateRequestContext
+  public List<MtPactEdge> pactEdges() {
+    return DbRetry.inNewTx(
+        "read every pact edge",
+        () ->
+            MtPactEdge.<MtPactEdge>findAll(
+                    Sort.by("providerRepository").and("consumerRepository"))
+                .list());
+  }
+
+  /** The consumers that declare a pact against one provider, sorted. */
+  @ActivateRequestContext
+  public List<String> pactConsumers(String provider) {
+    return DbRetry.inNewTx(
+        "read the pact consumers of " + provider,
+        () ->
+            MtPactEdge.<MtPactEdge>find(
+                    "providerRepository = ?1", Sort.by("consumerRepository"), provider)
+                .list()
+                .stream()
+                .map(edge -> edge.consumerRepository)
+                .toList());
   }
 
   /**

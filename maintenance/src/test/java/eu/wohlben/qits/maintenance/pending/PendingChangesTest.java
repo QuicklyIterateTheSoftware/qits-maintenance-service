@@ -610,4 +610,121 @@ class PendingChangesTest {
                 List.of(reader(ARCH_RULES, "1.0.1"), other), latest, SPLIT, "dependencies", NO_REGISTRY)
             .size());
   }
+
+  // --- a consumer's first pact jar: adoption (qits-1952) ------------------------------------------
+
+  private static final String PROVIDER = "qits-system-service";
+
+  private static final String CONSUMER = "qits-maintenance-service";
+
+  /** The jar the consumer published and the provider does not pin yet. */
+  private static final String ADOPTED = "eu.wohlben.qits:qits-maintenance-service-pacts-qits-system-service";
+
+  /** The sibling the provider already pins — what qits-ci's step clones. */
+  private static final String SIBLING = "eu.wohlben.qits:qits-landing-app-pacts-qits-system-service";
+
+  /** The provider's pins as the estate spells them: the sibling's version on a root pom property. */
+  private static List<MtPin> providerPins() {
+    MtPin sibling = pin(Ecosystem.MAVEN, SIBLING, "2026.1028.215301", "pom.xml");
+    sibling.repository = PROVIDER;
+    sibling.location = "property:qits.landing-app-pacts-qits-system-service.version";
+    MtPin other = pin(Ecosystem.MAVEN, "eu.wohlben.qits:qits-eventstream", "2026.821.3", "pom.xml");
+    other.repository = PROVIDER;
+    return List.of(other, sibling);
+  }
+
+  private static Map<String, MtLatest> pactLatest(String version) {
+    return PendingChanges.index(
+        List.of(
+            latest(Ecosystem.MAVEN, ADOPTED, version),
+            latest(Ecosystem.MAVEN, SIBLING, "2026.1028.215301"),
+            latest(Ecosystem.MAVEN, "eu.wohlben.qits:qits-eventstream", "2026.821.3")));
+  }
+
+  private static List<PendingChanges.Pending> adoptionsOf(
+      List<MtPin> pins, List<String> consumers, Map<String, MtLatest> latest) {
+    return PendingChanges.of(
+        PactAdoptions.withAdoptions(PROVIDER, pins, consumers), latest, SPLIT, NO_REGISTRY);
+  }
+
+  /**
+   * <b>A declared edge, an adopted jar, no pin and a sibling to clone: ONE adoption</b>, in exactly
+   * the shape qits-ci's {@code dependency-bump.yml} reads — {@code from} null, the root pom, the
+   * location naming the kind and the coordinate — and on the internal group's branch.
+   */
+  @Test
+  void aDeclaredPublishedUnpinnedPactWithASiblingIsOneAdoption() {
+    List<PendingChanges.Pending> pending =
+        adoptionsOf(providerPins(), List.of(CONSUMER), pactLatest("2026.1105.101010"));
+
+    assertEquals(1, pending.size(), pending.toString());
+    assertEquals("dependencies", pending.getFirst().group());
+    assertEquals(
+        new Change(
+            "maven", "pom.xml", ADOPTED, null, "2026.1105.101010", "pact-adopt:" + ADOPTED),
+        pending.getFirst().change());
+    assertTrue(PactAdoptions.isAdoption(pending.getFirst().change()));
+  }
+
+  /** Without the edge the consumer declares, nothing is adopted, however published the jar is. */
+  @Test
+  void noDeclaredEdgeIsNoAdoption() {
+    assertTrue(adoptionsOf(providerPins(), List.of(), pactLatest("2026.1105.101010")).isEmpty());
+  }
+
+  /**
+   * <b>Once the pin exists it is an ordinary pin</b>: no adoption beside it, and the move rule takes
+   * over — so the scan after the bump lands can never pend a duplicate.
+   */
+  @Test
+  void anAlreadyPinnedPactIsMovedNotAdopted() {
+    List<MtPin> pins = new ArrayList<>(providerPins());
+    MtPin pinned = pin(Ecosystem.MAVEN, ADOPTED, "2026.1101.1", "pom.xml");
+    pinned.repository = PROVIDER;
+    pinned.location = "property:qits.maintenance-service-pacts-qits-system-service.version";
+    pins.add(pinned);
+
+    List<PendingChanges.Pending> pending =
+        adoptionsOf(pins, List.of(CONSUMER), pactLatest("2026.1105.101010"));
+
+    assertEquals(1, pending.size(), pending.toString());
+    Change change = pending.getFirst().change();
+    assertFalse(PactAdoptions.isAdoption(change), change.toString());
+    assertEquals("2026.1101.1", change.from());
+    assertEquals("2026.1105.101010", change.to());
+    assertTrue(
+        adoptionsOf(pins, List.of(CONSUMER), pactLatest("2026.1101.1")).isEmpty(),
+        "and at its latest it is simply current");
+  }
+
+  /** A provider that pins no sibling pact has nothing for the step to clone: nothing is pended. */
+  @Test
+  void noSiblingPactPinIsNoAdoption() {
+    List<MtPin> pins =
+        providerPins().stream().filter(pin -> !SIBLING.equals(pin.name)).toList();
+    assertTrue(adoptionsOf(pins, List.of(CONSUMER), pactLatest("2026.1105.101010")).isEmpty());
+  }
+
+  /**
+   * A jar whose release never FINALIZED has no {@code mt_latest}: published is not adopted
+   * (qits-1472), for a first pin as for a move.
+   */
+  @Test
+  void aJarWithNoAdoptedLatestIsNotAdopted() {
+    Map<String, MtLatest> latest =
+        PendingChanges.index(List.of(latest(Ecosystem.MAVEN, SIBLING, "2026.1028.215301")));
+    assertTrue(adoptionsOf(providerPins(), List.of(CONSUMER), latest).isEmpty());
+  }
+
+  /** A sibling pinned only in a module pom names that pom; the root pom wins wherever it has one. */
+  @Test
+  void theAdoptionNamesTheManifestTheSiblingVersionIsIn() {
+    MtPin sibling = pin(Ecosystem.MAVEN, SIBLING, "2026.1028.215301", "service/pom.xml");
+    sibling.repository = PROVIDER;
+    List<MtPin> adoptions = PactAdoptions.adoptions(PROVIDER, List.of(sibling), List.of(CONSUMER));
+    assertEquals(1, adoptions.size());
+    assertEquals("service/pom.xml", adoptions.getFirst().manifestPath);
+    assertEquals(PinKind.INTERNAL.name(), adoptions.getFirst().kind);
+    assertEquals(null, adoptions.getFirst().version);
+  }
 }

@@ -14,6 +14,7 @@ import eu.wohlben.qits.maintenance.entity.MtFinalizedRelease;
 import eu.wohlben.qits.maintenance.entity.MtLatest;
 import eu.wohlben.qits.maintenance.entity.MtPublishedArtifact;
 import eu.wohlben.qits.maintenance.entity.MtMainPin;
+import eu.wohlben.qits.maintenance.entity.MtPactEdge;
 import eu.wohlben.qits.maintenance.entity.MtPin;
 import eu.wohlben.qits.maintenance.entity.MtRelease;
 import eu.wohlben.qits.maintenance.entity.MtReleasePin;
@@ -85,6 +86,9 @@ public class InventoryReset {
     MtMainPin.deleteAll();
     MtGitlinkTree.deleteAll();
     MtGroup.deleteAll();
+    // The declared pact edges (V31, qits-1952): a leftover edge would pend an adoption in the next
+    // test's provider.
+    MtPactEdge.deleteAll();
     MtLatest.deleteAll();
     // The finalization join (V27, qits-1472). A leftover finalized row would adopt the next
     // test's announcement on the spot.

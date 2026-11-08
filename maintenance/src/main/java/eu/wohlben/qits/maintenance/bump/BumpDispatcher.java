@@ -16,6 +16,7 @@ import eu.wohlben.qits.maintenance.manifest.GroupConfig;
 import eu.wohlben.qits.maintenance.model.BumpStatus;
 import eu.wohlben.qits.maintenance.model.RepositoryStatus;
 import eu.wohlben.qits.maintenance.pending.Change;
+import eu.wohlben.qits.maintenance.pending.PactAdoptions;
 import eu.wohlben.qits.maintenance.pending.PendingChanges;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -675,6 +676,10 @@ public class BumpDispatcher {
     List<BumpOrder.Candidate> candidates = new ArrayList<>();
     List<String> refusals = new ArrayList<>();
     Set<String> reofferOwed = new LinkedHashSet<>();
+    // The declared pact edges, read once for the walk (qits-1952): a provider owed a consumer's
+    // first pact pin is owed a bump like any other, and its adoption rides the same request.
+    Map<String, List<String>> pactConsumers =
+        PactAdoptions.consumersByProvider(store.pactEdges());
     for (MtRepository row : store.repositories()) {
       if (!RepositoryStatus.OK.name().equals(row.status)) {
         continue;
@@ -689,7 +694,9 @@ public class BumpDispatcher {
       if (groups.stream().noneMatch(candidate -> candidate.name.equals(group))) {
         continue;
       }
-      List<MtPin> pins = store.pins(row.name);
+      List<MtPin> pins =
+          PactAdoptions.withAdoptions(
+              row.name, store.pins(row.name), pactConsumers.getOrDefault(row.name, List.of()));
       List<Change> changes =
           PendingChanges.forGroup(pins, latest, groups, group, resolver::published);
       if (changes.isEmpty()) {

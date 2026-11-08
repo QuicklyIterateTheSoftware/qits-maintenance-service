@@ -737,4 +737,208 @@ class UpstreamReplanTest {
         List.of(id), bumpRows(REQUEST).stream().map(row -> row.id).toList(),
         "nothing more was ever opened onto the closed request");
   }
+
+  // --- a consumer's first pact jar: the provider is re-planned for its adoption (qits-1952) ------
+
+  /** The consumer that declares a pact against the fixture's repository. */
+  private static final String PACT_CONSUMER = "qits-landing-app";
+
+  /** Its jar, which the fixture's repository does not pin yet. */
+  private static final String ADOPTED = "eu.wohlben.qits:qits-landing-app-pacts-" + Fixture.REPOSITORY;
+
+  /** The pact the fixture's repository already pins — the sibling qits-ci's step clones. */
+  private static final String SIBLING = "qits-docs-service-pacts-" + Fixture.REPOSITORY;
+
+  private static final String ADOPTED_VERSION = "2026.1105.101010";
+
+  /**
+   * A fold whose pins are all current and whose root pom pins the SIBLING pact the estate's way — a
+   * property, a {@code dependencyManagement} entry — with the module carrying its versionless test
+   * dependency.
+   */
+  private static final String POM_WITH_SIBLING =
+      CURRENT_POM.replace(
+          "  <dependencies>\n",
+          "  <properties>\n"
+              + "    <qits." + SIBLING.substring("qits-".length()) + ".version>2026.1028.215301</qits."
+              + SIBLING.substring("qits-".length()) + ".version>\n"
+              + "  </properties>\n"
+              + "  <modules>\n"
+              + "    <module>service</module>\n"
+              + "  </modules>\n"
+              + "  <dependencyManagement>\n"
+              + "    <dependencies>\n"
+              + "      <dependency>\n"
+              + "        <groupId>eu.wohlben.qits</groupId>\n"
+              + "        <artifactId>" + SIBLING + "</artifactId>\n"
+              + "        <version>${qits." + SIBLING.substring("qits-".length()) + ".version}</version>\n"
+              + "      </dependency>\n"
+              + "    </dependencies>\n"
+              + "  </dependencyManagement>\n"
+              + "  <dependencies>\n");
+
+  private static final String MODULE_POM_WITH_SIBLING =
+      "<project>\n"
+          + "  <parent>\n"
+          + "    <groupId>eu.wohlben.qits</groupId>\n"
+          + "    <artifactId>qits-ci</artifactId>\n"
+          + "    <version>2026.821.1</version>\n"
+          + "  </parent>\n"
+          + "  <artifactId>qits-ci-service</artifactId>\n"
+          + "  <dependencies>\n"
+          + "    <dependency>\n"
+          + "      <groupId>eu.wohlben.qits</groupId>\n"
+          + "      <artifactId>" + SIBLING + "</artifactId>\n"
+          + "      <scope>test</scope>\n"
+          + "    </dependency>\n"
+          + "  </dependencies>\n"
+          + "</project>\n";
+
+  /** The consumer's jar published, and adopted: its release FINALIZED, so mt_latest holds it. */
+  private void pactJarAdopted() {
+    store.upsertArtifact(
+        Ecosystem.MAVEN, ADOPTED, ADOPTED_VERSION, PACT_CONSUMER, Instant.parse("2026-11-05T10:10:10Z"));
+    store.recordLatestIfNewer(Ecosystem.MAVEN, ADOPTED, ADOPTED_VERSION, "event:test", Instant.now());
+    AutomationFixture.scriptManifests(peers, FOLD_A, POM_WITH_SIBLING, null);
+    AutomationFixture.scriptFile(peers, FOLD_A, "service/pom.xml", MODULE_POM_WITH_SIBLING);
+  }
+
+  /**
+   * <b>The bug, reproduced</b>: the consumer's jar is adopted and the fixture's repository pins no
+   * artifact of that name, so the pin walk finds no consumer and nothing was ever re-planned. With
+   * the consumer's DECLARED edge, the provider's open request is re-planned, and the plan's one
+   * change is the adoption in exactly the contract qits-ci's step reads — staging every pom the fold
+   * holds, the module whose versionless test dependency is no pin of its own included.
+   */
+  @Test
+  void aPactJarWithADeclaredEdgeReplansItsUnpinnedProvider() throws Exception {
+    pactJarAdopted();
+    store.replacePactEdges(PACT_CONSUMER, List.of(Fixture.REPOSITORY));
+    listing("PENDING", "PENDING");
+
+    upstream.latestMoved(Ecosystem.MAVEN, ADOPTED);
+    queue.awaitIdle(Duration.ofSeconds(30));
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    List<MtBump> rows = bumpRows(REQUEST);
+    assertEquals(1, rows.size(), "the provider was re-planned: " + rows);
+    MtBump row = rows.getFirst();
+    assertEquals(BumpTrigger.UPSTREAM.name(), row.trigger);
+    assertEquals(BumpStatus.RUNNING.name(), row.status, row.message);
+    assertEquals(
+        List.of(
+            new eu.wohlben.qits.maintenance.pending.Change(
+                "maven", "pom.xml", ADOPTED, null, ADOPTED_VERSION, "pact-adopt:" + ADOPTED)),
+        BumpService.changes(row));
+
+    List<String> triggers = peers.bodiesFor(CiClient.TRIGGER_PATH);
+    assertEquals(1, triggers.size(), triggers.toString());
+    com.fasterxml.jackson.databind.JsonNode payload =
+        new com.fasterxml.jackson.databind.ObjectMapper().readTree(triggers.getFirst()).get("payload");
+    assertEquals("[\"pom.xml\",\"service/pom.xml\"]", payload.get("commitPaths").toString());
+    com.fasterxml.jackson.databind.JsonNode change = payload.get("changes").get(0);
+    assertTrue(change.has("from") && change.get("from").isNull(), change.toString());
+    assertEquals("pact-adopt:" + ADOPTED, change.get("location").asText());
+  }
+
+  /** Without the edge, the jar's release re-plans nobody — the consumer declares no pact here. */
+  @Test
+  void aPactJarNobodyDeclaresReplansNobody() {
+    pactJarAdopted();
+    listing("PENDING", "PENDING");
+
+    upstream.latestMoved(Ecosystem.MAVEN, ADOPTED);
+    queue.awaitIdle(Duration.ofSeconds(30));
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    assertTrue(bumpRows(REQUEST).isEmpty());
+  }
+
+  /**
+   * <b>The dispatcher's walk owes the provider the adoption</b> where no request is open: the change
+   * is pending like a move, so the main-only request is opened for it.
+   */
+  @Test
+  void theDispatcherOwesTheProviderTheAdoption() {
+    pactJarAdopted();
+    // Main as the fold: every pin current, the sibling pinned — what the walk reads from mt_pin.
+    String blob = "/git/" + Fixture.PROJECT + "/" + Fixture.REPOSITORY + "/blob/" + Fixture.HEAD_SHA;
+    Map<String, String> sha = Map.of("Git-Commit-Sha", Fixture.HEAD_SHA);
+    peers.answer(PeerTarget.GITHOST, blob + "/pom.xml", FakePeers.Scripted.ok(POM_WITH_SIBLING, sha));
+    peers.answer(
+        PeerTarget.GITHOST,
+        blob + "/service/pom.xml",
+        FakePeers.Scripted.ok(MODULE_POM_WITH_SIBLING, sha));
+    scans.request(ScanScope.ALL, null, ScanTrigger.MANUAL);
+    queue.awaitIdle(Duration.ofSeconds(60));
+    assertTrue(
+        store.pins(Fixture.REPOSITORY).stream()
+            .anyMatch(pin -> ("eu.wohlben.qits:" + SIBLING).equals(pin.name)),
+        "the sibling is a pin at main");
+    assertTrue(owedNames().stream().noneMatch(ADOPTED::equals), "not owed without the edge");
+
+    store.replacePactEdges(PACT_CONSUMER, List.of(Fixture.REPOSITORY));
+
+    assertEquals(
+        1,
+        owedNames().stream().filter(ADOPTED::equals).count(),
+        "owed once, beside the fixture's other moves: " + owedNames());
+  }
+
+  /** What the dispatcher's walk owes the fixture's repository, by dependency name. */
+  private List<String> owedNames() {
+    return dispatcher.candidates().stream()
+        .filter(candidate -> Fixture.REPOSITORY.equals(candidate.repository()))
+        .flatMap(candidate -> candidate.changes().stream())
+        .map(eu.wohlben.qits.maintenance.pending.Change::name)
+        .toList();
+  }
+
+  /**
+   * <b>A scan stores the edges its release.yml declares and replaces them wholesale</b>: an edge the
+   * consumer stopped declaring is gone, and a file the git host would not serve keeps what was
+   * stored.
+   */
+  @Test
+  void aScanStoresTheDeclaredPactEdgesAndReplacesThem() {
+    String path =
+        "/git/" + Fixture.PROJECT + "/" + Fixture.REPOSITORY + "/blob/" + Fixture.HEAD_SHA + "/"
+            + eu.wohlben.qits.maintenance.manifest.ReleaseConfig.PATH;
+    peers.answer(
+        PeerTarget.GITHOST,
+        path,
+        FakePeers.Scripted.ok(
+            "contracts:\n  pacts:\n    qits-edge-service: { packages: [maven] }\n"
+                + "    qits-projects-service: { packages: [maven] }\n",
+            Map.of("Git-Commit-Sha", Fixture.HEAD_SHA)));
+    scans.request(ScanScope.ALL, null, ScanTrigger.MANUAL);
+    queue.awaitIdle(Duration.ofSeconds(60));
+    assertEquals(List.of(Fixture.REPOSITORY), store.pactConsumers("qits-edge-service"));
+    assertEquals(List.of(Fixture.REPOSITORY), store.pactConsumers("qits-projects-service"));
+
+    peers.answer(PeerTarget.GITHOST, path, FakePeers.Scripted.unreachable("connection refused"));
+    scans.request(ScanScope.ALL, null, ScanTrigger.MANUAL);
+    queue.awaitIdle(Duration.ofSeconds(60));
+    assertEquals(2, store.pactEdges().size(), "an unserved file keeps the edges");
+
+    peers.answer(
+        PeerTarget.GITHOST,
+        path,
+        FakePeers.Scripted.ok(
+            "contracts:\n  pacts:\n    qits-edge-service: { packages: [maven] }\n",
+            Map.of("Git-Commit-Sha", Fixture.HEAD_SHA)));
+    scans.request(ScanScope.ALL, null, ScanTrigger.MANUAL);
+    queue.awaitIdle(Duration.ofSeconds(60));
+    assertEquals(List.of(Fixture.REPOSITORY), store.pactConsumers("qits-edge-service"));
+    assertTrue(store.pactConsumers("qits-projects-service").isEmpty(), "no longer declared");
+
+    peers.answer(PeerTarget.GITHOST, path, FakePeers.Scripted.ok("contracts: [not, a, map\n"));
+    scans.request(ScanScope.ALL, null, ScanTrigger.MANUAL);
+    queue.awaitIdle(Duration.ofSeconds(60));
+    assertTrue(store.pactEdges().isEmpty(), "a malformed file declares nothing");
+    assertEquals(
+        RepositoryStatus.OK.name(),
+        store.repository(Fixture.REPOSITORY).orElseThrow().status,
+        "and is never the scan's failure");
+  }
 }

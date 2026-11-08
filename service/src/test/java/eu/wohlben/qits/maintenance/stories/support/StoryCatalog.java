@@ -32,14 +32,14 @@ import java.util.UUID;
  *
  * <h2>What is deliberately NOT armed</h2>
  *
- * <p>{@link #SECOND_REPOSITORY} carries neither {@code .config/qits/maintenance.yml} nor {@code
- * .config/qits/repository.yml} (the latter is qits-1784's), and that double absence is a fixture
- * doing work: a 404 on a blob is followed by a read of the ROOT TREE at the same sha, because the
- * git host spells "no such revision" and "no such path" identically — so each of the two files 404s
- * once and the root tree is read once in reply to each. All four calls are in the diagram, which
- * makes "a 404 is not an answer until it has been asked twice" a shape a reader can see rather than
- * a sentence in a README. {@link #REPOSITORY} carries both files, so its own reads of them are
- * ordinary 200s.
+ * <p>{@link #SECOND_REPOSITORY} carries none of {@code .config/qits/maintenance.yml}, {@code
+ * .config/qits/repository.yml} (qits-1784's) or {@code .config/qits/release.yml} (qits-1952's),
+ * and that triple absence is a fixture doing work: a 404 on a blob is followed by a read of the
+ * ROOT TREE at the same sha, because the git host spells "no such revision" and "no such path"
+ * identically — so each of the three files 404s once and the root tree is read once in reply to
+ * each. All six calls are in the diagram, which makes "a 404 is not an answer until it has been
+ * asked twice" a shape a reader can see rather than a sentence in a README. {@link #REPOSITORY}
+ * carries all three files, so its own reads of them are ordinary 200s.
  *
  * <p>Nothing arms a branch here either. {@code maintenance/dependencies} does not exist until a
  * bump story says it does, and an unregistered path is a 404 — which is exactly what the git host
@@ -399,6 +399,23 @@ public final class StoryCatalog {
       """;
 
   /**
+   * The repository's own {@code .config/qits/release.yml} (qits-1952) — present, for a key this
+   * service does not read, and declaring no pact: {@code contracts.pacts} is absent, which {@link
+   * eu.wohlben.qits.maintenance.manifest.ReleaseConfig#parse} reads as "declares no pact" rather
+   * than an error. It is armed here anyway, rather than left absent like {@link
+   * #SECOND_REPOSITORY}'s, so this repository demonstrates the FOUND path for every config file it
+   * carries while the second one demonstrates the triple-404 path (see the class comment). A pact
+   * edge is deliberately NOT armed here: the first one this platform ever stores for a repository
+   * re-plans its provider ({@code UpstreamReplan#pactDeclared}, qits-1952), which would reach a
+   * sixth peer route this fixture does not arm — a story about reading manifests has no business
+   * asserting on a dispatcher side effect.
+   */
+  private static final String RELEASE_YML =
+      """
+      version: 1
+      """;
+
+  /**
    * The second repository: one EXTERNAL pin behind a property, and nothing else at all — so its
    * whole pending list belongs to the external half of the fallback, which is the branch the second
    * bump story writes.
@@ -485,6 +502,7 @@ public final class StoryCatalog {
     githost.text(blob(REPOSITORY, HEAD_SHA, "Dockerfile"), DOCKERFILE, sha);
     githost.text(blob(REPOSITORY, HEAD_SHA, ".config/qits/maintenance.yml"), MAINTENANCE_YML, sha);
     githost.text(blob(REPOSITORY, HEAD_SHA, ".config/qits/repository.yml"), REPOSITORY_YML, sha);
+    githost.text(blob(REPOSITORY, HEAD_SHA, ".config/qits/release.yml"), RELEASE_YML, sha);
 
     Map<String, String> secondSha = Map.of("Git-Commit-Sha", SECOND_HEAD_SHA);
     githost.json(tree(SECOND_REPOSITORY, "main"), SECOND_ROOT_TREE, secondSha);

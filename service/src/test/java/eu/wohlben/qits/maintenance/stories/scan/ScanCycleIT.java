@@ -44,7 +44,7 @@ import org.junit.jupiter.api.TestMethodOrder;
  * has, and the one whose failure mode is the whole reason the inventory is a store.
  *
  * <p>Pressing <i>Scan</i> is a single POST and 202. What it starts is a read of the catalog, one
- * head resolution and seven manifest reads per repository, and a registry lookup per DEPENDENCY —
+ * head resolution and eight manifest reads per repository, and a registry lookup per DEPENDENCY —
  * and the diagram beside the first story is that whole list, drawn from what the five stand-in
  * peers were really asked and what they really answered. A diagram of the near side alone would say
  * a scan is a POST.
@@ -178,9 +178,9 @@ public class ScanCycleIT {
     // A 404 IS NOT AN ANSWER UNTIL IT HAS BEEN ASKED TWICE. The git host spells "no such revision"
     // and "no such path" identically, so a 404 on a file is followed by a read of the ROOT tree at
     // the same sha: answered means the file is ABSENT, 404 means the commit is GONE. The second
-    // repository carries neither .config/qits/maintenance.yml nor .config/qits/repository.yml (the
-    // latter is qits-1784's), so both 404s — and both of the root-tree reads that follow them — are
-    // in the diagram.
+    // repository carries none of .config/qits/maintenance.yml, .config/qits/repository.yml (qits-
+    // 1784's) or .config/qits/release.yml (qits-1952's), so all three 404s — and all three of the
+    // root-tree reads that follow them — are in the diagram.
     assertEquals(
         1,
         githost.requestsTo(
@@ -198,15 +198,24 @@ public class ScanCycleIT {
                 ".config/qits/repository.yml")),
         "the missing repository file (qits-1784's) must have been asked for too");
     assertEquals(
-        2,
+        1,
+        githost.requestsTo(
+            StoryCatalog.blob(
+                StoryCatalog.SECOND_REPOSITORY,
+                StoryCatalog.SECOND_HEAD_SHA,
+                ".config/qits/release.yml")),
+        "the missing pact file (qits-1952's) must have been asked for too");
+    assertEquals(
+        3,
         githost.requestsTo(
             StoryCatalog.tree(StoryCatalog.SECOND_REPOSITORY, StoryCatalog.SECOND_HEAD_SHA)),
         "a 404 on a file must be followed by a read of the root tree at the same sha, once per"
             + " absent file");
     story
-        .note("a repository with no grouping file and no repository file 404s twice and is asked"
-            + " about the root tree twice in reply, once per absent file — the root tree at the"
-            + " same commit is what tells an absent FILE from a missing COMMIT")
+        .note("a repository with no grouping file, no repository file and no pact file 404s three"
+            + " times and is asked about the root tree three times in reply, once per absent file"
+            + " — the root tree at the same commit is what tells an absent FILE from a missing"
+            + " COMMIT")
         .as("absent-is-not-gone");
 
     // OUTBOUND, THIS SERVICE IS A MACHINE AND NOTHING ELSE. Every call above carried this service's
@@ -435,9 +444,9 @@ public class ScanCycleIT {
     out(READ_SLUG, StoryTarget.PROJECTS, "GET " + StoryCatalog.CATALOG_PATH + " -> 200");
 
     // The git host, in the order a scan makes them: one head resolution per repository, then every
-    // manifest at that commit, the grouping file, and the repository file (qits-1784's) — and the
-    // pair that tells an absent FILE from a missing COMMIT, once for each of the latter two that a
-    // repository does not carry.
+    // manifest at that commit, the grouping file, the repository file (qits-1784's) and the pact
+    // file (qits-1952's) — and the root-tree read that tells an absent FILE from a missing COMMIT,
+    // once for each of the three that a repository does not carry.
     out(READ_SLUG, StoryTarget.GITHOST, tree(StoryCatalog.REPOSITORY, "main", "200"));
     out(READ_SLUG, StoryTarget.GITHOST, blob(StoryCatalog.REPOSITORY, "pom.xml", "200"));
     out(READ_SLUG, StoryTarget.GITHOST, blob(StoryCatalog.REPOSITORY, "service/pom.xml", "200"));
@@ -452,6 +461,10 @@ public class ScanCycleIT {
         READ_SLUG,
         StoryTarget.GITHOST,
         blob(StoryCatalog.REPOSITORY, ".config/qits/repository.yml", "200"));
+    out(
+        READ_SLUG,
+        StoryTarget.GITHOST,
+        blob(StoryCatalog.REPOSITORY, ".config/qits/release.yml", "200"));
     out(READ_SLUG, StoryTarget.GITHOST, tree(StoryCatalog.SECOND_REPOSITORY, "main", "200"));
     out(READ_SLUG, StoryTarget.GITHOST, blob(StoryCatalog.SECOND_REPOSITORY, "pom.xml", "200"));
     out(
@@ -462,6 +475,10 @@ public class ScanCycleIT {
         READ_SLUG,
         StoryTarget.GITHOST,
         blob(StoryCatalog.SECOND_REPOSITORY, ".config/qits/repository.yml", "404"));
+    out(
+        READ_SLUG,
+        StoryTarget.GITHOST,
+        blob(StoryCatalog.SECOND_REPOSITORY, ".config/qits/release.yml", "404"));
     out(
         READ_SLUG,
         StoryTarget.GITHOST,
@@ -512,12 +529,12 @@ public class ScanCycleIT {
         StoryTarget.STORE,
         "one repository's whole inventory is replaced in one transaction");
 
-    // FOUR REQUESTS IN, TWENTY-TWO OUT, AND ONE WRITE THIS TAP CANNOT SEE. The count is what makes
+    // FOUR REQUESTS IN, TWENTY-FOUR OUT, AND ONE WRITE THIS TAP CANNOT SEE. The count is what makes
     // the list above a closure rather than a sample: a lookup this service should not have made —
     // an UNRESOLVED expression turned into a URL, a REACTOR sibling offered as an upgrade, an
-    // external image ranked against a vendor's tags — would be a twenty-eighth edge, and no
-    // presence check could see it.
-    ReportAssertions.assertEdgeCount(CATEGORY_SLUG, READ_SLUG, 27);
+    // external image ranked against a vendor's tags — would be a thirtieth edge, and no presence
+    // check could see it.
+    ReportAssertions.assertEdgeCount(CATEGORY_SLUG, READ_SLUG, 29);
     ReportAssertions.assertOnlyEdgesFrom(
         CATEGORY_SLUG, READ_SLUG, List.of(StoryIdentities.OPERATOR, StoryTarget.SERVICE));
     // A person's identity arrives in a header the edge asserted, so nothing here re-asks the idp
@@ -559,6 +576,10 @@ public class ScanCycleIT {
         OUTAGE_SLUG,
         StoryTarget.GITHOST,
         blob(StoryCatalog.REPOSITORY, ".config/qits/repository.yml", "200"));
+    out(
+        OUTAGE_SLUG,
+        StoryTarget.GITHOST,
+        blob(StoryCatalog.REPOSITORY, ".config/qits/release.yml", "200"));
 
     out(OUTAGE_SLUG, StoryTarget.ARTIFACTS, internalMetadata("qits-parent"));
     out(OUTAGE_SLUG, StoryTarget.ARTIFACTS, internalMetadata("qits-eventstream"));
@@ -588,7 +609,7 @@ public class ScanCycleIT {
     // presence check could see its absence.
     ReportAssertions.assertNoEdgesTo(CATEGORY_SLUG, OUTAGE_SLUG, StoryTarget.MIRROR);
     ReportAssertions.assertNoEdgesTo(CATEGORY_SLUG, OUTAGE_SLUG, StoryTarget.CI);
-    ReportAssertions.assertEdgeCount(CATEGORY_SLUG, OUTAGE_SLUG, 19);
+    ReportAssertions.assertEdgeCount(CATEGORY_SLUG, OUTAGE_SLUG, 20);
     ReportAssertions.assertOnlyEdgesFrom(
         CATEGORY_SLUG, OUTAGE_SLUG, List.of(StoryIdentities.OPERATOR, StoryTarget.SERVICE));
   }

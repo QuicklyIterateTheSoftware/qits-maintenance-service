@@ -75,6 +75,9 @@ public class ManifestScanner {
 
   private static final Logger LOG = Logger.getLogger(ManifestScanner.class);
 
+  /** A maven manifest's file name, root and module alike. */
+  private static final String POM = "pom.xml";
+
   /** The one directory below the root that a Dockerfile is looked for in. */
   private static final String DOCKER_DIRECTORY = "docker";
 
@@ -98,6 +101,10 @@ public class ManifestScanner {
    * @param bumps whether the repository is owed dependency bumps (qits-1784) — decided only on an OK
    *     read, and {@link DependencyBumps#ON} on every other, where the status already keeps the
    *     dispatcher away
+   * @param pactProviders the providers this repository declares a pact against in {@link
+   *     ReleaseConfig#PATH} (qits-1952), read at {@code headSha} on every read that resolved one —
+   *     empty for a file that is absent or unusable, and NULL when it was not read or the git host
+   *     would not serve it, which tells the scan to keep the edges it stored last
    */
   public record Read(
       RepositoryStatus status,
@@ -106,10 +113,24 @@ public class ManifestScanner {
       List<GroupConfig.Group> groups,
       eu.wohlben.qits.maintenance.model.GroupSource groupSource,
       String message,
-      DependencyBumps bumps) {
+      DependencyBumps bumps,
+      List<String> pactProviders) {
 
     public Read {
       bumps = bumps == null ? DependencyBumps.ON : bumps;
+      pactProviders = pactProviders == null ? null : List.copyOf(pactProviders);
+    }
+
+    /** A read that says nothing about pact edges — every one that does not reach a head. */
+    public Read(
+        RepositoryStatus status,
+        String headSha,
+        List<ParsedPin> pins,
+        List<GroupConfig.Group> groups,
+        eu.wohlben.qits.maintenance.model.GroupSource groupSource,
+        String message,
+        DependencyBumps bumps) {
+      this(status, headSha, pins, groups, groupSource, message, bumps, null);
     }
 
     /** Every read that does not get as far as deciding the bumps. */
@@ -200,9 +221,15 @@ public class ManifestScanner {
           RepositoryStatus.UNREACHABLE, null, List.of(), List.of(), null, unserved.getMessage());
     }
 
+    // THE PACT EDGES, AT THE SAME SHA (qits-1952), read before either config can turn the row into a
+    // CONFIG_ERROR: what a consumer declares in release.yml has nothing to do with whether its own
+    // maintenance.yml parses, and a provider must not lose an adoption to a typo in its consumer.
+    List<String> pactProviders = pactProviders(project, name, headSha);
+
     if (!config.ok()) {
       return new Read(
-          RepositoryStatus.CONFIG_ERROR, headSha, List.copyOf(pins), List.of(), null, config.error());
+          RepositoryStatus.CONFIG_ERROR, headSha, List.copyOf(pins), List.of(), null, config.error(),
+          DependencyBumps.ON, pactProviders);
     }
     // AT THE SAME SHA, AND ONLY HERE (qits-1784). Whether the repository is owed bumps is a fact
     // about its current tree, which is what a scan writes the row from; the ledger's read of a
@@ -236,7 +263,9 @@ public class ManifestScanner {
           List.copyOf(pins),
           List.of(),
           null,
-          repositoryConfig.error());
+          repositoryConfig.error(),
+          DependencyBumps.ON,
+          pactProviders);
     }
     if (!config.ignored().isEmpty()) {
       LOG.debugf(
@@ -255,7 +284,39 @@ public class ManifestScanner {
         config.groups(),
         config.source(),
         null,
-        bumps);
+        bumps,
+        pactProviders);
+  }
+
+  /**
+   * The providers {@link ReleaseConfig#PATH} declares a pact against at {@code sha} (qits-1952).
+   *
+   * <p><b>Absent is "none" and unusable is "none"; only UNSERVED is unknown.</b> A file the git host
+   * answers not-found declares nothing, and neither does one that is not yaml — the DEBUG line says
+   * why, and the scan is never failed for it: it is somebody else's file and an edge only ever adds
+   * an offer. A blob read that failed, though, says nothing about what the file holds, so null tells
+   * the scan to keep the edges it stored last rather than drop every adoption for one hiccup.
+   */
+  private List<String> pactProviders(String project, String name, String sha) {
+    FileLookup file = gitHost.blob(project, name, sha, ReleaseConfig.PATH);
+    switch (file.status()) {
+      case FOUND -> {
+        ReleaseConfig.Parsed parsed = ReleaseConfig.parse(file.content());
+        if (parsed.problem() != null) {
+          LOG.debugf("At %s %s declares no pact: %s", sha, name, parsed.problem());
+        }
+        return parsed.providers();
+      }
+      case ABSENT, GONE -> {
+        return List.of();
+      }
+      default -> {
+        LOG.debugf(
+            "At %s %s's %s was not served (%s); its stored pact edges are kept",
+            sha, name, ReleaseConfig.PATH, file.status());
+        return null;
+      }
+    }
   }
 
   /**
@@ -267,8 +328,22 @@ public class ManifestScanner {
    * @param sha the commit the revision resolved to, null unless FOUND
    * @param pins every direct pin found at it, in discovery order
    * @param message the sentence, for UNREACHABLE and INVALID
+   * @param poms every {@code pom.xml} the discovery read at it, root and reactor modules alike, in
+   *     read order (qits-1952) — what a pact adoption stages, since the step clones a sibling pact
+   *     pin into module poms whose versionless dependency is no pin of its own
    */
-  public record Pins(FileLookup.Status status, String sha, List<ParsedPin> pins, String message) {}
+  public record Pins(
+      FileLookup.Status status, String sha, List<ParsedPin> pins, String message, List<String> poms) {
+
+    public Pins {
+      poms = poms == null ? List.of() : List.copyOf(poms);
+    }
+
+    /** A read that lists no pom — every one that is not FOUND, and every test's. */
+    public Pins(FileLookup.Status status, String sha, List<ParsedPin> pins, String message) {
+      this(status, sha, pins, message, List.of());
+    }
+  }
 
   /**
    * <b>Every pin one repository declared at one revision — the same discovery, none of the
@@ -299,7 +374,8 @@ public class ManifestScanner {
     String sha = root.headSha();
     GroupConfig.Parsed config = groups(project, name, sha);
     try {
-      return new Pins(FileLookup.Status.FOUND, sha, pins(project, name, sha, root, config), null);
+      Discovery discovery = discover(project, name, sha, root, config);
+      return new Pins(FileLookup.Status.FOUND, sha, discovery.pins(), null, discovery.poms());
     } catch (UnservedManifest unserved) {
       // Retryable for every caller: the ledger throws so its frame is offered again, the gitlink
       // read keeps the rows it reached last time, and the bump automation plans nothing.
@@ -322,6 +398,14 @@ public class ManifestScanner {
    */
   private List<ParsedPin> pins(
       String project, String name, String sha, TreeLookup root, GroupConfig.Parsed config) {
+    return discover(project, name, sha, root, config).pins();
+  }
+
+  /** What one discovery found: the pins, and every pom it read (qits-1952). */
+  private record Discovery(List<ParsedPin> pins, List<String> poms) {}
+
+  private Discovery discover(
+      String project, String name, String sha, TreeLookup root, GroupConfig.Parsed config) {
     Set<Ecosystem> ignored = EnumSet.noneOf(Ecosystem.class);
     for (Ecosystem ecosystem : Ecosystem.values()) {
       if (config.ignores(ecosystem)) {
@@ -330,7 +414,8 @@ public class ManifestScanner {
     }
     GitHostFiles files = new GitHostFiles(project, name, sha, root, ignored);
     try {
-      return ManifestReader.read(files, ignored);
+      List<ParsedPin> pins = ManifestReader.read(files, ignored);
+      return new Discovery(pins, files.poms());
     } catch (IllegalStateException contradiction) {
       // The library's own word for "listed and not read". GitHostFiles never answers a listed path
       // empty — it raises UnservedManifest with the host's status first — so this is the backstop,
@@ -444,6 +529,18 @@ public class ManifestScanner {
       }
       contents.put(path, answer);
       return answer;
+    }
+
+    /** Every pom this tree served while the library read it, in read order (qits-1952). */
+    List<String> poms() {
+      List<String> poms = new ArrayList<>();
+      contents.forEach(
+          (path, content) -> {
+            if (content.isPresent() && (path.equals(POM) || path.endsWith("/" + POM))) {
+              poms.add(path);
+            }
+          });
+      return List.copyOf(poms);
     }
 
     @Override
