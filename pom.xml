@@ -70,7 +70,7 @@
              hand-edit one to chase a release. -->
         <qits.ci-golden-masters.version>2026.1107.84029</qits.ci-golden-masters.version>
         <qits.deployments-golden-masters.version>2026.1010.145913</qits.deployments-golden-masters.version>
-        <qits.artifacts-golden-masters.version>2026.1107.150727</qits.artifacts-golden-masters.version>
+        <qits.artifacts-golden-masters.version>2026.1109.44929</qits.artifacts-golden-masters.version>
         <qits.githost-golden-masters.version>2026.1109.41303</qits.githost-golden-masters.version>
         <qits.idp-golden-masters.version>2026.1109.13349</qits.idp-golden-masters.version>
         <qits.mirror-golden-masters.version>2026.1107.183334</qits.mirror-golden-masters.version>
