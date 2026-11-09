@@ -496,6 +496,17 @@ class QaCheckedAutomationTest {
   }
 
   /**
+   * Planned before QA, not deferred: REQUESTED, or RUNNING when the queued dispatch reached qits-ci
+   * before the answer was built — the race {@link #DISPATCHED} names, which a gate hit here too
+   * (qits-1958, qits-maintenance-service-rr-218).
+   */
+  private static void assertDispatched(ReleaseRequestAutomationsDto answer, String kind) {
+    AutomationDto entry = AutomationFixture.entry(answer, kind);
+    assertTrue(
+        DISPATCHED.contains(entry.state()), kind + " " + entry.state() + ": " + entry.detail());
+  }
+
+  /**
    * No own slot and no own copy: qits-ci's packaged recipe decides. It checks the screenshots only,
    * so they are DEFERRED and the entity diagram runs before QA as today.
    */
@@ -508,7 +519,7 @@ class QaCheckedAutomationTest {
     ReleaseRequestAutomationsDto answer = trigger(FOLD_A, null, null, WITH_DEFERRED);
 
     assertEquals(AutomationState.DEFERRED.name(), state(answer, ScreenshotBaselinesAutomation.KIND));
-    assertEquals(AutomationState.REQUESTED.name(), state(answer, EntityDiagramAutomation.KIND));
+    assertDispatched(answer, EntityDiagramAutomation.KIND);
     assertEquals(1, rows(FOLD_A, EntityDiagramAutomation.KIND).size());
     assertTrue(rows(FOLD_A, ScreenshotBaselinesAutomation.KIND).isEmpty());
   }
@@ -524,8 +535,8 @@ class QaCheckedAutomationTest {
 
     ReleaseRequestAutomationsDto answer = trigger(FOLD_A, null, null, WITH_DEFERRED);
 
-    assertEquals(AutomationState.REQUESTED.name(), state(answer, ScreenshotBaselinesAutomation.KIND));
-    assertEquals(AutomationState.REQUESTED.name(), state(answer, EntityDiagramAutomation.KIND));
+    assertDispatched(answer, ScreenshotBaselinesAutomation.KIND);
+    assertDispatched(answer, EntityDiagramAutomation.KIND);
   }
 
   /** An own release-request slot replaces the archetype's whole: without the key, no defer. */
@@ -538,7 +549,7 @@ class QaCheckedAutomationTest {
 
     ReleaseRequestAutomationsDto answer = trigger(FOLD_A, null, null, WITH_DEFERRED);
 
-    assertEquals(AutomationState.REQUESTED.name(), state(answer, ScreenshotBaselinesAutomation.KIND));
+    assertDispatched(answer, ScreenshotBaselinesAutomation.KIND);
   }
 
   /** A packaged recipe the git host cannot serve is doubt, and doubt keeps the pre-run. */
@@ -550,6 +561,6 @@ class QaCheckedAutomationTest {
 
     ReleaseRequestAutomationsDto answer = trigger(FOLD_A, null, null, WITH_DEFERRED);
 
-    assertEquals(AutomationState.REQUESTED.name(), state(answer, ScreenshotBaselinesAutomation.KIND));
+    assertDispatched(answer, ScreenshotBaselinesAutomation.KIND);
   }
 }
