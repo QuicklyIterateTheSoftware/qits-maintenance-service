@@ -69,7 +69,7 @@
              every internal pin: a qits-maintenance bump on its property, gated here. Do not
              hand-edit one to chase a release. -->
         <qits.ci-golden-masters.version>2026.1109.132507</qits.ci-golden-masters.version>
-        <qits.deployments-golden-masters.version>2026.1109.112514</qits.deployments-golden-masters.version>
+        <qits.deployments-golden-masters.version>2026.1109.191811</qits.deployments-golden-masters.version>
         <qits.artifacts-golden-masters.version>2026.1109.145731</qits.artifacts-golden-masters.version>
         <qits.githost-golden-masters.version>2026.1109.41303</qits.githost-golden-masters.version>
         <qits.idp-golden-masters.version>2026.1109.13349</qits.idp-golden-masters.version>
