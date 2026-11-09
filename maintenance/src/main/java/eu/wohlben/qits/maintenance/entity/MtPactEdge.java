@@ -19,8 +19,9 @@ import java.util.UUID;
  */
 @Technical(
     reason =
-        "A scan-derived index of the contracts.pacts keys consumers' release.yml declare, read only"
-            + " by PactAdoptions to offer a provider its first pin; the release.yml is the record.")
+        "A scan-derived index of the contracts.pacts keys consumers' release.yml declare, replaced"
+            + " wholesale by each consumer scan and read only by PactAdoptions to offer a provider"
+            + " its first pin; the release.yml is the record.")
 @Entity
 @Table(name = "mt_pact_edge")
 public class MtPactEdge extends PanacheEntityBase {
