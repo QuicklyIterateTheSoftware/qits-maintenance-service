@@ -916,6 +916,36 @@ class MaintenanceStoreTest {
   }
 
   /**
+   * <b>A SENTENCE REWRITTEN AFTER THE ENDING CHANGES NOTHING ELSE</b> (qits-2065): the status, the
+   * ci status, the sha and the finish time a SUPERSEDED row was closed with all stay.
+   */
+  @Test
+  void aRewrittenSentenceLeavesTheEndingAsItWasWritten() {
+    String repository = "message-" + UUID.randomUUID();
+    UUID id = automationRow(repository, List.of());
+    Instant ended = Instant.parse("2026-11-11T08:00:00Z");
+    store.bumpFinished(id, BumpStatus.SUPERSEDED, "FAILED", "superseded", "abc123", ended);
+    MtBump before = store.bump(id).orElseThrow();
+
+    store.bumpMessage(id, "superseded; re-opened there as someone");
+
+    MtBump row = store.bump(id).orElseThrow();
+    assertEquals("superseded; re-opened there as someone", row.message);
+    assertEquals(BumpStatus.SUPERSEDED.name(), row.status);
+    assertEquals("FAILED", row.ciRunStatus);
+    assertEquals("abc123", row.resultSha);
+    assertEquals(before.finishedAt, row.finishedAt);
+  }
+
+  /** A row that is not there is not an error: the rewrite has nothing to write. */
+  @Test
+  void aRewrittenSentenceOfAMissingRowWritesNothing() {
+    UUID id = UUID.randomUUID();
+    store.bumpMessage(id, "nobody reads this");
+    assertTrue(store.bump(id).isEmpty());
+  }
+
+  /**
    * <b>WHEN THE DISPATCHER LAST REACHED A REPOSITORY — the newest MAIN-ONLY request it opened
    * there, and nothing else.</b> This is the column the dispatcher breaks its ties by: newest per
    * repository (an older one must not make a repository look starved), one entry per repository,

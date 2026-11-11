@@ -6,6 +6,7 @@ import static eu.wohlben.qits.maintenance.automation.AutomationFixture.FOLD_B;
 import static eu.wohlben.qits.maintenance.automation.AutomationFixture.REQUEST;
 import static eu.wohlben.qits.maintenance.automation.AutomationFixture.STALE_POM;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -362,7 +363,9 @@ class QaCheckedAutomationTest {
    * <b>THE LIVE CASE</b> (qits-1726, qits-landing-app-rr-133): a re-run pressed on fold A goes red
    * after the request re-folded onto B, and is SUPERSEDED. Nothing at fold B asks for the kind again
    * — QA checks it, so B only DEFERS it — and the request went to QA with the stale output the press
-   * was for. The ending now opens the re-run again on B, through the door, and sends it.
+   * was for. The ending now opens the re-run again on B, through the door, and sends it — and the
+   * superseded row says which row that is (qits-2065, qits-landing-app-rr-212), so nobody reading
+   * fold A presses again.
    */
   @Test
   void aDoorRunSupersededByAFoldMoveRerunsOnTheNewFold() {
@@ -384,12 +387,73 @@ class QaCheckedAutomationTest {
     assertEquals(1, again.size(), "the re-run, opened again on the fold the request is at");
     MtBump rerun = again.getFirst();
     assertEquals(BumpTrigger.MANUAL.name(), rerun.trigger);
+    assertEquals(FOLD_B, rerun.foldSha);
     assertTrue(
         Set.of(BumpStatus.REQUESTED.name(), BumpStatus.RUNNING.name()).contains(rerun.status),
         rerun.status + ": " + rerun.message);
+    assertTrue(
+        old.message.startsWith("superseded: release request "), old.message);
+    assertTrue(
+        old.message.endsWith(
+            " moved on to fold " + FOLD_B.substring(0, 12) + " before this run ended FAILED"
+                + "; re-opened there as " + rerun.id),
+        old.message);
     AutomationDto entry = AutomationFixture.entry(answer, ScreenshotBaselinesAutomation.KIND);
     assertEquals(rerun.id.toString(), entry.bumpId(), "fold B is answered from it, not DEFERRED");
     assertEquals(2, triggers(), "and it was sent");
+  }
+
+  /**
+   * <b>A re-run the door refuses is not promised</b> (qits-2065): a red re-run on fold A is
+   * superseded by the re-fold onto B, but another row of the kind is already active at B, so the
+   * exclusive open answers its 409. Nothing is opened, and the superseded row says so — naming the
+   * active row — instead of claiming a re-run that does not exist.
+   */
+  @Test
+  void aDoorRunWhoseRerunIsRefusedSaysItWasNotOpenedAgain() {
+    trigger(FOLD_A, null, null, WITH_DEFERRED);
+    UUID id = pressScreenshots();
+    assertEquals(BumpStatus.RUNNING.name(), store.bump(id).orElseThrow().status);
+
+    // Another row of the kind, active at fold B: a RUNNING row elsewhere is not superseded by it.
+    UUID blocker =
+        store.openAutomation(
+            new MaintenanceStore.AutomationOpening(
+                Fixture.REPOSITORY,
+                ScreenshotBaselinesAutomation.KIND,
+                REQUEST,
+                FOLD_B,
+                FOLD_A,
+                false,
+                AutomationFixture.branch(ScreenshotBaselinesAutomation.KIND, REQUEST),
+                null,
+                "test",
+                BumpTrigger.FOLD,
+                List.of(),
+                java.util.Map.of(),
+                BumpStatus.REQUESTED,
+                null),
+            false,
+            java.time.Instant.now());
+
+    AutomationFixture.scriptRequest(peers, REQUEST, "PENDING", FOLD_B);
+    Fixture.scriptRun(peers, RUN, "FAILED");
+    bumps.poll(id);
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    MtBump old = store.bump(id).orElseThrow();
+    assertEquals(BumpStatus.SUPERSEDED.name(), old.status, old.message);
+    assertTrue(
+        old.message.contains(
+            " moved on to fold " + FOLD_B.substring(0, 12) + " before this run ended FAILED"
+                + "; not opened again: "),
+        old.message);
+    assertTrue(old.message.contains("already active: " + blocker), old.message);
+    assertFalse(old.message.contains("re-opened"), old.message);
+    assertTrue(
+        rows(FOLD_B, ScreenshotBaselinesAutomation.KIND).stream()
+            .noneMatch(row -> BumpTrigger.MANUAL.name().equals(row.trigger)),
+        "no re-run was opened beside the active row");
   }
 
   /**
@@ -409,6 +473,7 @@ class QaCheckedAutomationTest {
     MtBump old = store.bump(id).orElseThrow();
     assertEquals(BumpStatus.SUPERSEDED.name(), old.status, old.message);
     assertTrue(old.message.contains("is RELEASED and takes no commit"), old.message);
+    assertFalse(old.message.contains("opened again"), "a closed request is not asked: " + old.message);
     assertTrue(rows(FOLD_B, ScreenshotBaselinesAutomation.KIND).isEmpty(), "nothing opened");
     assertTrue(store.activeAutomations(REQUEST).isEmpty(), "nothing left to run");
     assertEquals(1, triggers());
@@ -479,6 +544,14 @@ class QaCheckedAutomationTest {
     List<MtBump> moved = rows(FOLD_B, ScreenshotBaselinesAutomation.KIND);
     assertEquals(1, moved.size());
     assertEquals(BumpTrigger.MANUAL.name(), moved.getFirst().trigger);
+    // The superseded row names the row it moved to (qits-2065), at the fold that row is on.
+    assertEquals(FOLD_B, moved.getFirst().foldSha);
+    assertTrue(old.message.startsWith("superseded before it ran: release request "), old.message);
+    assertTrue(
+        old.message.endsWith(
+            " moved on to fold " + FOLD_B.substring(0, 12) + "; re-opened there as "
+                + moved.getFirst().id),
+        old.message);
     assertEquals(BumpStatus.RUNNING.name(), moved.getFirst().status, moved.getFirst().message);
     assertEquals(2, triggers(), "exactly one screenshot run, on fold B");
 
