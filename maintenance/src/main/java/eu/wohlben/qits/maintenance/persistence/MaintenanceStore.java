@@ -2487,7 +2487,10 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
 
   /**
    * Supersedes every WAITING row of one (request, kind) whose fold is not {@code exceptFold}: only
-   * the newest waiting fold is kept. A RUNNING row is not touched — see {@link #openAutomation}.
+   * the newest waiting fold is kept. A RUNNING row is not touched — see {@link #openAutomation}. A
+   * door's re-run superseded here is not opened again and its sentence promises nothing; the
+   * re-open that names its new row (qits-1726, qits-2065) is {@code AutomationService}'s, on the
+   * dispatch and ending paths.
    *
    * @return how many rows were superseded
    */

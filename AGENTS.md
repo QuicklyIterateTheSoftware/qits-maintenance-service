@@ -270,6 +270,19 @@ path, and the change list is byte for byte what `HttpEstatePins` used to send â€
 `automation/WrapperGitmodules` ports the wrapper's own reader rather than using `GitmodulesParser`.
 No difference is FRESH with no run, and that is the estate loop's terminator.
 
+**A RE-RUN THE DOOR OPENED FOLLOWS THE REQUEST'S FOLD (qits-1726), AND ITS OLD ROW SAYS WHERE IT
+WENT (qits-2065).** Only the door asks for a run again (a kind QA checks is just DEFERRED at the next
+fold), so `AutomationService.rerunOnTheCurrentFold` opens a door row that a re-fold superseded again
+on the current fold. That covers the dispatch path, a red ending and a fold that is gone. The order
+matters: the old row is finished SUPERSEDED first, because `start` opens exclusively and would 409 on
+the still-active row. Only then is the re-run opened, and `MaintenanceStore.bumpMessage` rewrites the
+old row's sentence with the outcome: `re-opened there as <row id>`, `re-opened as <row id> at fold
+<sha12>` when the new row's fold is not the one the sentence already names, or `not opened again:
+<reason>` (the 409's message, a closed request, a kind no longer offered, or a FRESH re-plan). Read
+it with `qits maintenance automations --request <rr> --fold <old fold>`. A row that
+`MaintenanceStore.supersedeWaitingRows` supersedes, a waiting row overtaken by a fold row of its
+kind, is not a door re-run and keeps its own sentence.
+
 **SINCE qits-1258 ESTATE PINS ARE AN OWN-BRANCH KIND, PLANNED AT THE FOLD.** It used to be the one
 SOURCE_BRANCHES kind: per source branch (never main) it read the root, `.gitmodules` and one listing
 per component directory, and wrote one `bump(targeted)` commit onto each lagging branch. A
