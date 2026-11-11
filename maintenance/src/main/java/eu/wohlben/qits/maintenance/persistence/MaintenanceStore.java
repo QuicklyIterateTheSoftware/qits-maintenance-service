@@ -1727,6 +1727,26 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
   }
 
   /**
+   * Rewrites a row's sentence and nothing else (qits-2065): its status, its ci status, its sha, its
+   * failure columns and its finish time stay exactly as the ending wrote them. What a SUPERSEDED
+   * door's re-run says about being opened again on the current fold can only be known after it is
+   * finished, since the door opens exclusively and would refuse the row while it is still active.
+   */
+  @ActivateRequestContext
+  public void bumpMessage(UUID id, String message) {
+    DbRetry.runInNewTx(
+        "rewrite the sentence of bump " + id,
+        () -> {
+          MtBump row = MtBump.findById(id);
+          if (row == null) {
+            return;
+          }
+          row.message = message;
+          getEntityManager().flush();
+        });
+  }
+
+  /**
    * Closes a bump FAILED, with why its run went red (qits-1116): the failing step, its image, its
    * exit code and the excerpt of its log. A null failure writes the four columns null, which is what
    * a run whose steps named no failure has to say.

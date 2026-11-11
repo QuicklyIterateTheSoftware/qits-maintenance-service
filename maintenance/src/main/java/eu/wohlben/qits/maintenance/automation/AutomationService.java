@@ -160,7 +160,12 @@ import org.jboss.logging.Logger;
  * opened again on the current fold, one still waiting on a fold the request left is moved there
  * before it is sent, and one of a DERIVED kind is not sent while a SOURCE kind's run at its fold is
  * in flight or has COMMITTED there. While it is on its way, the fold it is headed for answers the
- * kind WAITING, not DEFERRED.
+ * kind WAITING, not DEFERRED. <b>The superseded row says what became of it</b> (qits-2065): it is
+ * finished SUPERSEDED first — the door opens exclusively and would refuse it while it is active —
+ * and its sentence is then rewritten with the outcome, "re-opened there as {@code <row id>}" (or
+ * "as {@code <row id>} at fold {@code <sha>}" when the new row's fold is not the one the sentence
+ * names) or "not opened again: {@code <reason>}", so nobody reading the old fold has to guess
+ * whether to press again.
  *
  * <p><b>The circuit breaker</b> is the third terminator, behind carry-over and the plans: a fourth
  * consecutive COMMITTED for one (request, kind) whose folds changed nothing but automation output is
@@ -1126,25 +1131,83 @@ public class AutomationService {
    * or a second press — is the 409 it always was, and a request that closed, a kind switched off
    * or unregistered, or a switched-off engine each answer as they do to a press. Every such answer
    * opens nothing and is logged; the ending that asked carries on.
+   *
+   * <p><b>The row must already be SUPERSEDED</b> — no longer active — when this is called, or the
+   * exclusive open refuses it as the active row of its own kind. What it answers is the outcome
+   * (qits-2065), which the caller writes onto that row with {@link #recordRerun(MtBump, String,
+   * Rerun, String)}: the new row's id and the fold it was opened at, read off the row itself, or
+   * why nothing was opened.
    */
-  private void rerunOnTheCurrentFold(MtBump row, String why) {
+  private Rerun rerunOnTheCurrentFold(MtBump row, String why) {
     BumpTrigger trigger = BumpTrigger.valueOf(row.trigger);
     if (kind(row.automationKind).isEmpty()) {
       LOG.infof("The %s re-run %s of %s is not opened again (%s): the kind is not offered any more",
           row.automationKind, row.id, row.repository, why);
-      return;
+      return Rerun.refused("the kind is not offered any more");
     }
     try {
       UUID id =
           start(
               row.repository, row.releaseRequestId, row.automationKind, row.workItem, trigger,
               trigger == BumpTrigger.UPSTREAM);
-      LOG.infof("The %s re-run %s of %s was superseded (%s); opened it again as %s",
-          row.automationKind, row.id, row.repository, why, id);
+      if (id == null) {
+        // The upstream re-plan's FRESH answer: the current fold already carries what it would write.
+        LOG.infof("The %s re-run %s of %s was superseded (%s) and is not opened again: its plan on"
+            + " the current fold is fresh", row.automationKind, row.id, row.repository, why);
+        return Rerun.refused("its plan on the current fold is fresh");
+      }
+      String fold = store.bump(id).map(opened -> opened.foldSha).orElse(null);
+      LOG.infof("The %s re-run %s of %s was superseded (%s); opened it again as %s at %s",
+          row.automationKind, row.id, row.repository, why, id, fold);
+      return new Rerun(id, fold, null);
     } catch (MaintenanceException e) {
       LOG.infof("The %s re-run %s of %s was superseded (%s) and is not opened again: %s",
           row.automationKind, row.id, row.repository, why, e.getMessage());
+      return Rerun.refused(e.getMessage());
     }
+  }
+
+  /**
+   * What became of a superseded door's re-run on the request's current fold (qits-2065): the row it
+   * was opened again as and that row's own fold, or why it was not.
+   *
+   * @param id the new row, or null when nothing was opened
+   * @param foldSha the fold the new row was opened at, as stored on it
+   * @param refusal why nothing was opened, or null when a row was
+   */
+  record Rerun(UUID id, String foldSha, String refusal) {
+
+    static Rerun refused(String reason) {
+      return new Rerun(null, null, reason == null || reason.isBlank() ? "no reason given" : reason);
+    }
+
+    /**
+     * The clause appended to the superseded row's sentence.
+     *
+     * @param movedTo the fold that sentence already names as the one the request moved on to, or
+     *     null when it names none the clause could point back to: "there" is said only when the
+     *     new row was opened exactly at it
+     */
+    String clause(String movedTo) {
+      if (id == null) {
+        return "not opened again: " + refusal;
+      }
+      if (movedTo != null && movedTo.equals(foldSha)) {
+        return "re-opened there as " + id;
+      }
+      return "re-opened as " + id + " at fold "
+          + (foldSha == null ? "an unreadable fold" : abbreviate(foldSha));
+    }
+  }
+
+  /**
+   * Rewrites a SUPERSEDED door's re-run's sentence with what {@link #rerunOnTheCurrentFold} made of
+   * it (qits-2065): {@code message} — what the ending that superseded it wrote — and the outcome
+   * after it. Written last on purpose: the row had to be SUPERSEDED before the exclusive open ran,
+   * and only that open knows the outcome.
+   */
+  private void recordRerun(MtBump row, String message, Rerun rerun, String movedTo) {
+    store.bumpMessage(row.id, message + "; " + rerun.clause(movedTo));
   }
 
   /**
@@ -1264,15 +1327,16 @@ public class AutomationService {
             && asked.mergedSha() != null
             && !asked.mergedSha().equals(row.foldSha)) {
           // A fold nobody will release: the core would refuse it red before it started. The row is
-          // superseded and the door's own route opens it again on the fold the request is at.
-          store.bumpFinished(
-              row.id,
-              BumpStatus.SUPERSEDED,
-              null,
+          // superseded and the door's own route opens it again on the fold the request is at — once
+          // it is SUPERSEDED, since the exclusive open would refuse it while it is still active —
+          // and its sentence then says which row that is, or why there is none (qits-2065).
+          String message =
               "superseded before it ran: release request " + requestName(row) + " moved on to fold "
-                  + abbreviate(asked.mergedSha()) + "; the re-run is opened there",
-              Instant.now());
-          rerunOnTheCurrentFold(row, "it waited on fold " + abbreviate(row.foldSha));
+                  + abbreviate(asked.mergedSha());
+          store.bumpFinished(row.id, BumpStatus.SUPERSEDED, null, message, Instant.now());
+          recordRerun(
+              row, message, rerunOnTheCurrentFold(row, "it waited on fold " + abbreviate(row.foldSha)),
+              asked.mergedSha());
           return;
         }
       }
@@ -1758,8 +1822,10 @@ public class AutomationService {
         // asked for again by the next fold's settle; a door's is not — a kind QA checks is only
         // DEFERRED there, which qits-projects counts as fresh — so the ask is carried onto the fold
         // the request is at now, through the door's own route. A closed request takes none.
-        rerunOnTheCurrentFold(row, "its run on fold " + abbreviate(row.foldSha) + " ended "
-            + ciRunStatus);
+        Rerun rerun =
+            rerunOnTheCurrentFold(row, "its run on fold " + abbreviate(row.foldSha) + " ended "
+                + ciRunStatus);
+        recordRerun(row, superseded.message(), rerun, superseded.movedTo());
       }
     } else if (!passed) {
       store.bumpFailed(
@@ -1864,7 +1930,11 @@ public class AutomationService {
         // The same carry as a red run's on a fold that moved on (qits-1726): a FOLD row is asked
         // for again by the current fold's own settle — usually already waiting behind this run —
         // and a door's is opened again there through its own route.
-        rerunOnTheCurrentFold(row, "its run on fold " + abbreviate(row.foldSha) + " was replaced");
+        // Its sentence names the fold the request moved on to before the branch clause, so the
+        // outcome names the new row's fold rather than pointing back with "there".
+        Rerun rerun =
+            rerunOnTheCurrentFold(row, "its run on fold " + abbreviate(row.foldSha) + " was replaced");
+        recordRerun(row, gone, rerun, null);
       }
       return;
     }
@@ -2021,8 +2091,9 @@ public class AutomationService {
    *
    * @param message the row's sentence
    * @param closed whether it is because the request closed (qits-1578) rather than re-folded
+   * @param movedTo the fold the request moved on to, or null when it closed
    */
-  private record Supersession(String message, boolean closed) {}
+  private record Supersession(String message, boolean closed, String movedTo) {}
 
   /**
    * Why a red run's verdict is about a fold nobody will release, or null when it is not — or when
@@ -2047,7 +2118,8 @@ public class AutomationService {
       return new Supersession(
           "superseded: release request " + requestName(row) + " is " + state.state()
               + " and takes no commit; this run ended " + ciRunStatus,
-          true);
+          true,
+          null);
     }
     if (state.mergedSha() == null || state.mergedSha().equals(row.foldSha)) {
       return null;
@@ -2055,7 +2127,8 @@ public class AutomationService {
     return new Supersession(
         "superseded: release request " + requestName(row) + " moved on to fold "
             + abbreviate(state.mergedSha()) + " before this run ended " + ciRunStatus,
-        false);
+        false,
+        state.mergedSha());
   }
 
   /**
