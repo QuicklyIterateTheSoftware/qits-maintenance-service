@@ -417,8 +417,8 @@ switch; nothing owed; `bump.dispatch.quiet-hours`; the CI room (qits-1769: qits-
 unquarantined targets' free CI slots by its `SlotAllocator` rule, minus qits-ci's `queued` runs and
 our REQUESTED rows; a target's `maximums.ci` caps its share, qits-2094; either read unreadable is
 busy, no target able to host CI is NO_SLOTS); then `BumpOrder.nextUpTo`, bottom of the chain first
-and LONGEST OWED first (qits-2094: `mt_repository.owed_since`, V32, stamped by `tick()` only — held,
-blocked and refused repositories included — and cleared when the walk finds nothing pending or the
+and LONGEST OWED first (qits-2094: `mt_repository.owed_since`, V32, stamped by `tick()` only — blocked
+and refused repositories included, held ones not, a request already carries their debt — and cleared when the walk finds nothing pending or the
 main-only request opens; least-recently-dispatched alone starved a repository that releases often),
 then least-recently-dispatched (`MaintenanceStore.lastDispatchedAt`, the newest MAIN_ONLY
 `opened_at`, so the alphabet is never the tiebreak) — except that a repository owed a

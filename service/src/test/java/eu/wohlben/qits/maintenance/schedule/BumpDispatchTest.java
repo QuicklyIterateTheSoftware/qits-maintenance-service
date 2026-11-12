@@ -992,12 +992,14 @@ class BumpDispatchTest {
   }
 
   /**
-   * <b>A HELD REPOSITORY KEEPS ITS WAIT</b> (qits-2094): the first tick that finds it owed stamps
-   * it although a request holds it, every later one keeps that stamp, a read stamps nothing — and
-   * once nothing is owed, the next tick clears it.
+   * <b>A HELD REPOSITORY IS NOT STAMPED AFRESH</b> (qits-2094): a request already carries its debt —
+   * right after the tick opened its own main-only one, which cleared the stamp — so its wait is
+   * being served, and a stamp now would hand it, once that request lands, an age that counts from
+   * before what it is owed next. A stamp it carried before the hold is kept, a read stamps nothing,
+   * and once nothing is owed the next tick clears it.
    */
   @Test
-  void aHeldRepositoryIsStampedOnceAndClearedWhenNothingIsOwed() {
+  void aHeldRepositoryIsNotStampedAfreshKeepsAStampItHadAndIsClearedWhenNothingIsOwed() {
     inventory.clear();
     owes("qits-held-service", "eu.wohlben.qits:qits-h");
     scriptListing(
@@ -1007,14 +1009,14 @@ class BumpDispatchTest {
     Fixture.scriptCiQueueEmpty(peers);
 
     assertTrue(dispatcher.assess().candidates().getFirst().held());
-    dispatcher.explain(Instant.now());
-    assertNull(owedSince("qits-held-service"), "a read records nothing");
+    assertTrue(dispatcher.tick().isEmpty());
+    assertNull(owedSince("qits-held-service"), "a request carries it, so no wait starts");
 
+    Instant before = Instant.now().minus(Duration.ofHours(2)).truncatedTo(ChronoUnit.MICROS);
+    store.recordOwed(Set.of("qits-held-service"), Set.of(), before);
+    dispatcher.explain(Instant.now());
     assertTrue(dispatcher.tick().isEmpty());
-    Instant first = owedSince("qits-held-service");
-    assertNotNull(first, "held, and still owed");
-    assertTrue(dispatcher.tick().isEmpty());
-    assertEquals(first, owedSince("qits-held-service"), "kept across ticks while it waits");
+    assertEquals(before, owedSince("qits-held-service"), "a wait it had is kept while held");
 
     // The debt is paid: main pins the released version now.
     scanned(

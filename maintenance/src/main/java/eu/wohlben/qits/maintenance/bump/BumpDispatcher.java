@@ -140,12 +140,12 @@ import org.jboss.logging.Logger;
  * scarce CI room every slot that freed went to one reached longer ago, without bound — measured
  * live, {@code qits-system-service} owed from 19:15 and still waiting at 22:21. Each tick's walk
  * now stamps {@code mt_repository.owed_since} the first time it finds a repository with a
- * non-empty pending set — HELD, BLOCKED and refused ones too, so a wait is kept while it waits — and
- * clears it when the walk finds nothing pending and when the tick opens the main-only request. The
- * candidates are ordered by {@code owed_since} ascending (none sorts last), then by the last
- * dispatch ({@link Instant#EPOCH} when never reached) — which still decides among those stamped in
- * the same walk — then by name. Only {@link #tick()} writes the stamps; {@link #standing} and
- * {@link #explain} read them.
+ * non-empty pending set — BLOCKED and refused ones too, so a wait is kept while it waits, but not a
+ * HELD one, whose debt a request already carries — and clears it when the walk finds nothing
+ * pending and when the tick opens the main-only request. The candidates are ordered by {@code
+ * owed_since} ascending (none sorts last), then by the last dispatch ({@link Instant#EPOCH} when
+ * never reached) — which still decides among those stamped in the same walk — then by name. Only
+ * {@link #tick()} writes the stamps; {@link #standing} and {@link #explain} read them.
  *
  * <p><b>Except a repository owed a RE-OFFER, which goes before all of them</b> (qits-1578). When a
  * {@code dependency-bump} ends SUPERSEDED because its release request closed before the bump could
@@ -708,10 +708,11 @@ public class BumpDispatcher {
   /**
    * The walk, and — when {@code stampAt} is not null, which only {@link #tick()} passes — what it
    * found recorded as {@code owed_since} (qits-2094): stamped {@code stampAt} on every repository
-   * with a non-empty pending set that carries none yet (held, refused and soon-to-be-blocked ones
-   * included, so their wait is kept), cleared on every repository the walk finds owed nothing. A
-   * row that is UNREACHABLE keeps its stamp, as it keeps its pins: a peer that could not be asked
-   * is not evidence that the debt was paid. Only rows whose stamp actually changes are written.
+   * with a non-empty pending set that carries none yet (refused and soon-to-be-blocked ones included,
+   * so their wait is kept; a held one is not, a request already carries its debt), cleared on every
+   * repository the walk finds owed nothing. A row that is UNREACHABLE keeps its stamp, as it keeps
+   * its pins: a peer that could not be asked is not evidence that the debt was paid. Only rows whose
+   * stamp actually changes are written.
    */
   private Assessment assess(Instant stampAt) {
     String group = GroupConfig.DEFAULT_GROUP;
@@ -762,17 +763,24 @@ public class BumpDispatcher {
         }
         continue;
       }
-      // OWED, whatever happens to it below — refused, held or blocked, its wait goes on.
+      // OWED — refused or blocked, its wait goes on. A HELD one is not stamped afresh: a request
+      // already carries it (its own main-only one, which cleared the stamp as it opened), so the
+      // wait is being served; stamping it would hand it, once that request lands, an age that
+      // counts from before the debt it is then owed (qits-2094). A stamp it already has is kept.
       Instant since = row.owedSince;
-      if (since == null && stampAt != null) {
-        since = stampAt;
-        toStamp.add(row.name);
-      }
       if (isRefused(row.name, now)) {
+        if (since == null && stampAt != null) {
+          toStamp.add(row.name);
+        }
         refusals.add(row.name);
         continue;
       }
-      candidates.add(new BumpOrder.Candidate(row.name, group, changes, held(row, changes)));
+      boolean held = held(row, changes);
+      if (since == null && stampAt != null && !held) {
+        since = stampAt;
+        toStamp.add(row.name);
+      }
+      candidates.add(new BumpOrder.Candidate(row.name, group, changes, held));
       if (since != null) {
         owedSince.put(row.name, since);
       }
