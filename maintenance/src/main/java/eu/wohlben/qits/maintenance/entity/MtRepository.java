@@ -107,6 +107,19 @@ public class MtRepository extends PanacheEntityBase {
   public Instant reofferOwedAt;
 
   /**
+   * Since when this repository has been owed a bump without the dispatcher opening its main-only
+   * request (qits-2094, V32). Stamped by the dispatcher's tick the first time its walk finds a
+   * non-empty pending set — held, blocked and refused repositories included, so their wait is kept
+   * — and cleared when the walk finds nothing pending, and when the tick opens the main-only
+   * request. The candidates sort oldest first after the re-offer mark, so a repository that
+   * releases often is no longer starved for being "recently dispatched". Order only: it never
+   * decides whether the repository is held. Untouched by a scan, never written by the read-only
+   * standing. Null when nothing is owed.
+   */
+  @Column(name = "owed_since")
+  public Instant owedSince;
+
+  /**
    * Whether this repository is owed dependency bumps (qits-1784, V29): false when its own {@code
    * .config/qits/maintenance.yml} sets {@code dependency-bumps: false}, or when its {@code
    * .config/qits/repository.yml} says {@code repository.archived: true} and the switch is not set.

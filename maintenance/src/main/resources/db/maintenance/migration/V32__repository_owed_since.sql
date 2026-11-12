@@ -1,0 +1,18 @@
+-- HOW LONG A REPOSITORY HAS BEEN OWED A BUMP, SO THE ONE OWED LONGEST GOES FIRST (qits-2094).
+--
+-- The dispatcher sorted equally ready candidates least-recently-dispatched first: the newest
+-- MAIN_ONLY request it opened for each. Under scarce CI room that starves a repository that
+-- releases often — it is always "recently dispatched", so every freed slot went to one reached
+-- longer ago, and for as long as the estate stayed busy it never came up. Measured live: owed from
+-- 19:15, qits-system-service still waited at 22:21 while older-dispatched repositories took each
+-- slot that freed.
+--
+-- The dispatcher's tick now stamps this column the first time its walk finds the repository with a
+-- non-empty pending set — held or blocked ones too, so their wait is kept while they wait — and
+-- clears it when the walk finds nothing pending (or bumps off, or the repository gone) and when it
+-- opens the repository's main-only request. The candidates sort by it, oldest first, after the
+-- re-offer mark (V28) and before the last dispatch. It changes ORDER only, never whether a
+-- repository is held. The read-only standing (`GET /bumps/standing`) shows it and writes nothing.
+--
+-- Null on every row before this column and on every repository not owed anything.
+alter table mt_repository add column owed_since timestamp(6) with time zone;

@@ -129,7 +129,10 @@ import java.util.Set;
  * final tiebreak. <b>Nothing in this class changed for it</b>, and nothing here should: the
  * topological rule above still overrules the order outright (an owed upstream goes before its
  * consumer however long ago either was bumped), and this class's contract is exactly what it always
- * was — a stable order in, the first qualifying entry out.
+ * was — a stable order in, the first qualifying entry out. Since qits-2094 the caller's order is
+ * <b>longest owed first</b> ({@code mt_repository.owed_since}, then the last dispatch — see {@code
+ * BumpDispatcher}'s "Longest owed first"), because least-recently-dispatched starved a repository
+ * that releases often; again nothing here changed for it.
  *
  * <p><b>Targeted bumps are not candidates and cannot be.</b> {@code BumpDispatcher.assess} builds
  * this list out of what the inventory says is PENDING, which is a question about a repository's pins

@@ -23,7 +23,7 @@ import java.util.Set;
  *
  * <ul>
  *   <li>{@link #repositories()} — the candidates' names in the caller's listing order, which is the
- *       order every tie is broken by (least-recently-bumped first; see {@link BumpOrder}).
+ *       order every tie is broken by (longest owed first since qits-2094; see {@link BumpOrder}).
  *   <li>{@link #consumes} — each change as a {@link Pin} of {@code (ecosystem, name)}, its {@code to}
  *       as the version. Only the candidates are nodes, so a coordinate somebody not owed publishes
  *       makes no edge, as it never blocked anything.

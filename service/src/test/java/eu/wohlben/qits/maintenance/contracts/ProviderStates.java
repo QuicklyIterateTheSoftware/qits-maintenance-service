@@ -497,7 +497,7 @@ public class ProviderStates {
    * 2026.811.1} while {@code 2026.821.3} is released, nothing open for it in qits-projects, and the
    * CI room empty: one target of {@link Fixture#POOL_SLOTS} slots all free and nothing queued. The
    * dispatcher's decision is DISPATCH with that repository READY and its one pick — what {@code
-   * getBumpStanding} answers, sending nothing (qits-1696).
+   * getBumpStanding} answers, sending nothing (qits-1696) — owed since the scan (qits-2094).
    */
   private Setup bumpsOwedToARepository() {
     emptyEstate();
@@ -524,6 +524,8 @@ public class ProviderStates {
         SCANNED);
     store.recordLatestIfNewer(
         Ecosystem.MAVEN, "eu.wohlben.qits:qits-eventstream", "2026.821.3", "test", SCANNED);
+    // Owed since the scan found it so (qits-2094): the stamp a tick would have written.
+    store.recordOwed(Set.of(REPOSITORY), Set.of(), SCANNED);
     peers.answer(
         PeerTarget.PROJECTS,
         ReleaseRequestClient.REQUESTS_PATH_PREFIX

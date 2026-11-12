@@ -2033,6 +2033,43 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
         });
   }
 
+  /**
+   * Records what one dispatcher walk found about who is owed a bump (qits-2094): every repository
+   * in {@code owed} that carries no {@code owed_since} yet is stamped {@code now} — a stamp already
+   * there is kept, because the wait it measures has not ended — and every repository in {@code
+   * settled} loses its stamp. One transaction for the whole walk; a repository this inventory does
+   * not hold is ignored.
+   */
+  @ActivateRequestContext
+  public void recordOwed(Set<String> owed, Set<String> settled, Instant now) {
+    if (owed.isEmpty() && settled.isEmpty()) {
+      return;
+    }
+    DbRetry.runInNewTx(
+        "record which repositories are owed a bump",
+        () -> {
+          for (String repository : owed) {
+            MtRepository row = findById(repository);
+            if (row != null && row.owedSince == null) {
+              row.owedSince = now;
+            }
+          }
+          for (String repository : settled) {
+            MtRepository row = findById(repository);
+            if (row != null) {
+              row.owedSince = null;
+            }
+          }
+          getEntityManager().flush();
+        });
+  }
+
+  /** Clears a repository's {@code owed_since} — the dispatcher opened its main-only request. */
+  @ActivateRequestContext
+  public void clearOwed(String repository) {
+    recordOwed(Set.of(), Set.of(repository), Instant.now());
+  }
+
   // --- release-request automations -----------------------------------------------------------
 
   /**

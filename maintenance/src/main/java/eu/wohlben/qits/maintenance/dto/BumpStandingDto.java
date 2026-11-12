@@ -1,5 +1,6 @@
 package eu.wohlben.qits.maintenance.dto;
 
+import java.time.Instant;
 import java.util.List;
 
 /**
@@ -63,9 +64,16 @@ public record BumpStandingDto(
    *     owed repositories) or {@code HELD} (a release request already carries its bump)
    * @param blockedBy the owed upstreams it waits on, sorted; empty unless BLOCKED
    * @param changes the pins its bump would move
+   * @param owedSince since when the dispatcher has found it owed a bump without opening its
+   *     main-only request (qits-2094) — what the candidates are ordered by, oldest first, after a
+   *     re-offer. Null until a tick has stamped it: the standing is a read and records nothing
    */
   public record StandingEntryDto(
-      String repository, String reason, List<String> blockedBy, List<StandingChangeDto> changes) {}
+      String repository,
+      String reason,
+      List<String> blockedBy,
+      List<StandingChangeDto> changes,
+      Instant owedSince) {}
 
   /**
    * One pin a bump would move.

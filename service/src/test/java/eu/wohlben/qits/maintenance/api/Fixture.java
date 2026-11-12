@@ -460,6 +460,26 @@ public final class Fixture {
         + ",\"registered\":true}";
   }
 
+  /**
+   * {@link #target}, with the per-type {@code maximums} qits-system answers since qits-2094: {@code
+   * ci} capped at {@code ciMaximum}, {@code workspace} and {@code desk} null (no cap) — the shape
+   * {@code ws-proof} answered live.
+   */
+  public static String target(
+      String name,
+      int slotsTotal,
+      int[] reservations,
+      int[] used,
+      boolean connected,
+      boolean quarantined,
+      int ciMaximum) {
+    String target = target(name, slotsTotal, reservations, used, connected, quarantined);
+    return target.substring(0, target.length() - 1)
+        + ",\"maximums\":{\"ci\":"
+        + ciMaximum
+        + ",\"workspace\":null,\"desk\":null}}";
+  }
+
   private static String byType(int[] counts) {
     return "{\"ci\":"
         + counts[0]

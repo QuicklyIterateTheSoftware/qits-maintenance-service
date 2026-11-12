@@ -226,6 +226,7 @@ erDiagram
     instant last_scan_at
     string main_branch "length 255"
     text message
+    instant owed_since
     string project "length 255"
     instant reoffer_owed_at
     string status "not null, length 32"

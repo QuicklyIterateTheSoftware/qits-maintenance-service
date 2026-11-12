@@ -667,6 +667,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/StandingChangeDto"
+        owedSince:
+          $ref: "#/components/schemas/Instant"
     StandingPickDto:
       type: object
       properties:

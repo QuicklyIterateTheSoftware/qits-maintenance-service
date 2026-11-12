@@ -47,6 +47,9 @@ public class SystemClient {
    * @param used GRANTED, RUNNING and ENDING leases per type, a negative count read as zero
    * @param connected whether its runner is connected
    * @param quarantined whether it is quarantined
+   * @param maximums the most leases per type the target admits at once (qits-2094), a negative
+   *     count read as zero; a type absent or null here has no cap, and so does every type of a
+   *     target whose answer carries no {@code maximums} at all
    */
   public record Target(
       String name,
@@ -54,7 +57,8 @@ public class SystemClient {
       Map<String, Integer> reservations,
       Map<String, Integer> used,
       boolean connected,
-      boolean quarantined) {
+      boolean quarantined,
+      Map<String, Integer> maximums) {
 
     /** What the allocator grants on at all: connected and not quarantined. */
     public boolean eligible() {
@@ -67,38 +71,54 @@ public class SystemClient {
      * for the OTHER types, so {@code fits}' {@code n_total + 1 + Σ_{u≠ci} max(0, r[u] − n[u]) ≤ T}
      * holds exactly {@code T − n_total − Σ_{u≠ci} max(0, r[u] − n[u])} more times; when {@code Σ r
      * > T} the reservations are ignored and only {@code n_total < T} holds. Floored at zero.
+     *
+     * <p><b>And never more than the target's CI maximum leaves</b> (qits-2094): where {@code
+     * maximums.ci} is set, {@code max(0, maximums.ci − used.ci)} caps the count. Measured live:
+     * {@code ws-proof} answered 8 slots, {@code maximums.ci = 2} and 2 CI leases in use — no room
+     * at all by qits-system's rule — and this counted it as one free slot of seven.
      */
     public int freeCi() {
       int usedTotal = sum(used);
+      int free;
       if (reservationsExceedTotal()) {
-        return Math.max(0, total - usedTotal);
-      }
-      int reservedForOthers = 0;
-      for (Map.Entry<String, Integer> reservation : reservations.entrySet()) {
-        if (!CI.equals(reservation.getKey())) {
-          reservedForOthers +=
-              Math.max(0, reservation.getValue() - used.getOrDefault(reservation.getKey(), 0));
+        free = Math.max(0, total - usedTotal);
+      } else {
+        int reservedForOthers = 0;
+        for (Map.Entry<String, Integer> reservation : reservations.entrySet()) {
+          if (!CI.equals(reservation.getKey())) {
+            reservedForOthers +=
+                Math.max(0, reservation.getValue() - used.getOrDefault(reservation.getKey(), 0));
+          }
         }
+        free = Math.max(0, total - usedTotal - reservedForOthers);
       }
-      return Math.max(0, total - usedTotal - reservedForOthers);
+      Integer maximum = maximums.get(CI);
+      return maximum == null
+          ? free
+          : Math.min(free, Math.max(0, maximum - used.getOrDefault(CI, 0)));
     }
 
     /**
      * How many CI leases this target could hold at once on an empty target — {@code
      * SlotAllocator.canEverRun}'s question, counted: {@code T − Σ_{u≠ci} r[u]}, or {@code T} when
-     * the reservations exceed the total and are ignored. Floored at zero.
+     * the reservations exceed the total and are ignored. Floored at zero, and never more than
+     * {@code maximums.ci} where the target sets one (qits-2094).
      */
     public int ciCapacity() {
+      int capacity;
       if (reservationsExceedTotal()) {
-        return Math.max(0, total);
-      }
-      int reservedForOthers = 0;
-      for (Map.Entry<String, Integer> reservation : reservations.entrySet()) {
-        if (!CI.equals(reservation.getKey())) {
-          reservedForOthers += reservation.getValue();
+        capacity = Math.max(0, total);
+      } else {
+        int reservedForOthers = 0;
+        for (Map.Entry<String, Integer> reservation : reservations.entrySet()) {
+          if (!CI.equals(reservation.getKey())) {
+            reservedForOthers += reservation.getValue();
+          }
         }
+        capacity = Math.max(0, total - reservedForOthers);
       }
-      return Math.max(0, total - reservedForOthers);
+      Integer maximum = maximums.get(CI);
+      return maximum == null ? capacity : Math.min(capacity, maximum);
     }
 
     /** {@code Σ r > T}: qits-system ignores the reservations then, and so does this. */
@@ -151,6 +171,11 @@ public class SystemClient {
    * connected} and {@code quarantined}, or the whole answer is unreadable: guessing a missing
    * {@code used} as zero would hand out room that is taken. A type missing INSIDE {@code
    * reservations} or {@code used} counts zero, as qits-system's own allocator counts it.
+   *
+   * <p>{@code maximums} is OPTIONAL (qits-2094): an answer from a qits-system that predates it, a
+   * target without it, or a type it maps to null is no cap at all — which is what those answers
+   * meant. A {@code maximums} that is present and not an object is unreadable like any other
+   * malformed field.
    */
   public Targets targets() {
     PeerAnswer answer = peers.get(PeerTarget.SYSTEM, TARGETS_PATH).answer();
@@ -174,6 +199,11 @@ public class SystemClient {
                 + name
                 + " carried no slotsTotal, reservations, used, connected or quarantined");
       }
+      JsonNode maximums = node.path("maximums");
+      if (!maximums.isMissingNode() && !maximums.isNull() && !maximums.isObject()) {
+        return Targets.unreadable(
+            "qits-system's target " + name + " carried maximums that are not an object");
+      }
       targets.add(
           new Target(
               name,
@@ -181,7 +211,8 @@ public class SystemClient {
               counts(node.get("reservations")),
               counts(node.get("used")),
               node.get("connected").asBoolean(),
-              node.get("quarantined").asBoolean()));
+              node.get("quarantined").asBoolean(),
+              maximums.isObject() ? limits(maximums) : Map.of()));
     }
     return new Targets(List.copyOf(targets), null);
   }
@@ -193,5 +224,19 @@ public class SystemClient {
         .forEachRemaining(
             entry -> counts.put(entry.getKey(), Math.max(0, entry.getValue().asInt(0))));
     return Map.copyOf(counts);
+  }
+
+  /** The per-type maximums that are set: a null (or non-numeric) value is no cap and left out. */
+  private static Map<String, Integer> limits(JsonNode object) {
+    Map<String, Integer> limits = new LinkedHashMap<>();
+    object
+        .fields()
+        .forEachRemaining(
+            entry -> {
+              if (entry.getValue().isNumber()) {
+                limits.put(entry.getKey(), Math.max(0, entry.getValue().asInt()));
+              }
+            });
+    return Map.copyOf(limits);
   }
 }

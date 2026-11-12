@@ -55,7 +55,7 @@ import org.jboss.logging.Logger;
  * cron, a door or the debt itself opened. qits-1133 replaced the branch with the request (R2) and
  * removed the group path and the window with it (R5). The gates the group path learned the hard way
  * are kept, because a main-only request is still a CI build: the capacity gate, bottom of the chain
- * first, least recently dispatched first, the quiet hours and the refusal set.
+ * first, longest owed first, the quiet hours and the refusal set.
  *
  * <h2>The capacity gate is READ from qits-system (qits-1769)</h2>
  *
@@ -68,12 +68,15 @@ import org.jboss.logging.Logger;
  * /system/api/targets}. Per connected, unquarantined target, {@link SystemClient.Target#freeCi()} is
  * how many more CI leases qits-system's {@code SlotAllocator.fits} would grant there — {@code T −
  * n_total − Σ_{u≠ci} max(0, r[u] − n[u])}, or {@code T − n_total} when {@code Σ r > T} and the
- * reservations are ignored, floored at zero. Then {@code free = max(0, Σ free_t − ciQueued −
- * requested)}: the runs qits-ci already holds QUEUED claim that room first, and so does each of this
- * service's own automation rows it has not accepted yet (a {@code REQUESTED} row is in no listing
- * either peer answers). A RUNNING run is not subtracted — its lease is in a target's {@code used}
- * already. Either read unreadable is {@code CI_UNREADABLE}; no eligible target able to host CI at all
- * is {@code NO_SLOTS}; no room is {@code CI_BUSY}. There is no setting left to tune.
+ * reservations are ignored, floored at zero — and never more than the target's own CI maximum
+ * leaves ({@code maximums.ci − used.ci}) where it declares one (qits-2094: {@code ws-proof}, 8 slots
+ * with {@code maximums.ci = 2} and both in use, read as 1 free of 7 while qits-system would grant it
+ * nothing). Then {@code free = max(0, Σ free_t − ciQueued − requested)}: the runs qits-ci already
+ * holds QUEUED claim that room first, and so does each of this service's own automation rows it has
+ * not accepted yet (a {@code REQUESTED} row is in no listing either peer answers). A RUNNING run is
+ * not subtracted — its lease is in a target's {@code used} already. Either read unreadable is {@code
+ * CI_UNREADABLE}; no eligible target able to host CI at all is {@code NO_SLOTS}; no room is {@code
+ * CI_BUSY}. There is no setting left to tune.
  *
  * <h2>The gates, in the order they are asked</h2>
  *
@@ -112,7 +115,9 @@ import org.jboss.logging.Logger;
  * MaintenanceConfig#bumpReleaseStateTtl()} old where it would have asked afresh, which is the very
  * staleness every tick already accepts from the tick fifteen seconds before it — and the refusal
  * set, which a read here only ever forgives where the refusal has aged out, exactly as the next
- * tick would at the same instant. Nothing is ever added to the refusal set by a read.
+ * tick would at the same instant. Nothing is ever added to the refusal set by a read, and no {@code
+ * owed_since} is stamped or cleared by one (qits-2094): the standing shows the stamps the ticks
+ * wrote, and a repository no tick has walked yet shows none.
  *
  * <h2>Recomputed every tick, never a frozen plan</h2>
  *
@@ -120,22 +125,35 @@ import org.jboss.logging.Logger;
  * walk and buys the whole point of the ordering: once the bottom repository releases and the next
  * scan has read it, its consumers' pending sets name the version that was just cut.
  *
- * <h2>Least-recently-dispatched first</h2>
+ * <h2>Longest owed first</h2>
  *
  * <p>{@link BumpOrder} decides which candidates are ready, and among equally ready ones it takes the
  * first it was handed. So the walk's order is the arbiter of everything the topology does not
  * decide, and for as long as it was the store's — the alphabet — the tail of the alphabet was the
  * tail of every fan-out (measured 2026-09-13: {@code qits-workspace-daemon} dispatched nine
  * repositories after {@code qits-projects-daemon} for the same two jars, for no reason but its
- * name). The candidates are ordered by {@link MaintenanceStore#lastDispatchedAt()} ascending, a
- * repository never reached counting as {@link Instant#EPOCH}, the name the final tiebreak.
+ * name).
+ *
+ * <p><b>The arbiter is how long a repository has been owed, not when it was last served</b>
+ * (qits-2094). The order used to be {@link MaintenanceStore#lastDispatchedAt()} ascending, and that
+ * starves exactly the repository that releases most: it is always "recently dispatched", so under
+ * scarce CI room every slot that freed went to one reached longer ago, without bound — measured
+ * live, {@code qits-system-service} owed from 19:15 and still waiting at 22:21. Each tick's walk
+ * now stamps {@code mt_repository.owed_since} the first time it finds a repository with a
+ * non-empty pending set — HELD, BLOCKED and refused ones too, so a wait is kept while it waits — and
+ * clears it when the walk finds nothing pending and when the tick opens the main-only request. The
+ * candidates are ordered by {@code owed_since} ascending (none sorts last), then by the last
+ * dispatch ({@link Instant#EPOCH} when never reached) — which still decides among those stamped in
+ * the same walk — then by name. Only {@link #tick()} writes the stamps; {@link #standing} and
+ * {@link #explain} read them.
  *
  * <p><b>Except a repository owed a RE-OFFER, which goes before all of them</b> (qits-1578). When a
  * {@code dependency-bump} ends SUPERSEDED because its release request closed before the bump could
- * land, {@code mt_repository.reoffer_owed_at} is set; such a repository was reached recently by
- * construction, so least-recently-dispatched alone would put it last, behind the tick's free room.
- * The mark sorts it ahead of every unmarked one (each group keeping the order above), never decides
- * whether it is held, and is cleared when its main-only request is opened.
+ * land, {@code mt_repository.reoffer_owed_at} is set; such a repository's main-only request was
+ * opened recently, which cleared its {@code owed_since}, so the order above alone would put it
+ * behind the tick's free room. The mark sorts it ahead of every unmarked one (each group keeping the
+ * order above), never decides whether it is held, and is cleared when its main-only request is
+ * opened.
  */
 @ApplicationScoped
 public class BumpDispatcher {
@@ -184,7 +202,14 @@ public class BumpDispatcher {
    * Every repository owed a bump this tick that could still be sent one, and the ones this gate
    * declined to ask for until their refusal is forgiven.
    */
-  public record Assessment(List<BumpOrder.Candidate> candidates, List<String> refused) {}
+  public record Assessment(
+      List<BumpOrder.Candidate> candidates, List<String> refused, Map<String, Instant> owedSince) {
+
+    /** Since when a candidate has been owed (qits-2094), or null when no tick has stamped it. */
+    public Instant owedSince(String repository) {
+      return owedSince.get(repository);
+    }
+  }
 
   /**
    * What the gate decided and everything it decided it from.
@@ -233,7 +258,10 @@ public class BumpDispatcher {
    *     of which is a failure
    */
   public List<UUID> tick() {
-    Decision decision = explain(Instant.now());
+    Instant now = Instant.now();
+    // The one caller that RECORDS the walk (qits-2094): owed_since is stamped and cleared here and
+    // nowhere else, so the standing and explain() stay reads.
+    Decision decision = explain(now, () -> assess(now));
     List<UUID> sent = new ArrayList<>();
     int stillOwed = decision.owed();
     for (BumpOrder.Pick pick : decision.picks()) {
@@ -277,7 +305,8 @@ public class BumpDispatcher {
               entry.candidate().repository(),
               entry.reason(),
               List.copyOf(new TreeSet<>(entry.blockedBy())),
-              List.copyOf(changes)));
+              List.copyOf(changes),
+              assessment.owedSince(entry.candidate().repository())));
     }
     List<BumpStandingDto.StandingPickDto> picks = new ArrayList<>();
     for (BumpOrder.Pick pick : decision.picks()) {
@@ -502,6 +531,8 @@ public class BumpDispatcher {
             Instant.now());
         // The re-offer a stranded bump was owed is this request (qits-1578).
         store.clearReofferOwed(candidate.repository());
+        // And so is the wait it was owed it for (qits-2094): its age stops counting here.
+        store.clearOwed(candidate.repository());
         listings.remove(repoId);
         LOG.infof(
             "Opened the main-only release request %s of %s for its pre-run to bump %d"
@@ -657,7 +688,7 @@ public class BumpDispatcher {
     }
   }
 
-  /** Every repository owed an INTERNAL bump right now, least-recently-dispatched first. */
+  /** Every repository owed an INTERNAL bump right now, longest owed first. Records nothing. */
   public List<BumpOrder.Candidate> candidates() {
     return assess().candidates();
   }
@@ -665,33 +696,58 @@ public class BumpDispatcher {
   /**
    * The walk: every OK repository whose bumps are on and whose INTERNAL group has something
    * pending, flagged held when a request already carries it, with the refused ones set aside.
+   * Records nothing — {@code owed_since} is read as the ticks left it (qits-2094).
    *
    * <p><b>Held is a flag rather than a skip</b>: a held repository is still owed, and dropping it
    * would let its consumers go before the release they are waiting for.
    */
   public Assessment assess() {
+    return assess(null);
+  }
+
+  /**
+   * The walk, and — when {@code stampAt} is not null, which only {@link #tick()} passes — what it
+   * found recorded as {@code owed_since} (qits-2094): stamped {@code stampAt} on every repository
+   * with a non-empty pending set that carries none yet (held, refused and soon-to-be-blocked ones
+   * included, so their wait is kept), cleared on every repository the walk finds owed nothing. A
+   * row that is UNREACHABLE keeps its stamp, as it keeps its pins: a peer that could not be asked
+   * is not evidence that the debt was paid. Only rows whose stamp actually changes are written.
+   */
+  private Assessment assess(Instant stampAt) {
     String group = GroupConfig.DEFAULT_GROUP;
     Instant now = Instant.now();
     Map<String, MtLatest> latest = PendingChanges.index(store.allLatest());
     List<BumpOrder.Candidate> candidates = new ArrayList<>();
     List<String> refusals = new ArrayList<>();
     Set<String> reofferOwed = new LinkedHashSet<>();
+    Map<String, Instant> owedSince = new LinkedHashMap<>();
+    Set<String> toStamp = new LinkedHashSet<>();
+    Set<String> toClear = new LinkedHashSet<>();
     // The declared pact edges, read once for the walk (qits-1952): a provider owed a consumer's
     // first pact pin is owed a bump like any other, and its adoption rides the same request.
     Map<String, List<String>> pactConsumers =
         PactAdoptions.consumersByProvider(store.pactEdges());
     for (MtRepository row : store.repositories()) {
       if (!RepositoryStatus.OK.name().equals(row.status)) {
+        if (row.owedSince != null && !RepositoryStatus.UNREACHABLE.name().equals(row.status)) {
+          toClear.add(row.name);
+        }
         continue;
       }
       if (!row.dependencyBumps) {
         // OWED NOTHING, NOT HELD (qits-1784): archived, or `dependency-bumps: false`. Skipped before
         // its pending changes are even computed, so it never stands, is never picked and no
         // main-only request is opened for it — while its pins stay on the inventory for the GC.
+        if (row.owedSince != null) {
+          toClear.add(row.name);
+        }
         continue;
       }
       List<MtGroup> groups = store.groups(row.name);
       if (groups.stream().noneMatch(candidate -> candidate.name.equals(group))) {
+        if (row.owedSince != null) {
+          toClear.add(row.name);
+        }
         continue;
       }
       List<MtPin> pins =
@@ -700,31 +756,53 @@ public class BumpDispatcher {
       List<Change> changes =
           PendingChanges.forGroup(pins, latest, groups, group, resolver::published);
       if (changes.isEmpty()) {
+        // THE DEBT IS PAID (qits-2094): the next time it is owed, its wait starts afresh.
+        if (row.owedSince != null) {
+          toClear.add(row.name);
+        }
         continue;
+      }
+      // OWED, whatever happens to it below — refused, held or blocked, its wait goes on.
+      Instant since = row.owedSince;
+      if (since == null && stampAt != null) {
+        since = stampAt;
+        toStamp.add(row.name);
       }
       if (isRefused(row.name, now)) {
         refusals.add(row.name);
         continue;
       }
       candidates.add(new BumpOrder.Candidate(row.name, group, changes, held(row, changes)));
+      if (since != null) {
+        owedSince.put(row.name, since);
+      }
       if (row.reofferOwedAt != null) {
         reofferOwed.add(row.name);
       }
     }
+    if (stampAt != null) {
+      store.recordOwed(toStamp, toClear, stampAt);
+    }
     if (!candidates.isEmpty()) {
       Map<String, Instant> lastDispatched = store.lastDispatchedAt();
       // OWED A RE-OFFER FIRST (qits-1578): a repository whose bump was stranded on a request that
-      // closed was, by construction, reached recently — least-recently-dispatched alone would put it
-      // last behind the free room. The mark only reorders; held() above is untouched by it.
+      // closed was, by construction, reached recently — the order below alone would put it behind
+      // the free room. The mark only reorders; held() above is untouched by it.
+      // THEN LONGEST OWED FIRST (qits-2094): the last dispatch alone starved a repository that
+      // releases often — always "recently dispatched", it lost every freed slot for hours. It
+      // still decides among repositories owed equally long, a fresh walk's stamps above all.
       candidates.sort(
           Comparator.comparing(
                   (BumpOrder.Candidate candidate) -> !reofferOwed.contains(candidate.repository()))
+              .thenComparing(
+                  (BumpOrder.Candidate candidate) -> owedSince.get(candidate.repository()),
+                  Comparator.nullsLast(Comparator.naturalOrder()))
               .thenComparing(
                   (BumpOrder.Candidate candidate) ->
                       lastDispatched.getOrDefault(candidate.repository(), Instant.EPOCH))
               .thenComparing(BumpOrder.Candidate::repository));
     }
-    return new Assessment(List.copyOf(candidates), List.copyOf(refusals));
+    return new Assessment(List.copyOf(candidates), List.copyOf(refusals), Map.copyOf(owedSince));
   }
 
   /**

@@ -552,7 +552,7 @@
           "type" : "eu.wohlben.qits.maintenance.bump.BumpDispatcher$Assessment",
           "kind" : "assembler",
           "via" : null,
-          "site" : "BumpDispatcher.assess()"
+          "site" : "BumpDispatcher.assess(Instant)"
         },
         {
           "type" : "eu.wohlben.qits.maintenance.dto.BumpDto",
@@ -1303,7 +1303,7 @@
           "type" : "eu.wohlben.qits.maintenance.bump.BumpDispatcher$Assessment",
           "kind" : "assembler",
           "via" : null,
-          "site" : "BumpDispatcher.assess()"
+          "site" : "BumpDispatcher.assess(Instant)"
         },
         {
           "type" : "eu.wohlben.qits.maintenance.dto.AdoptionJourneyDto",

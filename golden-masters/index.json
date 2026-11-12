@@ -475,7 +475,9 @@
           "file": "bumps-owed-to-a-repository/getBumpStanding.json",
           "frozen": {
             "ids": [],
-            "instants": [],
+            "instants": [
+              "$.standing[*].owedSince"
+            ],
             "strings": [],
             "listFilteredTo": null
           }

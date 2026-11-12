@@ -48,8 +48,10 @@ import jakarta.inject.Inject;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -769,6 +771,54 @@ class BumpDispatchTest {
   }
 
   /**
+   * <b>Reproduction (qits-2094): A TARGET AT ITS CI MAXIMUM HAS NO ROOM</b>, however many of its
+   * slots are idle. Live, {@code ws-proof} answered 8 slots, {@code maximums.ci = 2} and both CI
+   * leases in use; the gate counted one free slot of seven, while qits-system would grant nothing
+   * there. The maximum caps the capacity too.
+   */
+  @Test
+  void aTargetAtItsCiMaximumIsBusy() {
+    Fixture.scriptCiQueue(peers, 2, 0);
+    Fixture.scriptTargets(
+        peers,
+        Fixture.target(
+            "ws-proof", 8, Fixture.slots(0, 0, 0), Fixture.slots(2, 0, 0), true, false, 2));
+
+    BumpDispatcher.Decision decision = dispatcher.explain(Instant.now());
+    assertEquals("CI_BUSY", decision.outcome(), decision.summary());
+    assertEquals(2, decision.capacity());
+    assertEquals(0, decision.free());
+    assertTrue(dispatcher.tick().isEmpty());
+    assertEquals(0, asks(Fixture.CATALOG_ID));
+  }
+
+  /**
+   * The maximum caps; it does not replace the slot rule. Below it the room is the smaller of the
+   * two, and a target that answers no {@code maximums} at all — every qits-system before qits-2094
+   * — is read exactly as before.
+   */
+  @Test
+  void aCiMaximumCapsTheRoomAndATargetWithoutOneIsReadAsBefore() {
+    fiveReady();
+    Fixture.scriptCiQueue(peers, 1, 0);
+    Fixture.scriptTargets(
+        peers,
+        Fixture.target(
+            "ws-proof", 8, Fixture.slots(0, 0, 0), Fixture.slots(1, 0, 0), true, false, 3));
+    BumpDispatcher.Decision capped = dispatcher.explain(Instant.now());
+    assertEquals("DISPATCH", capped.outcome(), capped.summary());
+    assertEquals(3, capped.capacity());
+    assertEquals(2, capped.free(), "3 - 1 under the maximum, though 7 slots are idle");
+
+    Fixture.scriptTargets(
+        peers,
+        Fixture.target("ws-proof", 8, Fixture.slots(0, 0, 0), Fixture.slots(1, 0, 0), true, false));
+    BumpDispatcher.Decision uncapped = dispatcher.explain(Instant.now());
+    assertEquals(8, uncapped.capacity());
+    assertEquals(7, uncapped.free());
+  }
+
+  /**
    * <b>WHAT IS RESERVED FOR THE OTHER TYPES AND NOT USED BY THEM STAYS FREE FOR THEM</b> — unless
    * the reservations add up to more than the total, when qits-system's {@code SlotAllocator}
    * ignores them and so does this (qits-1769 mirrors its {@code fits} exactly).
@@ -904,6 +954,88 @@ class BumpDispatchTest {
   }
 
   /**
+   * <b>Reproduction (qits-2094): THE REPOSITORY OWED LONGEST GOES FIRST, HOWEVER RECENTLY IT WAS
+   * DISPATCHED.</b> Live, {@code qits-system-service} — released often, so always "recently
+   * dispatched" — was owed from 19:15 and still waiting at 22:21 while repositories reached longer
+   * ago took every slot that freed. With room for one, the one owed three hours goes before two
+   * owed one hour and reached days ago; its request clears its stamp, theirs are kept.
+   */
+  @Test
+  void theRepositoryOwedLongestGoesFirstEvenWhenItWasDispatchedMostRecently() {
+    inventory.clear();
+    owes("qits-aaa-service", "eu.wohlben.qits:qits-a");
+    owes("qits-bbb-service", "eu.wohlben.qits:qits-b");
+    owes("qits-system-service", "eu.wohlben.qits:qits-s");
+    Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
+    lastReached("qits-aaa-service", now.minus(Duration.ofDays(3)));
+    lastReached("qits-bbb-service", now.minus(Duration.ofDays(2)));
+    lastReached("qits-system-service", now.minus(Duration.ofMinutes(5)));
+    store.recordOwed(Set.of("qits-system-service"), Set.of(), now.minus(Duration.ofHours(3)));
+    store.recordOwed(
+        Set.of("qits-aaa-service", "qits-bbb-service"), Set.of(), now.minus(Duration.ofHours(1)));
+    // One CI slot free for bumps.
+    Fixture.scriptCiRoom(peers, 1);
+
+    assertEquals(
+        List.of("qits-system-service", "qits-aaa-service", "qits-bbb-service"),
+        dispatcher.assess().candidates().stream().map(BumpOrder.Candidate::repository).toList(),
+        "owed longest first; the last dispatch only breaks a tie");
+    assertEquals(List.of("qits-system-service"), repositoriesOf(dispatcher.tick()));
+    assertEquals(0, asks("catalog-qits-aaa-service"), "it waits for the next tick");
+    assertNull(
+        store.repository("qits-system-service").orElseThrow().owedSince,
+        "its main-only request ends the wait it was owed");
+    assertEquals(
+        now.minus(Duration.ofHours(1)),
+        store.repository("qits-aaa-service").orElseThrow().owedSince,
+        "a tick keeps a stamp already there");
+  }
+
+  /**
+   * <b>A HELD REPOSITORY KEEPS ITS WAIT</b> (qits-2094): the first tick that finds it owed stamps
+   * it although a request holds it, every later one keeps that stamp, a read stamps nothing — and
+   * once nothing is owed, the next tick clears it.
+   */
+  @Test
+  void aHeldRepositoryIsStampedOnceAndClearedWhenNothingIsOwed() {
+    inventory.clear();
+    owes("qits-held-service", "eu.wohlben.qits:qits-h");
+    scriptListing(
+        "catalog-qits-held-service",
+        "qits-held-service",
+        "[{\"id\":\"open-one\",\"state\":\"PENDING\",\"mergedSha\":null}]");
+    Fixture.scriptCiQueueEmpty(peers);
+
+    assertTrue(dispatcher.assess().candidates().getFirst().held());
+    dispatcher.explain(Instant.now());
+    assertNull(owedSince("qits-held-service"), "a read records nothing");
+
+    assertTrue(dispatcher.tick().isEmpty());
+    Instant first = owedSince("qits-held-service");
+    assertNotNull(first, "held, and still owed");
+    assertTrue(dispatcher.tick().isEmpty());
+    assertEquals(first, owedSince("qits-held-service"), "kept across ticks while it waits");
+
+    // The debt is paid: main pins the released version now.
+    scanned(
+        "qits-held-service",
+        "catalog-qits-held-service",
+        ParsedPin.of(
+            Ecosystem.MAVEN,
+            "pom.xml",
+            "eu.wohlben.qits:qits-h",
+            "2026.913.1",
+            null,
+            "dependency:eu.wohlben.qits:qits-h"));
+    assertTrue(dispatcher.tick().isEmpty());
+    assertNull(owedSince("qits-held-service"), "nothing owed, so no wait");
+  }
+
+  private Instant owedSince(String repository) {
+    return store.repository(repository).orElseThrow().owedSince;
+  }
+
+  /**
    * <b>AND THE TOPOLOGY STILL OVERRULES IT.</b> An upstream that is itself owed goes before its
    * consumer whatever the clock last did to either, and an idle queue does not let the consumer go
    * beside it.
@@ -1002,6 +1134,30 @@ class BumpDispatchTest {
     assertEquals(0, asks("catalog-qits-knot-a"));
     assertEquals(0, asks("catalog-qits-knot-b"));
     assertEquals(List.of("qits-ready-c", "qits-knot-a"), repositoriesOf(dispatcher.tick()));
+  }
+
+  /**
+   * <b>THE STANDING SHOWS SINCE WHEN EACH REPOSITORY IS OWED</b> (qits-2094) — the stamp a tick
+   * wrote, and none where no tick has walked yet: the read itself stamps nothing.
+   */
+  @Test
+  void theStandingDoorShowsSinceWhenEachRepositoryIsOwed() {
+    inventory.clear();
+    owes("qits-early-service", "eu.wohlben.qits:qits-e");
+    owes("qits-late-service", "eu.wohlben.qits:qits-l");
+    store.recordOwed(Set.of("qits-early-service"), Set.of(), Instant.parse("2026-11-11T19:15:00Z"));
+    Fixture.scriptCiQueueEmpty(peers);
+
+    given()
+        .header("Authorization", SuiteBearers.bearer("dyn-workspace-agent", "qits:agent"))
+        .get("/maintenance/api/bumps/standing")
+        .then()
+        .statusCode(200)
+        .body("standing.repository", contains("qits-early-service", "qits-late-service"))
+        .body("standing[0].owedSince", is("2026-11-11T19:15:00Z"))
+        .body("standing[1].owedSince", is((Object) null));
+
+    assertNull(owedSince("qits-late-service"), "a read stamps nothing");
   }
 
   /**

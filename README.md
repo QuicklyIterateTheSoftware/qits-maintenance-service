@@ -288,16 +288,24 @@ member of a knot of free candidates goes, marked `cycleBroken` — at most one p
 candidate whose every owed upstream is free and waits back on it (qits-1696: the break used to wait
 for a tick with nothing READY at all, which an estate of thirty owed repositories never had).
 `GET /maintenance/api/bumps/standing` answers the dispatcher's decision and the whole owed set
-(READY / BLOCKED / HELD, with `blockedBy` and the changes) without dispatching anything. **Among equally ready candidates the tiebreak is
-least recently dispatched** (`MaintenanceStore.lastDispatchedAt`, the newest main-only request per
-repository; never reached counts as oldest), because it used to be the alphabet, and the alphabet
-starved the same repositories every night (measured 2026-09-13).
+(READY / BLOCKED / HELD, with `blockedBy`, the changes and `owedSince`) without dispatching
+anything. **Among equally ready candidates the one owed longest goes first** (qits-2094:
+`mt_repository.owed_since`, V32, stamped by a tick the first time its walk finds the repository with
+a pending set — held and blocked ones too — and cleared when nothing is pending or its main-only
+request opens; the standing only reads it), then **least recently dispatched**
+(`MaintenanceStore.lastDispatchedAt`, the newest main-only request per repository; never reached
+counts as oldest), then the name. The tiebreak used to be the alphabet, which starved the same
+repositories every night (measured 2026-09-13), and then the last dispatch alone, which starved
+the repository that releases most — always "recently dispatched", `qits-system-service` waited
+from 19:15 to 22:21 while older-dispatched repositories took every freed slot.
 
 **Free slots are read, not configured (qits-1769)**: since a CI run is a lease (epic qits-1481)
 qits-ci holds no runner to report slots from, so the room is read from qits-system, which grants the
 leases. One `GET /system/api/targets`: per connected, unquarantined target, `free_t` is how many
 more CI leases its `SlotAllocator.fits` would admit — `T - n_total - Σ_{u≠ci} max(0, r[u] - n[u])`,
-or `T - n_total` when `Σ r > T` and the reservations are ignored, floored at zero. Then
+or `T - n_total` when `Σ r > T` and the reservations are ignored, floored at zero, and capped at
+`max(0, maximums.ci - used.ci)` where the target declares a CI maximum (qits-2094; an absent
+`maximums`, or a null type in it, is no cap). Then
 `free = max(0, Σ free_t - ciQueued - requested)`: the runs qits-ci holds `queued` (one `GET
 /ci/api/runs/queue`) and this service's rows qits-ci has not accepted yet claim that room first; a
 running run's lease is in `used` already. No eligible target able to host CI at all is `NO_SLOTS`.
