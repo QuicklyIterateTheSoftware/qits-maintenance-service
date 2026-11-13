@@ -1,6 +1,7 @@
 package eu.wohlben.qits.maintenance.contracts;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.maintenance.bump.CiClient;
@@ -30,6 +31,8 @@ final class CiContract {
   static final GoldenMasters CI = GoldenMasters.of("qits-ci-service", "qits-ci");
 
   static final String A_FAILED_RUN_THAT_RETRIES_ANOTHER = "a failed run that retries another";
+  static final String A_FAILED_RUN_AWAITING_A_DEFERRED_RETRY =
+      "a failed run awaiting a deferred retry";
   static final String A_RUN_QUEUE_WITH_A_RUN_WAITING = "a run queue with a run waiting";
   static final String A_REPOSITORY_A_BUMP_TARGETS = "a repository a maintenance bump targets";
   static final String A_RELEASE_REQUEST_AUTOMATION_PIPELINE =
@@ -48,6 +51,14 @@ final class CiContract {
           "steps[].image",
           "steps[].exitCode",
           "steps[].output");
+
+  /**
+   * {@link CiClient#run} of a run whose automatic retry qits-ci holds deferred (qits-2165): what
+   * {@link #RUN} reads, and the deadline. Its own list while the pinned golden masters predate the
+   * field: a consumed path the recording does not hold fails every row that names it, so it joins
+   * {@link #RUN} only once the pin records it on every run.
+   */
+  static final List<String> DEFERRED_RUN = deferredRun();
 
   /** {@link CiClient#automaticRetryOf}: each listed run's id, and what {@link #RUN} reads. */
   static final List<String> RUNS = runs();
@@ -118,6 +129,21 @@ final class CiContract {
           new PeerRow(
               GoldenInteraction.of(
                       Trigger.schedule("BumpService.sweep"),
+                      A_FAILED_RUN_AWAITING_A_DEFERRED_RETRY,
+                      "getRun")
+                  .consumes(DEFERRED_RUN)
+                  .anyLength("steps"),
+              // qits-2165: a red run whose automatic retry qits-ci holds deferred, which the sweep
+              // keeps RUNNING until the deferral's deadline (BumpService#followRetries).
+              (peers, p) -> {
+                CiClient.RunState run = peers.ci().run(p.get("runId"));
+                assertTrue(run.failed(), String.valueOf(run));
+                assertEquals(p.get("repositoryId"), run.repoId());
+                assertNotNull(run.autoRetryDeferredUntil(), String.valueOf(run));
+              }),
+          new PeerRow(
+              GoldenInteraction.of(
+                      Trigger.schedule("BumpService.sweep"),
                       A_FAILED_RUN_THAT_RETRIES_ANOTHER,
                       "listRuns")
                   .consumes(RUNS)
@@ -149,6 +175,12 @@ final class CiContract {
     List<String> paths = new ArrayList<>();
     paths.add("runs[].id");
     RUN.forEach(path -> paths.add("runs[]." + path));
+    return List.copyOf(paths);
+  }
+
+  private static List<String> deferredRun() {
+    List<String> paths = new ArrayList<>(RUN);
+    paths.add("autoRetryDeferredUntil");
     return List.copyOf(paths);
   }
 

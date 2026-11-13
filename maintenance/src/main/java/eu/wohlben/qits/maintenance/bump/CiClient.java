@@ -344,6 +344,10 @@ public class CiClient {
    * @param failure the step that failed it and why, or null — on a run that did not fail, on one
    *     read from a listing (which carries no steps), and on one whose steps name no failure
    *     (qits-1116)
+   * @param autoRetryDeferredUntil until when qits-ci holds this FAILED run's automatic retry
+   *     deferred, re-asking for it every sweep tick with its {@code BuildFailed} held back, or null
+   *     when no deferral stands (qits-2165) — cleared in the transaction that inserts the retry, and
+   *     when the deferral settles or is dropped
    */
   public record RunState(
       String status,
@@ -353,10 +357,23 @@ public class CiClient {
       boolean autoRetry,
       Instant finishedAt,
       String retriedAs,
-      Failure failure) {
+      Failure failure,
+      Instant autoRetryDeferredUntil) {
 
     public RunState(String status, String error) {
-      this(status, error, null, null, false, null, null, null);
+      this(status, error, null, null, false, null, null, null, null);
+    }
+
+    public RunState(
+        String status,
+        String error,
+        String repoId,
+        String retryOfRunId,
+        boolean autoRetry,
+        Instant finishedAt,
+        String retriedAs,
+        Failure failure) {
+      this(status, error, repoId, retryOfRunId, autoRetry, finishedAt, retriedAs, failure, null);
     }
 
     public RunState(
@@ -367,7 +384,7 @@ public class CiClient {
         boolean autoRetry,
         Instant finishedAt,
         String retriedAs) {
-      this(status, error, repoId, retryOfRunId, autoRetry, finishedAt, retriedAs, null);
+      this(status, error, repoId, retryOfRunId, autoRetry, finishedAt, retriedAs, null, null);
     }
 
     /**
@@ -558,7 +575,8 @@ public class CiClient {
         body.path("autoRetry").asBoolean(false),
         instant(text(body, "finishedAt")),
         retriedAs,
-        failure(body));
+        failure(body),
+        instant(text(body, "autoRetryDeferredUntil")));
   }
 
   /** The run id the newest "retried automatically as run" line of any step names, or null. */

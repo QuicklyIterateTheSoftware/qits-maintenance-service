@@ -34,7 +34,8 @@ import org.junit.jupiter.api.Test;
  * re-fires a run whose runner disconnected as a NEW run carrying {@code retryOfRunId} and {@code
  * autoRetry}, and leaves the original row FAILED; the automation adopts the retry and its verdict
  * decides — FRESH, COMMITTED or FAILED — through chained retries and whichever order the two are
- * seen to end in. A red run qits-ci did not retry still fails.
+ * seen to end in. A red run qits-ci did not retry still fails, and one whose retry qits-ci holds
+ * deferred waits for it (qits-2165).
  */
 @QuarkusTest
 class AutomationInfraRetryTest {
@@ -250,6 +251,69 @@ class AutomationInfraRetryTest {
     assertEquals(List.of(RUN, RETRY), entry().runIds());
   }
 
+  /**
+   * <b>A retry qits-ci holds deferred is not "no retry"</b> (qits-2165). The red run ended minutes
+   * ago, well past the grace, and no retry is listed — but qits-ci says it will retry it within the
+   * hour, so the automation stays RUNNING rather than settling FAILED.
+   */
+  @Test
+  void aDeferredRetryKeepsTheAutomationRunning() {
+    UUID id = running();
+    scriptRun(RUN, "FAILED", null, false, minutesAgo(5), null, hoursAhead(1));
+    scriptListing();
+
+    MtBump waiting = poll(id);
+
+    assertEquals(BumpStatus.RUNNING.name(), waiting.status, waiting.message);
+    assertEquals(AutomationState.RUNNING.name(), entry().state());
+    assertEquals(RUN, waiting.ciRunId);
+  }
+
+  /**
+   * The deferred retry is made: the deferral reads null on the original, the retry is found the way
+   * every other is, adopted, and its SUCCESS decides.
+   */
+  @Test
+  void aDeferredRetryOnceMadeDecides() {
+    UUID id = running();
+    Fixture.scriptForeignBranchAt(peers, AutomationFixture.branch(REQUEST), PUSHED);
+    scriptRun(RUN, "FAILED", null, false, minutesAgo(5), null, hoursAhead(1));
+    scriptListing();
+
+    MtBump waiting = poll(id);
+
+    assertEquals(BumpStatus.RUNNING.name(), waiting.status, waiting.message);
+
+    scriptRun(RUN, "FAILED", null, false, minutesAgo(5), RETRY, null);
+    scriptRun(RETRY, "SUCCESS", RUN, true, Instant.now(), null);
+    scriptListing(listed(RETRY, "SUCCESS", RUN, true));
+    MtBump done = poll(id);
+
+    assertEquals(BumpStatus.SUCCEEDED.name(), done.status, done.message);
+    assertEquals(PUSHED, done.resultSha);
+    AutomationDto entry = entry();
+    assertEquals(AutomationState.COMMITTED.name(), entry.state());
+    assertEquals(List.of(RUN, RETRY), entry.runIds());
+  }
+
+  /**
+   * A deferral still set past its deadline and the slack is stale — a qits-ci that never cleared it
+   * — and the run's own verdict stands, so nothing pins the automation RUNNING for good. (A
+   * deferral that settled or was dropped reads null, which is {@link #aRealFailureStillFails}.)
+   */
+  @Test
+  void aStaleDeferralFallsToTheRunsVerdict() {
+    UUID id = running();
+    scriptRun(RUN, "FAILED", null, false, LONG_AGO, null, minutesAgo(11));
+    scriptListing();
+
+    MtBump done = poll(id);
+
+    assertEquals(BumpStatus.FAILED.name(), done.status, done.message);
+    assertTrue(done.message.contains("ended FAILED"), done.message);
+    assertEquals(AutomationState.FAILED.name(), entry().state());
+  }
+
   /** A listing that cannot be read is not "no retry": the bump stays RUNNING and asks again. */
   @Test
   void anUnreadableListingIsNotAVerdict() {
@@ -290,6 +354,14 @@ class AutomationInfraRetryTest {
     return automations.automations(REQUEST, FOLD_A).automations().stream().filter(AutomationFixture::screenshots).findFirst().orElseThrow();
   }
 
+  private static Instant minutesAgo(long minutes) {
+    return Instant.now().minus(Duration.ofMinutes(minutes));
+  }
+
+  private static Instant hoursAhead(long hours) {
+    return Instant.now().plus(Duration.ofHours(hours));
+  }
+
   /** One run as {@code GET /ci/api/runs/{id}} answers it, with its step output when it names a retry. */
   private void scriptRun(
       String runId,
@@ -298,6 +370,18 @@ class AutomationInfraRetryTest {
       boolean autoRetry,
       Instant finishedAt,
       String retriedAs) {
+    scriptRun(runId, status, retryOf, autoRetry, finishedAt, retriedAs, null);
+  }
+
+  /** The same, with qits-ci's {@code autoRetryDeferredUntil} (qits-2165), null when none stands. */
+  private void scriptRun(
+      String runId,
+      String status,
+      String retryOf,
+      boolean autoRetry,
+      Instant finishedAt,
+      String retriedAs,
+      Instant deferredUntil) {
     String steps =
         retriedAs == null
             ? "[{\"stepIndex\":0,\"status\":\"" + status + "\",\"output\":\"building\"}]"
@@ -307,7 +391,8 @@ class AutomationInfraRetryTest {
     peers.answer(
         PeerTarget.CI,
         "/ci/api/runs/" + runId,
-        FakePeers.Scripted.ok(body(runId, status, retryOf, autoRetry, finishedAt, steps)));
+        FakePeers.Scripted.ok(
+            body(runId, status, retryOf, autoRetry, finishedAt, steps, deferredUntil)));
   }
 
   private void scriptListing(String... runs) {
@@ -318,7 +403,7 @@ class AutomationInfraRetryTest {
   }
 
   private static String listed(String runId, String status, String retryOf, boolean autoRetry) {
-    return body(runId, status, retryOf, autoRetry, null, "[]");
+    return body(runId, status, retryOf, autoRetry, null, "[]", null);
   }
 
   private static String body(
@@ -327,12 +412,15 @@ class AutomationInfraRetryTest {
       String retryOf,
       boolean autoRetry,
       Instant finishedAt,
-      String steps) {
+      String steps,
+      Instant deferredUntil) {
     return "{\"id\":\"" + runId + "\",\"repoId\":\"" + CI_REPO + "\",\"status\":\"" + status
         + "\",\"retryOfRunId\":" + (retryOf == null ? "null" : "\"" + retryOf + "\"")
         + ",\"autoRetry\":" + autoRetry
         + ",\"retryReason\":" + (autoRetry ? "\"infra failure\"" : "null")
         + ",\"finishedAt\":" + (finishedAt == null ? "null" : "\"" + finishedAt + "\"")
+        + ",\"autoRetryDeferredUntil\":"
+        + (deferredUntil == null ? "null" : "\"" + deferredUntil + "\"")
         + ",\"steps\":" + steps + "}";
   }
 }

@@ -144,6 +144,15 @@ public class BumpService {
    */
   static final Duration RETRY_GRACE = Duration.ofSeconds(60);
 
+  /**
+   * How long past its {@code autoRetryDeferredUntil} a FAILED run's deferred retry is still waited
+   * for (qits-2165). qits-ci settles or retries a deferral at its next sweep tick after the
+   * deadline, plus a lease; past the deadline and this slack the field is treated as stale — a
+   * qits-ci that never cleared it — and the run's own verdict stands, so a bump can never be pinned
+   * RUNNING forever.
+   */
+  static final Duration DEFERRAL_SLACK = Duration.ofMinutes(10);
+
   /** Follows one running bump to its end, or leaves it running. */
   public void poll(UUID id) {
     Optional<MtBump> found = store.bump(id);
@@ -224,9 +233,19 @@ public class BumpService {
    * verdict exactly as a FAILED run with no retry does. Checking anyway costs nothing and means this
    * does not have to be revisited the day qits-ci's answer changes.
    *
+   * <p><b>A FAILED run whose automatic retry qits-ci holds deferred is RUNNING</b> (qits-2165).
+   * qits-ci can leave a red run awaiting its retry for hours ({@code
+   * qits.ci.auto-retry.defer-deadline}), re-asking every minute with {@code BuildFailed} held back,
+   * and says so in the run's {@code autoRetryDeferredUntil}; read as "no retry", the grace would run
+   * out and settle the bump red while the retry was still to come. Once the retry is made the
+   * deferral reads null and the retry is found by the paths above; a deferral that settled or was
+   * dropped reads null with no retry and falls to the run's verdict; one still set past its
+   * deadline and {@link #DEFERRAL_SLACK} is stale and falls there too.
+   *
    * @return the terminal state that decides this chain, or null when the bump stays RUNNING — a run
-   *     still going, a run or listing that could not be read, or a FAILED/TIMED_OUT run young enough
-   *     that its retry may not have been recorded yet
+   *     still going, a run or listing that could not be read, a FAILED/TIMED_OUT run young enough
+   *     that its retry may not have been recorded yet, or a FAILED run whose retry qits-ci holds
+   *     deferred
    */
   private CiClient.RunState followRetries(
       MtBump bump, String runId, CiClient.RunState state, Map<String, CiClient.RunState> states) {
@@ -267,6 +286,12 @@ public class BumpService {
         retry = lookup.retry();
       }
       if (retryId == null) {
+        if (at.failed()
+            && at.autoRetryDeferredUntil() != null
+            && Instant.now().isBefore(at.autoRetryDeferredUntil().plus(DEFERRAL_SLACK))) {
+          store.bumpRunStatus(bump.id, at.status());
+          return null;
+        }
         if (at.finishedAt() != null
             && Instant.now().isBefore(at.finishedAt().plus(RETRY_GRACE))) {
           store.bumpRunStatus(bump.id, at.status());
