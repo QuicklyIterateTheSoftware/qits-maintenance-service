@@ -269,6 +269,181 @@
         }
       },
       "description": "BumpService.sweep: getRun",
+      "key": "a8ff6c97",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a failed run awaiting a deferred retry",
+          "params": {
+            "repositoryId": "00000000-0000-4000-8000-000000000001",
+            "runId": "00000000-0000-4000-8000-000000000002"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/ci/api/runs/${runId}",
+            "type": "ProviderState"
+          }
+        },
+        "method": "GET",
+        "path": "/ci/api/runs/00000000-0000-4000-8000-000000000002"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "autoRetry": false,
+            "autoRetryDeferredUntil": "2026-01-01T00:00:00Z",
+            "finishedAt": "2026-01-01T00:00:00Z",
+            "repoId": "00000000-0000-4000-8000-000000000001",
+            "retryOfRunId": null,
+            "status": "FAILED",
+            "steps": [
+              {
+                "exitCode": 1,
+                "image": "alpine:3",
+                "output": "Cloning into 'contract-service'...\nthe runner went away\n[infra failure (the runner went away) — its automatic retry is deferred until 2026-01-01T00:00:00Z: registry unreachable]\n",
+                "status": "FAILED",
+                "stepIndex": 0
+              }
+            ]
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.autoRetry": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.autoRetryDeferredUntil": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})$"
+                }
+              ]
+            },
+            "$.finishedAt": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})$"
+                }
+              ]
+            },
+            "$.repoId": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+                }
+              ]
+            },
+            "$.status": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.steps": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 0
+                }
+              ]
+            },
+            "$.steps[*].exitCode": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "number"
+                }
+              ]
+            },
+            "$.steps[*].image": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.steps[*].output": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.steps[*].status": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.steps[*].stepIndex": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "number"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json.*"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-ci-service",
+            "operationId": "getRun"
+          },
+          "qits-trigger": {
+            "app": "qits-maintenance-service",
+            "kind": "schedule",
+            "schedule": "BumpService.sweep"
+          }
+        }
+      },
+      "description": "BumpService.sweep: getRun",
       "key": "e2a2811",
       "pending": false,
       "providerStates": [
@@ -296,6 +471,7 @@
         "body": {
           "content": {
             "autoRetry": true,
+            "autoRetryDeferredUntil": null,
             "finishedAt": "2026-01-01T00:00:00Z",
             "repoId": "00000000-0000-4000-8000-000000000001",
             "retryOfRunId": "00000000-0000-4000-8000-000000000002",
@@ -474,6 +650,7 @@
             "runs": [
               {
                 "autoRetry": true,
+                "autoRetryDeferredUntil": null,
                 "finishedAt": "2026-01-01T00:00:00Z",
                 "id": "00000000-0000-4000-8000-000000000003",
                 "repoId": "00000000-0000-4000-8000-000000000001",
@@ -491,6 +668,7 @@
               },
               {
                 "autoRetry": true,
+                "autoRetryDeferredUntil": null,
                 "finishedAt": "2026-01-01T00:00:00Z",
                 "id": "00000000-0000-4000-8000-000000000003",
                 "repoId": "00000000-0000-4000-8000-000000000001",

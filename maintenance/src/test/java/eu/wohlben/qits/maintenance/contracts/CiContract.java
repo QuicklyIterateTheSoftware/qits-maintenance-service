@@ -46,19 +46,14 @@ final class CiContract {
           "retryOfRunId",
           "autoRetry",
           "finishedAt",
+          // qits-2165: a FAILED run whose automatic retry qits-ci holds deferred.
+          "autoRetryDeferredUntil",
           "steps[].status",
           "steps[].stepIndex",
           "steps[].image",
           "steps[].exitCode",
           "steps[].output");
 
-  /**
-   * {@link CiClient#run} of a run whose automatic retry qits-ci holds deferred (qits-2165): what
-   * {@link #RUN} reads, and the deadline. Its own list while the pinned golden masters predate the
-   * field: a consumed path the recording does not hold fails every row that names it, so it joins
-   * {@link #RUN} only once the pin records it on every run.
-   */
-  static final List<String> DEFERRED_RUN = deferredRun();
 
   /** {@link CiClient#automaticRetryOf}: each listed run's id, and what {@link #RUN} reads. */
   static final List<String> RUNS = runs();
@@ -131,7 +126,7 @@ final class CiContract {
                       Trigger.schedule("BumpService.sweep"),
                       A_FAILED_RUN_AWAITING_A_DEFERRED_RETRY,
                       "getRun")
-                  .consumes(DEFERRED_RUN)
+                  .consumes(RUN)
                   .anyLength("steps"),
               // qits-2165: a red run whose automatic retry qits-ci holds deferred, which the sweep
               // keeps RUNNING until the deferral's deadline (BumpService#followRetries).
@@ -175,12 +170,6 @@ final class CiContract {
     List<String> paths = new ArrayList<>();
     paths.add("runs[].id");
     RUN.forEach(path -> paths.add("runs[]." + path));
-    return List.copyOf(paths);
-  }
-
-  private static List<String> deferredRun() {
-    List<String> paths = new ArrayList<>(RUN);
-    paths.add("autoRetryDeferredUntil");
     return List.copyOf(paths);
   }
 
