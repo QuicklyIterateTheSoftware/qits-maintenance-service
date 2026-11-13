@@ -1,5 +1,5 @@
 {
-  "formatVersion" : 1,
+  "formatVersion" : 2,
   "application" : "qits-maintenance",
   "entities" : [
     {
@@ -101,49 +101,56 @@
           "method" : "GET",
           "path" : "/adoption/by-release",
           "dto" : "eu.wohlben.qits.maintenance.dto.AdoptionJourneyDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         },
         {
           "operationId" : "getRepository",
           "method" : "GET",
           "path" : "/repositories/{name}",
           "dto" : "eu.wohlben.qits.maintenance.dto.RepositoryDetailDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "getSbomCheckReport",
           "method" : "GET",
           "path" : "/sbom-check",
           "dto" : "eu.wohlben.qits.maintenance.dto.SbomCheckReportDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         },
         {
           "operationId" : "listArtifacts",
           "method" : "GET",
           "path" : "/artifacts",
           "dto" : "eu.wohlben.qits.maintenance.dto.ArtifactDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listDependencyDependents",
           "method" : "GET",
           "path" : "/dependencies/dependents",
           "dto" : "eu.wohlben.qits.maintenance.dto.DependentDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listRepositoryDependents",
           "method" : "GET",
           "path" : "/repositories/{name}/dependents",
           "dto" : "eu.wohlben.qits.maintenance.dto.DependentDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         },
         {
           "operationId" : "runSbomCheck",
           "method" : "POST",
           "path" : "/sbom-check/runs",
           "dto" : "eu.wohlben.qits.maintenance.dto.SbomCheckReportDto",
-          "kind" : "body"
+          "kind" : "body",
+          "cardinality" : "single"
         }
       ]
     },
@@ -204,28 +211,32 @@
           "method" : "GET",
           "path" : "/repositories/{name}",
           "dto" : "eu.wohlben.qits.maintenance.dto.RepositoryDetailDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listArtifacts",
           "method" : "GET",
           "path" : "/artifacts",
           "dto" : "eu.wohlben.qits.maintenance.dto.ArtifactDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listDependencyDependents",
           "method" : "GET",
           "path" : "/dependencies/dependents",
           "dto" : "eu.wohlben.qits.maintenance.dto.DependentDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listRepositoryDependents",
           "method" : "GET",
           "path" : "/repositories/{name}/dependents",
           "dto" : "eu.wohlben.qits.maintenance.dto.DependentDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         }
       ]
     },
@@ -256,7 +267,8 @@
           "method" : "GET",
           "path" : "/repositories/{name}",
           "dto" : "eu.wohlben.qits.maintenance.dto.RepositoryDetailDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         }
       ]
     },
@@ -287,14 +299,16 @@
           "method" : "GET",
           "path" : "/release-requests/{requestId}/automations",
           "dto" : "eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         },
         {
           "operationId" : "triggerReleaseRequestAutomations",
           "method" : "POST",
           "path" : "/release-requests/{requestId}/automations",
           "dto" : "eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         }
       ]
     },
@@ -331,14 +345,16 @@
           "method" : "GET",
           "path" : "/repositories/{name}",
           "dto" : "eu.wohlben.qits.maintenance.dto.GroupDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listRepositories",
           "method" : "GET",
           "path" : "/repositories",
           "dto" : "eu.wohlben.qits.maintenance.dto.GroupDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         }
       ]
     },
@@ -423,42 +439,48 @@
           "method" : "GET",
           "path" : "/bumps/{id}",
           "dto" : "eu.wohlben.qits.maintenance.dto.BumpDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         },
         {
           "operationId" : "getBumpStanding",
           "method" : "GET",
           "path" : "/bumps/standing",
           "dto" : "eu.wohlben.qits.maintenance.dto.BumpStandingDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         },
         {
           "operationId" : "listBumps",
           "method" : "GET",
           "path" : "/bumps",
           "dto" : "eu.wohlben.qits.maintenance.dto.BumpDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listPendingBumps",
           "method" : "GET",
           "path" : "/bumps/pending",
           "dto" : "eu.wohlben.qits.maintenance.dto.BumpDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listReleaseRequestAutomations",
           "method" : "GET",
           "path" : "/release-requests/{requestId}/automations",
           "dto" : "eu.wohlben.qits.maintenance.dto.FailureDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         },
         {
           "operationId" : "triggerReleaseRequestAutomations",
           "method" : "POST",
           "path" : "/release-requests/{requestId}/automations",
           "dto" : "eu.wohlben.qits.maintenance.dto.FailureDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         }
       ]
     },
@@ -505,7 +527,8 @@
           "method" : "GET",
           "path" : "/pins",
           "dto" : "eu.wohlben.qits.maintenance.dto.PinSourceDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         }
       ]
     },
@@ -536,7 +559,8 @@
           "method" : "GET",
           "path" : "/pins",
           "dto" : "eu.wohlben.qits.maintenance.dto.PinSourceDto$ArtifactPinDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         }
       ]
     },
@@ -621,42 +645,48 @@
           "method" : "GET",
           "path" : "/bumps/{id}",
           "dto" : "eu.wohlben.qits.maintenance.dto.BumpDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "getBumpStanding",
           "method" : "GET",
           "path" : "/bumps/standing",
           "dto" : "eu.wohlben.qits.maintenance.dto.BumpStandingDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         },
         {
           "operationId" : "getRepository",
           "method" : "GET",
           "path" : "/repositories/{name}",
           "dto" : "eu.wohlben.qits.maintenance.dto.GroupDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listBumps",
           "method" : "GET",
           "path" : "/bumps",
           "dto" : "eu.wohlben.qits.maintenance.dto.BumpDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listPendingBumps",
           "method" : "GET",
           "path" : "/bumps/pending",
           "dto" : "eu.wohlben.qits.maintenance.dto.BumpDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listRepositories",
           "method" : "GET",
           "path" : "/repositories",
           "dto" : "eu.wohlben.qits.maintenance.dto.GroupDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         }
       ]
     },
@@ -783,70 +813,80 @@
           "method" : "GET",
           "path" : "/bumps/{id}",
           "dto" : "eu.wohlben.qits.maintenance.dto.BumpDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "getBumpStanding",
           "method" : "GET",
           "path" : "/bumps/standing",
           "dto" : "eu.wohlben.qits.maintenance.dto.BumpStandingDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         },
         {
           "operationId" : "getRepository",
           "method" : "GET",
           "path" : "/repositories/{name}",
           "dto" : "eu.wohlben.qits.maintenance.dto.GroupDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listArtifacts",
           "method" : "GET",
           "path" : "/artifacts",
           "dto" : "eu.wohlben.qits.maintenance.dto.ArtifactDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listBumps",
           "method" : "GET",
           "path" : "/bumps",
           "dto" : "eu.wohlben.qits.maintenance.dto.BumpDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listDependencies",
           "method" : "GET",
           "path" : "/dependencies",
           "dto" : "eu.wohlben.qits.maintenance.dto.DependencyDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listDependencyDependents",
           "method" : "GET",
           "path" : "/dependencies/dependents",
           "dto" : "eu.wohlben.qits.maintenance.dto.DependentDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         },
         {
           "operationId" : "listPendingBumps",
           "method" : "GET",
           "path" : "/bumps/pending",
           "dto" : "eu.wohlben.qits.maintenance.dto.BumpDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listRepositories",
           "method" : "GET",
           "path" : "/repositories",
           "dto" : "eu.wohlben.qits.maintenance.dto.GroupDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listRepositoryDependents",
           "method" : "GET",
           "path" : "/repositories/{name}/dependents",
           "dto" : "eu.wohlben.qits.maintenance.dto.DependentDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         }
       ]
     },
@@ -883,7 +923,8 @@
           "method" : "GET",
           "path" : "/pins",
           "dto" : "eu.wohlben.qits.maintenance.dto.PinSourceDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         }
       ]
     },
@@ -1044,77 +1085,88 @@
           "method" : "GET",
           "path" : "/adoption/by-release",
           "dto" : "eu.wohlben.qits.maintenance.dto.AdoptionJourneyDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         },
         {
           "operationId" : "getBump",
           "method" : "GET",
           "path" : "/bumps/{id}",
           "dto" : "eu.wohlben.qits.maintenance.dto.BumpDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "getBumpStanding",
           "method" : "GET",
           "path" : "/bumps/standing",
           "dto" : "eu.wohlben.qits.maintenance.dto.BumpStandingDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         },
         {
           "operationId" : "getRepository",
           "method" : "GET",
           "path" : "/repositories/{name}",
           "dto" : "eu.wohlben.qits.maintenance.dto.GroupDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listBumps",
           "method" : "GET",
           "path" : "/bumps",
           "dto" : "eu.wohlben.qits.maintenance.dto.BumpDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listDependencies",
           "method" : "GET",
           "path" : "/dependencies",
           "dto" : "eu.wohlben.qits.maintenance.dto.DependencyDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listDependencyPins",
           "method" : "GET",
           "path" : "/pins",
           "dto" : "eu.wohlben.qits.maintenance.dto.PinSourceDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         },
         {
           "operationId" : "listPendingBumps",
           "method" : "GET",
           "path" : "/bumps/pending",
           "dto" : "eu.wohlben.qits.maintenance.dto.BumpDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listReleaseRequestAutomations",
           "method" : "GET",
           "path" : "/release-requests/{requestId}/automations",
           "dto" : "eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         },
         {
           "operationId" : "listRepositories",
           "method" : "GET",
           "path" : "/repositories",
           "dto" : "eu.wohlben.qits.maintenance.dto.GroupDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "triggerReleaseRequestAutomations",
           "method" : "POST",
           "path" : "/release-requests/{requestId}/automations",
           "dto" : "eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         }
       ]
     },
@@ -1191,35 +1243,40 @@
           "method" : "GET",
           "path" : "/adoption/by-release",
           "dto" : "eu.wohlben.qits.maintenance.dto.AdoptionJourneyDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         },
         {
           "operationId" : "getBump",
           "method" : "GET",
           "path" : "/bumps/{id}",
           "dto" : "eu.wohlben.qits.maintenance.pending.Change",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listBumps",
           "method" : "GET",
           "path" : "/bumps",
           "dto" : "eu.wohlben.qits.maintenance.pending.Change",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listDependencyPins",
           "method" : "GET",
           "path" : "/pins",
           "dto" : "eu.wohlben.qits.maintenance.dto.PinSourceDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listPendingBumps",
           "method" : "GET",
           "path" : "/bumps/pending",
           "dto" : "eu.wohlben.qits.maintenance.pending.Change",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         }
       ]
     },
@@ -1250,7 +1307,8 @@
           "method" : "GET",
           "path" : "/pins",
           "dto" : "eu.wohlben.qits.maintenance.dto.PinSourceDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         }
       ]
     },
@@ -1275,7 +1333,8 @@
           "method" : "GET",
           "path" : "/release-requests/{requestId}",
           "dto" : "eu.wohlben.qits.maintenance.dto.ReleaseRequestMemoryDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         }
       ]
     },
@@ -1522,133 +1581,152 @@
           "method" : "GET",
           "path" : "/adoption/by-release",
           "dto" : "eu.wohlben.qits.maintenance.dto.AdoptionJourneyDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         },
         {
           "operationId" : "getBump",
           "method" : "GET",
           "path" : "/bumps/{id}",
           "dto" : "eu.wohlben.qits.maintenance.dto.BumpDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         },
         {
           "operationId" : "getBumpStanding",
           "method" : "GET",
           "path" : "/bumps/standing",
           "dto" : "eu.wohlben.qits.maintenance.dto.BumpStandingDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         },
         {
           "operationId" : "getReleaseRequestMemory",
           "method" : "GET",
           "path" : "/release-requests/{requestId}",
           "dto" : "eu.wohlben.qits.maintenance.dto.ReleaseRequestMemoryDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         },
         {
           "operationId" : "getRepository",
           "method" : "GET",
           "path" : "/repositories/{name}",
           "dto" : "eu.wohlben.qits.maintenance.dto.GroupDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         },
         {
           "operationId" : "getRepositoryDownstream",
           "method" : "GET",
           "path" : "/repositories/{name}/downstream",
           "dto" : "eu.wohlben.qits.maintenance.dto.DownstreamDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         },
         {
           "operationId" : "getSbomCheckReport",
           "method" : "GET",
           "path" : "/sbom-check",
           "dto" : "eu.wohlben.qits.maintenance.dto.SbomCheckReportDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         },
         {
           "operationId" : "getScan",
           "method" : "GET",
           "path" : "/scans/{id}",
           "dto" : "eu.wohlben.qits.maintenance.dto.ScanDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         },
         {
           "operationId" : "listArtifacts",
           "method" : "GET",
           "path" : "/artifacts",
           "dto" : "eu.wohlben.qits.maintenance.dto.ArtifactDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listBumps",
           "method" : "GET",
           "path" : "/bumps",
           "dto" : "eu.wohlben.qits.maintenance.dto.BumpDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listDependencies",
           "method" : "GET",
           "path" : "/dependencies",
           "dto" : "eu.wohlben.qits.maintenance.dto.DependencyDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listDependencyDependents",
           "method" : "GET",
           "path" : "/dependencies/dependents",
           "dto" : "eu.wohlben.qits.maintenance.dto.DependentDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         },
         {
           "operationId" : "listDependencyPins",
           "method" : "GET",
           "path" : "/pins",
           "dto" : "eu.wohlben.qits.maintenance.dto.PinSourceDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         },
         {
           "operationId" : "listPendingBumps",
           "method" : "GET",
           "path" : "/bumps/pending",
           "dto" : "eu.wohlben.qits.maintenance.dto.BumpDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listReleaseRequestAutomations",
           "method" : "GET",
           "path" : "/release-requests/{requestId}/automations",
           "dto" : "eu.wohlben.qits.maintenance.dto.FailureDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         },
         {
           "operationId" : "listRepositories",
           "method" : "GET",
           "path" : "/repositories",
           "dto" : "eu.wohlben.qits.maintenance.dto.GroupDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listRepositoryDependents",
           "method" : "GET",
           "path" : "/repositories/{name}/dependents",
           "dto" : "eu.wohlben.qits.maintenance.dto.DependentDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         },
         {
           "operationId" : "runSbomCheck",
           "method" : "POST",
           "path" : "/sbom-check/runs",
           "dto" : "eu.wohlben.qits.maintenance.dto.SbomCheckReportDto",
-          "kind" : "body"
+          "kind" : "body",
+          "cardinality" : "single"
         },
         {
           "operationId" : "triggerReleaseRequestAutomations",
           "method" : "POST",
           "path" : "/release-requests/{requestId}/automations",
           "dto" : "eu.wohlben.qits.maintenance.dto.FailureDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         }
       ]
     },
@@ -1685,14 +1763,16 @@
           "method" : "GET",
           "path" : "/sbom-check",
           "dto" : "eu.wohlben.qits.maintenance.dto.SbomCheckReportDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         },
         {
           "operationId" : "runSbomCheck",
           "method" : "POST",
           "path" : "/sbom-check/runs",
           "dto" : "eu.wohlben.qits.maintenance.dto.SbomCheckReportDto",
-          "kind" : "body"
+          "kind" : "body",
+          "cardinality" : "single"
         }
       ]
     },
@@ -1729,14 +1809,16 @@
           "method" : "GET",
           "path" : "/sbom-check",
           "dto" : "eu.wohlben.qits.maintenance.dto.SbomCheckReportDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         },
         {
           "operationId" : "runSbomCheck",
           "method" : "POST",
           "path" : "/sbom-check/runs",
           "dto" : "eu.wohlben.qits.maintenance.dto.SbomCheckReportDto",
-          "kind" : "body"
+          "kind" : "body",
+          "cardinality" : "single"
         }
       ]
     },
@@ -1767,14 +1849,16 @@
           "method" : "GET",
           "path" : "/sbom-check",
           "dto" : "eu.wohlben.qits.maintenance.dto.SbomCheckReportDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "runSbomCheck",
           "method" : "POST",
           "path" : "/sbom-check/runs",
           "dto" : "eu.wohlben.qits.maintenance.dto.SbomCheckReportDto",
-          "kind" : "body"
+          "kind" : "body",
+          "cardinality" : "collection"
         }
       ]
     },
@@ -1799,7 +1883,8 @@
           "method" : "GET",
           "path" : "/scans/{id}",
           "dto" : "eu.wohlben.qits.maintenance.dto.ScanDto",
-          "kind" : "returns"
+          "kind" : "returns",
+          "cardinality" : "single"
         }
       ]
     }
