@@ -5,6 +5,7 @@ import static eu.wohlben.qits.maintenance.automation.AutomationFixture.FOLD_A;
 import static eu.wohlben.qits.maintenance.automation.AutomationFixture.REQUEST;
 import static eu.wohlben.qits.maintenance.automation.AutomationFixture.STALE_POM;
 import static io.restassured.RestAssured.given;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -113,8 +114,9 @@ class ReRunPlannedOnTheWorkerTest {
 
   /**
    * With the git host taking ten seconds over the plan's first read, the door still answers 202 in
-   * well under five; the row it opened is REQUESTED and unplanned, a second press meets the 409
-   * meanwhile, and once the git host answers, the worker plans the row and sends it.
+   * well under five; the row it opened is REQUESTED and unplanned, a second press meanwhile
+   * supersedes it (qits-2226) — it was never sent — and once the git host answers, the plan read for
+   * the superseded row is dropped and the worker plans the second row and sends it, once.
    */
   @Test
   void theDoorAnswersInsideTheBudgetWhileTheGitHostIsSlow() throws Exception {
@@ -152,16 +154,26 @@ class ReRunPlannedOnTheWorkerTest {
     assertNull(opened.changes, "not planned yet: the plan is the worker's");
     assertEquals(AutomationService.PLANNING, opened.message);
 
-    // A second press while the first is being planned is the "one is already active" 409.
-    rerun("{}").when().post(RERUN).then().statusCode(409);
-    assertEquals(1, rows().size(), "two presses, one row");
+    // A second press while the first is being planned replaces it: that row holds no CI run.
+    String second = rerun("{}").when().post(RERUN).then().statusCode(202).extract().path("id");
+    MtBump replaced = store.bump(UUID.fromString(id)).orElseThrow();
+    assertEquals(BumpStatus.SUPERSEDED.name(), replaced.status, replaced.message);
+    assertTrue(replaced.message.contains(second), replaced.message);
 
     assertTrue(queue.awaitIdle(Duration.ofSeconds(60)), "the worker finished the plan");
     long all = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
     assertTrue(slowed.get(), "the plan read the git host");
     assertTrue(all >= SLOW_MS, "the slow read was the worker's, not the door's: " + all + " ms");
 
-    MtBump sent = store.bump(UUID.fromString(id)).orElseThrow();
+    assertEquals(
+        BumpStatus.SUPERSEDED.name(),
+        store.bump(UUID.fromString(id)).orElseThrow().status,
+        "the plan read for the replaced row is not written over its ending");
+    assertEquals(
+        1,
+        rows().stream().filter(row -> !BumpStatus.SUPERSEDED.name().equals(row.status)).count(),
+        "two presses, one live row");
+    MtBump sent = store.bump(UUID.fromString(second)).orElseThrow();
     assertEquals(BumpStatus.RUNNING.name(), sent.status, sent.message);
     assertEquals(BUMP_BRANCH, sent.branch);
     assertEquals(
@@ -220,14 +232,24 @@ class ReRunPlannedOnTheWorkerTest {
     assertTrue(peers.bodiesFor(CiClient.TRIGGER_PATH).isEmpty(), "nothing sent to qits-ci");
   }
 
-  /** A second re-run while the first is still active is a 409, and opens nothing. */
+  /**
+   * A second re-run while the first one's run is RUNNING is a 409 naming that row, and opens
+   * nothing: that run writes the branch.
+   */
   @Test
-  void aSecondReRunWhileOneIsActiveIs409() {
-    rerun(BODY).when().post(RERUN).then().statusCode(202);
-    rerun(BODY).when().post(RERUN).then().statusCode(409);
+  void aSecondReRunWhileOneIsRunningIs409() {
+    String id = rerun(BODY).when().post(RERUN).then().statusCode(202).extract().path("id");
     queue.awaitIdle(Duration.ofSeconds(60));
-    rerun(BODY).when().post(RERUN).then().statusCode(409);
+    assertEquals(BumpStatus.RUNNING.name(), store.bump(UUID.fromString(id)).orElseThrow().status);
+
+    rerun(BODY)
+        .when()
+        .post(RERUN)
+        .then()
+        .statusCode(409)
+        .body("message", containsString(id));
     assertEquals(1, rows().size());
+    assertEquals(1, peers.bodiesFor(CiClient.TRIGGER_PATH).size());
   }
 
   /** A settled request is still the synchronous 409, with no row opened and no plan read. */

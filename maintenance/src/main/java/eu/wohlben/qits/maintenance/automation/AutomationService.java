@@ -208,6 +208,12 @@ public class AutomationService {
    */
   public static final String PLANNING = "planning: the plan is read before the run is sent";
 
+  /**
+   * How a row waiting behind {@link #MAX_RUNNING} starts its sentence (qits-2226); the rest names
+   * the rows holding the slots. Cleared when the row is sent.
+   */
+  public static final String WAITS_FOR_A_SLOT = "waits for an automation slot: ";
+
   /** A release request id as qits-projects mints it. */
   private static final Pattern REQUEST_ID =
       Pattern.compile("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$");
@@ -896,13 +902,13 @@ public class AutomationService {
    * @throws NoSuchRepositoryException no such repository, or none known for the request — a 404
    * @throws ReleaseRequestNotOpenException the request is settled or cannot be read — a 409
    * @throws eu.wohlben.qits.maintenance.error.BumpAlreadyActiveException one is active for (request,
-   *     kind) — a 409
+   *     kind) and was sent to qits-ci — a 409; one never sent is superseded instead (qits-2226)
    * @throws BumpDisabledException {@code qits.maintenance.bump.enabled} is false — a 409
    * @throws AutomationNotRunnableException no fold yet — a 409
    */
   public UUID run(
       String repository, String requestId, String kindName, String workItem, BumpTrigger trigger) {
-    return start(repository, requestId, kindName, workItem, trigger, false);
+    return start(repository, requestId, kindName, workItem, trigger, false, true);
   }
 
   /**
@@ -920,7 +926,7 @@ public class AutomationService {
    */
   public UUID replan(String repository, String requestId, String kindName, BumpTrigger trigger) {
     String item = store.newestAutomation(requestId).map(row -> row.workItem).orElse(null);
-    return start(repository, requestId, kindName, item, trigger, true);
+    return start(repository, requestId, kindName, item, trigger, true, false);
   }
 
   /**
@@ -928,6 +934,10 @@ public class AutomationService {
    * each with its own answer. Then they part (qits-1687): the re-run door ({@code honourPlan}
    * false) opens one unplanned row and leaves its plan to the worker ({@link #planned}); the
    * upstream re-plan reads its plan here, because its answer is the plan's.
+   *
+   * @param replaceUnsent whether an active row of the kind that was never sent to qits-ci is
+   *     superseded by the new one rather than answered with the 409 (qits-2226): a person's press,
+   *     and nothing that re-opens a row on its own
    */
   private UUID start(
       String repository,
@@ -935,7 +945,8 @@ public class AutomationService {
       String kindName,
       String workItem,
       BumpTrigger trigger,
-      boolean honourPlan) {
+      boolean honourPlan,
+      boolean replaceUnsent) {
     if (!config.bumpEnabled()) {
       throw new BumpDisabledException();
     }
@@ -976,9 +987,18 @@ public class AutomationService {
             foldRef(requestId, state.backingBranch()), state.qualifiedId());
 
     if (!honourPlan) {
-      // THE RE-RUN DOOR STOPS HERE (qits-1687): one row, REQUESTED and unplanned, opened exclusively
-      // — two quick presses still meet the 409 — and its plan read on the worker by its dispatch.
-      UUID id = store.openAutomation(unplanned(kind, subject, trigger), true, Instant.now());
+      // THE RE-RUN DOOR STOPS HERE (qits-1687): one row, REQUESTED and unplanned, and its plan read
+      // on the worker by its dispatch. Opened exclusively against a row with a CI run — a RUNNING
+      // one meets the 409 — but on a press a row never sent to qits-ci, waiting behind the cap or
+      // not yet planned, is SUPERSEDED by this one rather than refusing it (qits-2226): a
+      // regenerate must not be blocked by a row that holds nothing. A second quick press therefore
+      // replaces the first press's row; each press still leaves exactly one live row. A superseded
+      // door row re-opened on the current fold still meets the 409 from any active row there.
+      AutomationOpening opening = unplanned(kind, subject, trigger);
+      UUID id =
+          replaceUnsent
+              ? store.openRerun(opening, Instant.now())
+              : store.openAutomation(opening, true, Instant.now());
       queueDispatch(id);
       LOG.infof(
           "Opened the %s re-run %s of %s for %s of %s at %s; it is planned on the worker",
@@ -1149,7 +1169,7 @@ public class AutomationService {
       UUID id =
           start(
               row.repository, row.releaseRequestId, row.automationKind, row.workItem, trigger,
-              trigger == BumpTrigger.UPSTREAM);
+              trigger == BumpTrigger.UPSTREAM, false);
       if (id == null) {
         // The upstream re-plan's FRESH answer: the current fold already carries what it would write.
         LOG.infof("The %s re-run %s of %s was superseded (%s) and is not opened again: its plan on"
@@ -1389,7 +1409,16 @@ public class AutomationService {
       return;
     }
     if (store.runningAutomationCount() >= MAX_RUNNING) {
-      LOG.debugf("The automation %s waits: %d already run", row.id, MAX_RUNNING);
+      // SAY WHY IT WAITS (qits-2226): a row behind the cap is otherwise REQUESTED with no run and
+      // no sentence, for as long as the slots stay held. Written only when the holders changed, as
+      // the HELD recut's sentence is, so the sweep's offer every poll-interval writes nothing.
+      String waits = waitsForASlot();
+      if (!waits.equals(row.message) && store.bumpWaits(row.id, waits)) {
+        LOG.infof("The %s automation %s of %s %s", row.automationKind, row.id, row.repository,
+            waits);
+      } else {
+        LOG.debugf("The automation %s waits: %d already run", row.id, MAX_RUNNING);
+      }
       return;
     }
     Optional<MtRepository> repository = store.repository(row.repository);
@@ -1534,6 +1563,9 @@ public class AutomationService {
     if (!changes.isEmpty()) {
       extras.put("changes", CiClient.changes(changes, changelogs));
     }
+    if (!stillRequested(row)) {
+      return;
+    }
     CiClient.TriggerResult result =
         ci.triggerAutomation(
             row.id.toString(),
@@ -1673,6 +1705,9 @@ public class AutomationService {
     if (row.foldSha != null) {
       extra.put("foldSha", row.foldSha);
     }
+    if (!stillRequested(row)) {
+      return;
+    }
     CiClient.TriggerResult result =
         ci.trigger(
             row.id.toString(),
@@ -1737,11 +1772,48 @@ public class AutomationService {
     return Optional.of(resolved.ranges());
   }
 
+  /**
+   * The sentence of a row waiting behind {@link #MAX_RUNNING}: the rows that hold the slots, by
+   * repository, kind and run — "not yet sent" for one RUNNING with no run recorded.
+   */
+  private String waitsForASlot() {
+    List<MtBump> holders = store.runningAutomations();
+    return WAITS_FOR_A_SLOT + holders.size() + " of " + MAX_RUNNING + " held by "
+        + String.join(
+            ", ",
+            holders.stream()
+                .map(held -> held.repository + " " + held.automationKind + " (run "
+                    + (held.ciRunId == null ? "not yet sent" : held.ciRunId) + ")")
+                .toList());
+  }
+
+  /**
+   * Whether the row is still REQUESTED, read again right before it is sent (qits-2226): the re-run
+   * door supersedes a row that was never sent, and may do so while the worker is getting it ready.
+   */
+  private boolean stillRequested(MtBump row) {
+    boolean requested =
+        store.bump(row.id).map(read -> BumpStatus.REQUESTED.name().equals(read.status)).orElse(false);
+    if (!requested) {
+      LOG.infof("The %s automation %s of %s ended before it was sent; nothing is sent",
+          row.automationKind, row.id, row.repository);
+    }
+    return requested;
+  }
+
   /** What qits-ci said to a trigger, onto the row — the three answers every bump reads alike. */
   private void dispatched(MtBump row, CiClient.TriggerResult result) {
     switch (result.outcome()) {
       case ACCEPTED -> {
-        store.bumpDispatched(row.id, result.eventId(), result.runIds());
+        String waited =
+            row.message != null && row.message.startsWith(WAITS_FOR_A_SLOT) ? row.message : null;
+        if (!store.bumpDispatched(row.id, result.eventId(), result.runIds(), waited)) {
+          LOG.warnf(
+              "qits-ci accepted the %s automation %s of %s as run(s) %s, but the row ended while"
+                  + " it was sent; it stays ended",
+              row.automationKind, row.id, row.repository, result.runIds());
+          return;
+        }
         LOG.infof(
             "qits-ci accepted the %s automation %s of %s as run(s) %s",
             row.automationKind, row.id, row.repository, result.runIds());

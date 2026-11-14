@@ -5,6 +5,7 @@ import static eu.wohlben.qits.maintenance.automation.AutomationFixture.REQUEST;
 import static io.restassured.RestAssured.given;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.hamcrest.Matchers.anyOf;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.everyItem;
 import static org.hamcrest.Matchers.hasSize;
@@ -16,6 +17,7 @@ import static org.hamcrest.Matchers.nullValue;
 import eu.wohlben.qits.maintenance.api.Fixture;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
 import eu.wohlben.qits.maintenance.api.SuiteBearers;
+import eu.wohlben.qits.maintenance.bump.CiClient;
 import eu.wohlben.qits.maintenance.model.ScanScope;
 import eu.wohlben.qits.maintenance.peer.FakePeers;
 import eu.wohlben.qits.maintenance.scan.ScanService;
@@ -26,6 +28,8 @@ import io.restassured.http.ContentType;
 import io.restassured.specification.RequestSpecification;
 import jakarta.inject.Inject;
 import java.time.Duration;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -268,11 +272,72 @@ class ReleaseRequestAutomationControllerTest {
         .body("status", equalTo("RUNNING"));
   }
 
+  /** A second re-run while the first one's run is RUNNING is a 409 that names that row. */
   @Test
-  void aSecondReRunWhileOneIsActiveIs409() {
-    rerun("{\"repository\":\"" + Fixture.REPOSITORY + "\"}").when().post(RERUN).then().statusCode(202);
+  void aSecondReRunWhileOneIsRunningIs409() {
+    String first =
+        rerun("{\"repository\":\"" + Fixture.REPOSITORY + "\"}")
+            .when()
+            .post(RERUN)
+            .then()
+            .statusCode(202)
+            .extract()
+            .path("id");
+    queue.awaitIdle(Duration.ofSeconds(30));
+    bump(first).body("status", equalTo("RUNNING"));
     // The repository is now known from the first row, so the second need not name it.
-    rerun("{}").when().post(RERUN).then().statusCode(409);
+    rerun("{}").when().post(RERUN).then().statusCode(409).body("message", containsString(first));
+  }
+
+  /**
+   * <b>A re-run never sent to qits-ci does not block the next one</b> (qits-2226): the first row is
+   * still REQUESTED with no run — here because the worker has not reached it — so the second press
+   * supersedes it and opens its own, and only that one is sent.
+   */
+  @Test
+  void aReRunNotYetSentIsSupersededByTheNext() throws Exception {
+    CountDownLatch release = new CountDownLatch(1);
+    queue.submit(
+        "hold the worker",
+        () -> {
+          try {
+            release.await(30, TimeUnit.SECONDS);
+          } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+          }
+        });
+    String first;
+    String second;
+    try {
+      first =
+          rerun("{\"repository\":\"" + Fixture.REPOSITORY + "\"}")
+              .when()
+              .post(RERUN)
+              .then()
+              .statusCode(202)
+              .extract()
+              .path("id");
+      second = rerun("{}").when().post(RERUN).then().statusCode(202).extract().path("id");
+    } finally {
+      release.countDown();
+    }
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    bump(first)
+        .body("status", equalTo("SUPERSEDED"))
+        .body("message", containsString(second));
+    bump(second).body("status", equalTo("RUNNING"));
+    assertTrue(
+        peers.bodiesFor(CiClient.TRIGGER_PATH).size() == 1, "only the second row was sent");
+  }
+
+  private static io.restassured.response.ValidatableResponse bump(String id) {
+    return given()
+        .header("Authorization", SuiteBearers.operator())
+        .when()
+        .get("/maintenance/api/bumps/" + id)
+        .then()
+        .statusCode(200);
   }
 
   @Test

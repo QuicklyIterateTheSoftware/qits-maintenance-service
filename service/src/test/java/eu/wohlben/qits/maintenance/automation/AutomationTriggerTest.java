@@ -34,8 +34,12 @@ import jakarta.inject.Inject;
 import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.logging.Handler;
+import java.util.logging.LogRecord;
+import java.util.logging.Logger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -310,6 +314,81 @@ class AutomationTriggerTest {
         BumpStatus.RUNNING.name(),
         store.bump(three.id).orElseThrow().status,
         "an ending frees a slot and the waiting one goes");
+  }
+
+  /**
+   * <b>A row behind the cap says why it waits</b> (qits-2226): which rows hold the two slots, by
+   * repository, kind and run, in the automations answer's {@code detail}. The sweep's later offers
+   * write nothing while the holders are the same, and once one ends and the row is sent, the
+   * sentence is gone.
+   */
+  @Test
+  void aRowBehindTheCapNamesTheSlotHoldersOnceAndDropsThemWhenSent() {
+    String second = "6e1f0c3a-2b4d-4e6f-8a9b-0c1d2e3f4a5b";
+    String third = "7e1f0c3a-2b4d-4e6f-8a9b-0c1d2e3f4a5b";
+    for (String request : List.of(second, third)) {
+      AutomationFixture.scriptRequest(peers, request, "PENDING", FOLD_A);
+      Fixture.scriptForeignBranchAt(
+          peers, AutomationFixture.branch(request), AutomationFixture.BEFORE);
+    }
+    MtBump one = row(screenshots(trigger(REQUEST, FOLD_A, null, null)));
+    MtBump two = row(screenshots(trigger(second, FOLD_A, null, null)));
+    assertEquals(BumpStatus.RUNNING.name(), two.status);
+    Fixture.scriptRun(peers, RUN, "RUNNING");
+
+    // Every write of the sentence is logged once, at INFO: counted here across the first offer and
+    // two sweeps.
+    List<String> written = new CopyOnWriteArrayList<>();
+    Handler counter =
+        new Handler() {
+          @Override
+          public void publish(LogRecord record) {
+            String text = record.getMessage();
+            if (text != null && record.getParameters() != null) {
+              text = String.format(text, record.getParameters());
+            }
+            if (text != null && text.contains(AutomationService.WAITS_FOR_A_SLOT)) {
+              written.add(text);
+            }
+          }
+
+          @Override
+          public void flush() {}
+
+          @Override
+          public void close() {}
+        };
+    Logger log = Logger.getLogger(AutomationService.class.getName());
+    log.addHandler(counter);
+    MtBump three;
+    try {
+      three = row(screenshots(trigger(third, FOLD_A, null, null)));
+      bumps.sweep();
+      queue.awaitIdle(Duration.ofSeconds(30));
+      bumps.sweep();
+      queue.awaitIdle(Duration.ofSeconds(30));
+    } finally {
+      log.removeHandler(counter);
+    }
+
+    String held =
+        Fixture.REPOSITORY + " " + ScreenshotBaselinesAutomation.KIND + " (run " + RUN + ")";
+    String waits = AutomationService.WAITS_FOR_A_SLOT + "2 of 2 held by " + held + ", " + held;
+    MtBump waiting = store.bump(three.id).orElseThrow();
+    assertEquals(BumpStatus.REQUESTED.name(), waiting.status, "the cap is two");
+    assertEquals(waits, waiting.message);
+    assertEquals(1, written.size(), "written once, not on every sweep: " + written);
+    AutomationDto answered = screenshots(automations.automations(third, FOLD_A));
+    assertEquals(AutomationState.REQUESTED.name(), answered.state());
+    assertEquals(waits, answered.detail(), "the automations answer says why it waits");
+
+    Fixture.scriptRun(peers, RUN, "SUCCESS");
+    bumps.poll(one.id);
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    MtBump sent = store.bump(three.id).orElseThrow();
+    assertEquals(BumpStatus.RUNNING.name(), sent.status, sent.message);
+    assertNull(sent.message, "a row that was sent no longer waits for a slot");
   }
 
   private AutomationDto entityDiagram(ReleaseRequestAutomationsDto answer) {

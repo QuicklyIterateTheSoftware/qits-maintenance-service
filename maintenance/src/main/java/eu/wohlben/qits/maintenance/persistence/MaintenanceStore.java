@@ -1620,18 +1620,60 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
   /** Records that qits-ci accepted the trigger and named its runs. */
   @ActivateRequestContext
   public void bumpDispatched(UUID id, String eventId, List<String> runIds) {
-    DbRetry.runInNewTx(
+    bumpDispatched(id, eventId, runIds, null);
+  }
+
+  /**
+   * Records that qits-ci accepted the trigger and named its runs, and clears the sentence the row
+   * waited with when it is still {@code waited} (qits-2226) — a row sent past the cap no longer
+   * waits for a slot.
+   *
+   * <p><b>Only a REQUESTED row becomes RUNNING.</b> One the re-run door superseded while the worker
+   * was sending it keeps its ending: the runs are written onto it so they can be found, but it is
+   * not made live again beside the row that replaced it.
+   *
+   * @return whether the row is now RUNNING
+   */
+  @ActivateRequestContext
+  public boolean bumpDispatched(UUID id, String eventId, List<String> runIds, String waited) {
+    return DbRetry.inNewTx(
         "dispatch bump " + id,
         () -> {
           MtBump row = MtBump.findById(id);
           if (row == null) {
-            return;
+            return false;
           }
           row.ciEventId = eventId;
           row.ciRunId = runIds.isEmpty() ? null : String.join(",", runIds);
-          row.status = BumpStatus.RUNNING.name();
+          boolean live = BumpStatus.REQUESTED.name().equals(row.status);
+          if (live) {
+            row.status = BumpStatus.RUNNING.name();
+            if (waited != null && waited.equals(row.message)) {
+              row.message = null;
+            }
+          }
           getEntityManager().flush();
+          return live;
         });
+  }
+
+  /**
+   * Writes why a REQUESTED row waits (qits-2226), onto a row that is still REQUESTED and nothing
+   * else: a row superseded or sent since it was read keeps what that wrote.
+   *
+   * @return whether the sentence was written
+   */
+  @ActivateRequestContext
+  public boolean bumpWaits(UUID id, String message) {
+    return DbRetry.inNewTx(
+        "say why bump " + id + " waits",
+        () ->
+            MtBump.update(
+                    "message = ?1 where id = ?2 and status = ?3",
+                    message,
+                    id,
+                    BumpStatus.REQUESTED.name())
+                == 1);
   }
 
   /**
@@ -2161,6 +2203,28 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
    */
   @ActivateRequestContext
   public UUID openAutomation(AutomationOpening opening, boolean exclusive, Instant now) {
+    return openAutomation(opening, exclusive, false, now);
+  }
+
+  /**
+   * The re-run door's exclusive open (qits-2226): as {@link #openAutomation} with {@code exclusive},
+   * except that active rows of this (request, kind) that were <b>never sent</b> — REQUESTED with no
+   * CI run, typically waiting behind the estate-wide cap — are SUPERSEDED by the new row in the same
+   * transaction instead of refusing it. A row that holds a CI run, or is RUNNING, is still the 409:
+   * that run writes the branch, and a second one beside it would race it.
+   *
+   * <p><b>The supersede is conditional</b> — {@code status = REQUESTED and ciRunId is null}, checked
+   * by the update itself — because the worker may be sending that very row while the door opens: a
+   * row qits-ci accepted in between is RUNNING by the time the update runs, matches nothing, and the
+   * door answers the 409 after all, with nothing opened.
+   */
+  @ActivateRequestContext
+  public UUID openRerun(AutomationOpening opening, Instant now) {
+    return openAutomation(opening, true, true, now);
+  }
+
+  private UUID openAutomation(
+      AutomationOpening opening, boolean exclusive, boolean replaceUnsent, Instant now) {
     String scope =
         opening.requestId() != null ? opening.requestId() : "branch:" + opening.branch();
     return DbRetry.inNewTx(
@@ -2172,29 +2236,34 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
               .setParameter(
                   1, "automation|" + opening.repository() + "|" + opening.kind() + "|" + scope)
               .getSingleResult();
+          UUID id = UUID.randomUUID();
           if (exclusive) {
-            MtBump active =
+            List<MtBump> active =
                 opening.requestId() != null
-                    ? MtBump.find(
+                    ? MtBump.<MtBump>find(
                             "mode = ?1 and releaseRequestId = ?2 and automationKind = ?3"
                                 + " and status in ?4",
+                            Sort.by("startedAt"),
                             BumpMode.AUTOMATION.name(),
                             opening.requestId(),
                             opening.kind(),
                             ACTIVE)
-                        .firstResult()
-                    : MtBump.find(
+                        .list()
+                    : MtBump.<MtBump>find(
                             "mode = ?1 and repository = ?2 and automationKind = ?3 and branch = ?4"
                                 + " and status in ?5",
+                            Sort.by("startedAt"),
                             BumpMode.AUTOMATION.name(),
                             opening.repository(),
                             opening.kind(),
                             opening.branch(),
                             ACTIVE)
-                        .firstResult();
-            if (active != null) {
-              throw BumpAlreadyActiveException.onBranch(
-                  opening.repository(), active.branch, active.id);
+                        .list();
+            for (MtBump row : active) {
+              if (!replaceUnsent || !supersedeUnsent(row, id, now)) {
+                throw BumpAlreadyActiveException.onBranch(
+                    opening.repository(), row.branch, row.id);
+              }
             }
           } else if (opening.trigger() == BumpTrigger.FOLD
               && opening.requestId() != null
@@ -2218,7 +2287,7 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
             supersedeWaitingRows(opening.requestId(), opening.kind(), opening.foldSha(), now);
           }
           MtBump row = new MtBump();
-          row.id = UUID.randomUUID();
+          row.id = id;
           row.repository = opening.repository();
           row.groupName = opening.kind();
           row.mode = BumpMode.AUTOMATION.name();
@@ -2446,6 +2515,23 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
   }
 
   /**
+   * Every RUNNING automation estate-wide, oldest first — the rows that hold the cap's slots, named
+   * in the sentence of a row that waits for one (qits-2226).
+   */
+  @ActivateRequestContext
+  public List<MtBump> runningAutomations() {
+    return DbRetry.inNewTx(
+        "read the running automations",
+        () ->
+            MtBump.<MtBump>find(
+                    "mode = ?1 and status = ?2",
+                    Sort.by("startedAt"),
+                    BumpMode.AUTOMATION.name(),
+                    BumpStatus.RUNNING.name())
+                .list());
+  }
+
+  /**
    * The RUNNING automation writing one (repository, kind, branch), if there is one — which is what
    * "one active run per (request, kind)" means for a kind's own branch, and per source branch for a
    * kind that writes the request's.
@@ -2561,6 +2647,28 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
           "superseded before it ran: the release request moved on to fold " + abbreviate(exceptFold);
     }
     return waiting.size();
+  }
+
+  /**
+   * Supersedes one active row the re-run door replaces (qits-2226), if it was never sent: still
+   * REQUESTED, with no CI run. The condition is the update's own, so a send the worker finished
+   * meanwhile is not overwritten.
+   *
+   * @return whether it was superseded; false is the 409
+   */
+  private static boolean supersedeUnsent(MtBump row, UUID rerun, Instant now) {
+    if (!BumpStatus.REQUESTED.name().equals(row.status) || row.ciRunId != null) {
+      return false;
+    }
+    return MtBump.update(
+            "status = ?1, finishedAt = ?2, message = ?3"
+                + " where id = ?4 and status = ?5 and ciRunId is null",
+            BumpStatus.SUPERSEDED.name(),
+            now,
+            "superseded by the re-run " + rerun + " before it was sent",
+            row.id,
+            BumpStatus.REQUESTED.name())
+        == 1;
   }
 
   private static String abbreviate(String sha) {

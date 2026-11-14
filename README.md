@@ -638,8 +638,10 @@ POST /release-requests/{id}/automations           → {requestId, foldSha,
 GET  /release-requests/{id}/automations[?foldSha=] → the same answer, newest fold when unnamed
 POST /release-requests/{id}/automations/{kind}/runs
      {workItem?, repository?}                     → 202 {id}    404 unknown kind or repo
-                                                                409 not open, no fold, one active,
-                                                                    or bumping is off
+                                                                409 not open, no fold, one active
+                                                                    and sent to qits-ci, or bumping
+                                                                    is off (an active row never sent
+                                                                    is SUPERSEDED instead, qits-2226)
 GET  /repositories/{name}/downstream              → {repository, catalogId,
                                                      downstream:[{repository, catalogId,
                                                                   archetype, depth, via:[…]}]}
