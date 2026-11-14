@@ -34,7 +34,7 @@ navigation-entries: platform.Maintenance:2
 # jar's datasource defaults read verbatim.
 #
 # `db` omits the third segment, so the database is the default derivation: the application name minus
-# its `qits-` prefix, dashes to underscores, under a `qits_` prefix — `qits_platform_maintenance`.
+# its `qits-` prefix, dashes to underscores, under a `qits_` prefix — `qits_maintenance`.
 #
 # WHAT IS IN IT is half cache and half log. The inventory — pins, groups, latest versions — is a
 # cache of the git host's files and the registries' metadata, and a fresh scan rebuilds it. The bump
@@ -52,23 +52,18 @@ navigation-entries: platform.Maintenance:2
 # the process dies at Flyway, which is the loud half of the failure; the quiet half would be a
 # fallback store nobody meant, and there is deliberately none.
 #
-# It cannot omit the third segment: the default derivation would be `qits_platform_maintenance` too,
+# It cannot omit the third segment: the default derivation would be `qits_maintenance` too,
 # and one database cannot be two stores with two Flyway lineages.
 #
 # Provisioning is idempotent and the credential lives in the deployer's registry, so a redeploy finds
 # the existing rows and injects the passwords this process is already connected with.
-# THE DATABASE IS NAMED EXPLICITLY, AND IT IS A SAFETY PIN RATHER THAN A PREFERENCE.
-# `postgresql:db` with no third segment DERIVES the database from the APPLICATION name —
-# `qits_` plus the name minus its `qits-` prefix. This application is STILL TO BE renamed
-# (qits-platform-maintenance -> qits-maintenance, blocked on qits-376), and a derived name would follow it: the deployment would provision a
-# BRAND NEW EMPTY `qits_maintenance` and start against it, on a green deploy, with nothing failing.
-# Naming the database this application already uses makes the rename a rename of the
-# APPLICATION alone, which is the whole intent — and this line has to OUTLIVE the rename rather
-# than merely precede it. Removing it later is not a tidy-up; it is a silent migration to an
-# empty store on a deploy that goes green.
-#
-# VERIFIED AGAINST THE SERVER, not derived: `qits_platform_maintenance` is in pg_database on
-# qits-oci-postgresql today, and `qits_maintenance` is not.
+# THE NAMES FOLLOW THE APPLICATION (epic qits-2174, task qits-2192). Until 2026-11-14 both databases
+# were pinned to the predecessor's `qits_platform_maintenance` and `…_eventstream`, because a
+# changed name used to provision an empty database on a green deploy. Since qits-2175 a change of
+# the effective name is a MOVE: qits-deployments stops the service, copies the data into the new
+# name, compares every table's rows, and only then deploys; the source is kept for its retention
+# period as the way back. Dropping the pins moved them to `qits_maintenance` and
+# `qits_maintenance_eventstream` that way.
 #
 # idp:client ASKS QITS-DEPLOYMENTS TO PROVISION THIS APPLICATION'S OWN QITS-IDP SERVICE CLIENT — id
 # `dev-qits-maintenance` (derived from env + application), roles `qits:system`, fixed in qits-idp
