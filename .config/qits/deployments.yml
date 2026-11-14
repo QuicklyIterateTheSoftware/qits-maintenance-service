@@ -12,24 +12,6 @@
 # decommission the running service and start a stranger beside it.
 application: qits-maintenance
 
-# WHAT THIS APPLICATION USED TO BE CALLED, and the one thing a rename is allowed to move.
-#
-# A renamed application is a NEW application to the deployer: services are keyed by name, swarm
-# cannot rename one, and pd_service / pd_deployment / pd_resource all hold an application name and no
-# repository identity. So this deploys BESIDE qits-platform-maintenance and an operator retires the
-# predecessor afterwards. That half is unchanged.
-#
-# What this line moves is the DATABASE CLAIM. Without it the successor's first deploy is refused —
-# "the database qits_platform_maintenance is already provisioned for qits-platform-maintenance" — which is the
-# right refusal in general, because two unrelated repositories sharing a store is worse than a loud
-# failure. Naming the predecessor narrows that check to this one row rather than weakening it.
-#
-# It also preserves the CREDENTIAL: the claim row is read one statement later to decide whether to
-# send the stored password or a fresh one, so transferring it first means the predecessor — still
-# running, with open pools on that role — keeps working. Removing this line after the rename does not
-# tidy anything up; it re-arms the refusal.
-renamed_from: qits-platform-maintenance
-
 # One route for the whole WIRE segment: the API at /maintenance/api and the document at
 # /maintenance/q. The edge path-routes verbatim by prefix on every vhost, so this one line reaches
 # both from anywhere. The client is no longer under it — it is served at the root of this service's
@@ -95,7 +77,7 @@ navigation-entries: platform.Maintenance:2
 # `qits` oidc client reads alone now — the old `projects` fallback keys are gone.
 #
 # Ticket qits-162, epic qits-540 contract C3.
-resources: postgresql:db:qits_platform_maintenance, postgresql:eventstream:qits_platform_maintenance_eventstream, idp:client
+resources: postgresql:db, postgresql:eventstream:qits_maintenance_eventstream, idp:client
 
 # The readiness endpoint the deployer's health gate curls. The convention derives it from the
 # repository name and would land on exactly this path; it is written out because a probe that 404s
