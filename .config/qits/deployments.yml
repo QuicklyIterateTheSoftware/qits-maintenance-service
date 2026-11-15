@@ -74,6 +74,15 @@ navigation-entries: platform.Maintenance:2
 # Ticket qits-162, epic qits-540 contract C3.
 resources: postgresql:db, postgresql:eventstream:qits_maintenance_eventstream, idp:client
 
+# PRIVATE (qits-1980, task qits-2130): served by qits-edge-private only, reached through the WireGuard
+# tunnel or the qits-private overlay; the public edge answers 404 for maintenance. It moves in the
+# release-path window with maintenance, projects, ci, workspaces and deployments (owner ruling
+# 2026-11-13, qits-2174), because they call each other; projects, the orchestrator and the CLI call it.
+# Its databases live on the private Postgres, qits-oci-postgresql-private: a private exposure
+# moves them there (qits-2175). Revert: delete this line, which moves the databases back to the
+# public server with the service.
+exposure: private
+
 # The readiness endpoint the deployer's health gate curls. The convention derives it from the
 # repository name and would land on exactly this path; it is written out because a probe that 404s
 # fails a deployment for a reason nobody would look for in a config file.
