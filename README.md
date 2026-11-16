@@ -587,6 +587,9 @@ GET  /pins                                        → {generatedAt,
                                                                     the deployer did not answer, or a
                                                                     deployed release of ours has no
                                                                     ledger row
+GET  /pins/images                                 → [{name, version}]
+                                                                503 every case /pins refuses, and an
+                                                                    empty set
 GET  /deployed-pacts?provider=<repository>         → {provider,
                                                      pacts:[{consumerRepository, groupId,
                                                              artifactId, pactVersion,
@@ -718,6 +721,14 @@ POST /sbom-check/runs                             → 202 the report above, once
   manifest), so two reads over an unchanged store answer the same bytes. `gitlink` is excluded: it
   is INTERNAL by construction and its version is a commit sha, which is not an artifact anything
   could collect. `repositories` carries the freshness the consumer judges the answer by.
+- **`/pins/images` is qits-mirror's keep-set** (qits-2253), read through the orchestrator: every
+  EXTERNAL `docker` tag a repository's last scan (`mt_pin`) or its main at its last main scan
+  (`mt_main_pin`, which keeps main's EXTERNAL docker pins beside its INTERNAL ones since V33) pins,
+  named as the scan stored it (`hub/library/postgres`, a bare `node`), one row per (name, version),
+  ordered by name then version. The mirror evicts every tag it does not name, so it is answered or
+  refused together with `/pins` — the same guards, in `Inventory.requireComplete` — and an EMPTY set
+  is a 503 of its own, never a 200 that condemns every mirrored tag. `/pins` serves `mt_main_pin`'s
+  INTERNAL rows only, exactly as before.
 - **A deployed or rollback version of a repository we hold must have a ledger row, or `/pins` is a
   503** (qits-1172). The deployer names an application (`qits-ci`), the ledger a repository
   (`qits-ci-service`); they are joined by `ArtifactGraph.applicationProducers` — the repository

@@ -899,6 +899,12 @@
       "knownGap" : null,
       "dtos" : [
         {
+          "type" : "eu.wohlben.qits.maintenance.dto.ImagePinDto",
+          "kind" : "assembler",
+          "via" : null,
+          "site" : "Inventory.images()"
+        },
+        {
           "type" : "eu.wohlben.qits.maintenance.dto.PinSourceDto",
           "kind" : "assembler",
           "via" : null,
@@ -925,6 +931,14 @@
           "dto" : "eu.wohlben.qits.maintenance.dto.PinSourceDto",
           "kind" : "returns",
           "cardinality" : "single"
+        },
+        {
+          "operationId" : "listImagePins",
+          "method" : "GET",
+          "path" : "/pins/images",
+          "dto" : "eu.wohlben.qits.maintenance.dto.ImagePinDto",
+          "kind" : "returns",
+          "cardinality" : "collection"
         }
       ]
     },
@@ -1023,6 +1037,12 @@
           "kind" : "mapper",
           "via" : null,
           "site" : "Inventory.groups(String, List, Map, List)"
+        },
+        {
+          "type" : "eu.wohlben.qits.maintenance.dto.ImagePinDto",
+          "kind" : "assembler",
+          "via" : null,
+          "site" : "Inventory.images()"
         },
         {
           "type" : "eu.wohlben.qits.maintenance.dto.PinDto",
@@ -1135,6 +1155,14 @@
           "dto" : "eu.wohlben.qits.maintenance.dto.PinSourceDto",
           "kind" : "returns",
           "cardinality" : "single"
+        },
+        {
+          "operationId" : "listImagePins",
+          "method" : "GET",
+          "path" : "/pins/images",
+          "dto" : "eu.wohlben.qits.maintenance.dto.ImagePinDto",
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listPendingBumps",
@@ -1467,6 +1495,12 @@
           "site" : "RepositoryDetailDto.groups()"
         },
         {
+          "type" : "eu.wohlben.qits.maintenance.dto.ImagePinDto",
+          "kind" : "assembler",
+          "via" : null,
+          "site" : "Inventory.images()"
+        },
+        {
           "type" : "eu.wohlben.qits.maintenance.dto.PendingBumpsDto",
           "kind" : "assembler",
           "via" : null,
@@ -1679,6 +1713,14 @@
           "dto" : "eu.wohlben.qits.maintenance.dto.PinSourceDto",
           "kind" : "returns",
           "cardinality" : "single"
+        },
+        {
+          "operationId" : "listImagePins",
+          "method" : "GET",
+          "path" : "/pins/images",
+          "dto" : "eu.wohlben.qits.maintenance.dto.ImagePinDto",
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listPendingBumps",

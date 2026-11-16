@@ -152,6 +152,13 @@ class GoldenMasterRecordingTest {
               "/maintenance/api/pins",
               Map.of(),
               null),
+          // qits-orchestrator reads this for qits-mirror's eviction keep-set (qits-2253).
+          Interaction.read(
+              ProviderStates.MANIFESTS_THAT_PIN_ARTIFACTS,
+              "listImagePins",
+              "/maintenance/api/pins/images",
+              Map.of(),
+              null),
           // qits-projects' ContractChangeSource reads this to see a consumer's pins[]
           // (HttpDownstreamPins.pinsOf, epic qits-1038).
           Interaction.read(

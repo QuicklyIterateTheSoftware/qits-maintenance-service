@@ -572,6 +572,19 @@
             "strings": [],
             "listFilteredTo": null
           }
+        },
+        {
+          "operationId": "listImagePins",
+          "method": "GET",
+          "path": "/maintenance/api/pins/images",
+          "status": 200,
+          "file": "manifests-that-pin-artifacts/listImagePins.json",
+          "frozen": {
+            "ids": [],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
         }
       ]
     },

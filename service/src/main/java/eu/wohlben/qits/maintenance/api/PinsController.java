@@ -1,6 +1,7 @@
 package eu.wohlben.qits.maintenance.api;
 
 import eu.wohlben.qits.maintenance.control.Inventory;
+import eu.wohlben.qits.maintenance.dto.ImagePinDto;
 import eu.wohlben.qits.maintenance.dto.PinSourceDto;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
@@ -8,6 +9,7 @@ import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
+import java.util.List;
 import org.eclipse.microprofile.openapi.annotations.Operation;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
 
@@ -57,5 +59,28 @@ public class PinsController {
   @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:desk-admin", "qits:desk", "qits:system", "qits:agent"})
   public PinSourceDto pins() {
     return inventory.pins();
+  }
+
+  /**
+   * <b>The external image tags still pinned: qits-mirror's keep-set</b> (qits-2253). The mirror
+   * evicts every tag this does not name, so it refuses whenever {@link #pins()} would, and when the
+   * set is empty. See {@code Inventory.images}.
+   */
+  @GET
+  @Path("/images")
+  @Operation(
+      operationId = "listImagePins",
+      summary = "Every external docker image tag the platform's manifests still pin")
+  @APIResponse(
+      responseCode = "200",
+      description = "The image tags, one per (name, version), ordered by name then version")
+  @APIResponse(
+      responseCode = "503",
+      description =
+          "The answer would not be complete: every case listDependencyPins refuses, and an empty"
+              + " set, which would evict every mirrored tag")
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:desk-admin", "qits:desk", "qits:system", "qits:agent"})
+  public List<ImagePinDto> images() {
+    return inventory.images();
   }
 }

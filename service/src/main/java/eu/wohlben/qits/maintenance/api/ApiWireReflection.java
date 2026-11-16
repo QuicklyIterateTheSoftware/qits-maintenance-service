@@ -12,6 +12,7 @@ import eu.wohlben.qits.maintenance.dto.DependentDto;
 import eu.wohlben.qits.maintenance.dto.DependentsDto;
 import eu.wohlben.qits.maintenance.dto.FailureDto;
 import eu.wohlben.qits.maintenance.dto.GroupDto;
+import eu.wohlben.qits.maintenance.dto.ImagePinDto;
 import eu.wohlben.qits.maintenance.dto.PinDto;
 import eu.wohlben.qits.maintenance.dto.DeployedPactsDto;
 import eu.wohlben.qits.maintenance.dto.PinSourceDto;
@@ -83,6 +84,8 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
       PinSourceDto.class,
       PinSourceDto.RepositoryStateDto.class,
       PinSourceDto.ArtifactPinDto.class,
+      // The mirror's keep-set (qits-2253), read through the orchestrator like the GC's above.
+      ImagePinDto.class,
       // The consumer pacts a provider's gate verifies (qits-1765); read by `qits artifacts fetch
       // deployed-pacts` in CI, where a 500 fails every provider's release.
       DeployedPactsDto.class,

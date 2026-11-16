@@ -8,6 +8,7 @@ import eu.wohlben.qits.maintenance.dto.BumpDto;
 import eu.wohlben.qits.maintenance.dto.DependencyDto;
 import eu.wohlben.qits.maintenance.dto.FailureDto;
 import eu.wohlben.qits.maintenance.dto.GroupDto;
+import eu.wohlben.qits.maintenance.dto.ImagePinDto;
 import eu.wohlben.qits.maintenance.dto.PinDto;
 import eu.wohlben.qits.maintenance.dto.PinSourceDto;
 import eu.wohlben.qits.maintenance.dto.RepositoryDetailDto;
@@ -24,6 +25,7 @@ import eu.wohlben.qits.maintenance.entity.MtRelease;
 import eu.wohlben.qits.maintenance.entity.MtReleasePin;
 import eu.wohlben.qits.maintenance.entity.MtRepository;
 import eu.wohlben.qits.maintenance.entity.MtScan;
+import eu.wohlben.qits.maintenance.error.EmptyImageKeepSetException;
 import eu.wohlben.qits.maintenance.error.EmptyInventoryException;
 import eu.wohlben.qits.maintenance.error.NoSuchBumpException;
 import eu.wohlben.qits.maintenance.error.NoSuchRepositoryException;
@@ -309,7 +311,9 @@ public class Inventory {
     // (of a repository still maintained — see keptReleases, qits-1735), and what every release that
     // serves or would be rolled back to declared. Read before the
     // dedupe, so a version three of these name is one row per provenance and never lost.
-    List<MtMainPin> mainPins = store.allMainPins();
+    // INTERNAL rows only: since V33 main also keeps its EXTERNAL docker pins, which are the
+    // mirror's keep-set (images()) and never the GC's.
+    List<MtMainPin> mainPins = ofKind(store.allMainPins(), PinKind.INTERNAL);
     for (MtMainPin pin : mainPins) {
       pins.add(
           new PinSourceDto.ArtifactPinDto(
@@ -318,10 +322,7 @@ public class Inventory {
     Map<String, java.util.Set<String>> deployedByApplication = deployed.byApplication();
     java.util.Set<String> deployedVersions =
         DeployedVersions.union(deployedByApplication.values());
-    List<MtRelease> kept = keptReleases(rows, deployedVersions);
-    // Before a single ledger pin is served: a deployed release the ledger never recorded is a
-    // refusal, never a 200 that quietly lacks it.
-    requireRecorded(deployedByApplication, kept, rows, mainPins);
+    List<MtRelease> kept = requireComplete(rows, mainPins, deployedByApplication);
     pins.addAll(releasePins(kept, deployedVersions));
     pins = new ArrayList<>(new java.util.LinkedHashSet<>(pins));
     // …and the images and daemon binaries those maven and npm pins name without spelling out.
@@ -334,6 +335,90 @@ public class Inventory {
     pins.addAll(carriedDaemons.resolve(stored));
     pins.sort(PIN_ORDER);
     return new PinSourceDto(Instant.now(), List.copyOf(repositories), List.copyOf(pins));
+  }
+
+  /**
+   * <b>The EXTERNAL {@code docker} pins: the keep-set qits-mirror evicts its mirrored tags against</b>
+   * (qits-2253).
+   *
+   * <p>Every tag this answer does not name is evicted, so it is a union exactly like {@link #pins()}'s
+   * — each repository's last scan ({@code mt_pin}) and what its main declared at its last main scan
+   * ({@code mt_main_pin}, V33), because a release scan replaces the first with a tag's pins — and it
+   * refuses in exactly the cases {@link #pins()} refuses, through the same guards: an empty
+   * inventory, a deployer that cannot answer, a deployed release the ledger never recorded. The
+   * ledger itself holds INTERNAL pins only, so it adds nothing here; the refusal is kept anyway, so
+   * the two keep-sets are answered or refused together.
+   *
+   * <p><b>And one refusal of its own: an EMPTY set is a 503</b> ({@link EmptyImageKeepSetException}).
+   * Nothing on the platform runs without a base image, so an empty answer is a store that lost its
+   * rows, never a fact — and handed to the mirror it would condemn every tag it holds.
+   *
+   * <p>Names are served exactly as the scan stored them ({@code hub/library/postgres}, a bare {@code
+   * node}); one row per (name, version), ordered by name then version.
+   */
+  public List<ImagePinDto> images() {
+    List<MtRepository> rows = store.repositories();
+    if (rows.isEmpty()) {
+      throw new EmptyInventoryException();
+    }
+    java.util.SortedSet<ImagePinDto> images =
+        new java.util.TreeSet<>(
+            Comparator.comparing(ImagePinDto::name).thenComparing(ImagePinDto::version));
+    for (MtPin pin : store.allPins()) {
+      if (PendingChanges.kindOf(pin) == PinKind.EXTERNAL && isDocker(pin.ecosystem)) {
+        image(images, pin.name, pin.version);
+      }
+    }
+    // Read once, so both halves below are the same moment's rows.
+    List<MtMainPin> mainPins = store.allMainPins();
+    for (MtMainPin pin : ofKind(mainPins, PinKind.EXTERNAL)) {
+      if (isDocker(pin.ecosystem)) {
+        image(images, pin.name, pin.version);
+      }
+    }
+    requireComplete(rows, ofKind(mainPins, PinKind.INTERNAL), deployed.byApplication());
+    if (images.isEmpty()) {
+      throw new EmptyImageKeepSetException();
+    }
+    return List.copyOf(images);
+  }
+
+  private static boolean isDocker(String ecosystem) {
+    return Ecosystem.of(ecosystem).filter(known -> known == Ecosystem.DOCKER).isPresent();
+  }
+
+  private static void image(
+      java.util.SortedSet<ImagePinDto> images, String name, String version) {
+    if (name != null && !name.isBlank() && version != null && !version.isBlank()) {
+      images.add(new ImagePinDto(name, version));
+    }
+  }
+
+  /** {@code mt_main_pin}'s rows of one kind. */
+  private static List<MtMainPin> ofKind(List<MtMainPin> rows, PinKind kind) {
+    return rows.stream().filter(pin -> kind.name().equals(pin.kind)).toList();
+  }
+
+  /**
+   * <b>The refusals both keep-sets share</b>: the deployer's silence ({@link
+   * eu.wohlben.qits.maintenance.error.DeploymentsUnansweredException}, thrown by the caller's {@code
+   * deployed.byApplication()} read) and a deployed release the ledger never recorded ({@link
+   * #requireRecorded}).
+   *
+   * @param mainPins main's INTERNAL rows — what {@link #requireRecorded} compares the main release
+   *     against, exactly as before main kept anything else
+   * @return the releases the ledger keeps
+   */
+  private List<MtRelease> requireComplete(
+      List<MtRepository> rows,
+      List<MtMainPin> mainPins,
+      Map<String, java.util.Set<String>> deployedByApplication) {
+    List<MtRelease> kept =
+        keptReleases(rows, DeployedVersions.union(deployedByApplication.values()));
+    // Before a single ledger pin is served: a deployed release the ledger never recorded is a
+    // refusal, never a 200 that quietly lacks it.
+    requireRecorded(deployedByApplication, kept, rows, mainPins);
+    return kept;
   }
 
   /**

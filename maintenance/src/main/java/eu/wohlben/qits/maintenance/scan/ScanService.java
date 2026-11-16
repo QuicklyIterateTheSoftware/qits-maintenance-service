@@ -388,7 +388,8 @@ public class ScanService {
    * <b>MAIN'S PINS, KEPT APART FROM THE LAST SCAN'S, and the releases main has caught up with.</b>
    *
    * <p>A release scan replaces {@code mt_pin} with the TAG's pins, and a tag can run ahead of main
-   * and of the deployment. So the GC's keep-set is a union (qits-1172): what main declares, plus
+   * and of the deployment. So the GC's keep-set is a union (qits-1172) — and the mirror's, which is
+   * why main's EXTERNAL docker pins are kept here too (qits-2253): what main declares, plus
    * what every release not yet on main declared. This writes the first half and closes the second:
    * a release whose commit main now contains is dropped from it, because main declares the same.
    *
@@ -399,12 +400,26 @@ public class ScanService {
       CatalogEntry entry, ManifestScanner.Read read, List<MaintenanceStore.GitlinkPin> gitlinks) {
     List<MaintenanceStore.MainPin> pins = new java.util.ArrayList<>();
     for (eu.wohlben.qits.bootstrap.graph.manifest.ParsedPin pin : read.pins()) {
-      if (pin.ecosystem() == Ecosystem.GITLINK || config.kindOf(pin) != PinKind.INTERNAL) {
+      if (pin.ecosystem() == Ecosystem.GITLINK) {
+        continue;
+      }
+      PinKind kind = config.kindOf(pin);
+      // INTERNAL pins for the GC's keep-set (GET /pins), and EXTERNAL docker pins for the mirror's
+      // (GET /pins/images, qits-2253) — each door reads its own kind back out.
+      boolean kept =
+          kind == PinKind.INTERNAL
+              || (kind == PinKind.EXTERNAL && pin.ecosystem() == Ecosystem.DOCKER);
+      if (!kept) {
         continue;
       }
       pins.add(
           new MaintenanceStore.MainPin(
-              pin.ecosystem().wireName(), pin.name(), pin.version(), pin.manifestPath(), null));
+              pin.ecosystem().wireName(),
+              pin.name(),
+              pin.version(),
+              pin.manifestPath(),
+              null,
+              kind));
     }
     for (MaintenanceStore.GitlinkPin pin : gitlinks == null ? List.<MaintenanceStore.GitlinkPin>of() : gitlinks) {
       pins.add(
@@ -414,7 +429,8 @@ public class ScanService {
               pin.version(),
               pin.manifestPath(),
               eu.wohlben.qits.maintenance.control.Inventory.gitlinkVia(
-                  pin.gitlinkPath(), pin.sha())));
+                  pin.gitlinkPath(), pin.sha()),
+              PinKind.INTERNAL));
     }
     store.replaceMainPins(entry.name(), read.headSha(), pins);
 

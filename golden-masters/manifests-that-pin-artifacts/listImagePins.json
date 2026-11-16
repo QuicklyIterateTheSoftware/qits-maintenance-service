@@ -1,0 +1,10 @@
+[
+  {
+    "name": "hub/library/postgres",
+    "version": "18.4"
+  },
+  {
+    "name": "node",
+    "version": "24-alpine"
+  }
+]

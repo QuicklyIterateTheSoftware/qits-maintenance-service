@@ -343,6 +343,10 @@ public class ProviderStates {
    * One repository whose manifests pin three internal artifacts — a maven jar, an npm package and
    * an image — and the jar's release, which also published an image and a daemon binary of the
    * same version. {@code listDependencyPins} answers the three stored pins and the two carried ones.
+   *
+   * <p>And main's two EXTERNAL image pins, a mirrored one and a bare one (qits-2253): {@code
+   * listImagePins} answers exactly those, and {@code listDependencyPins} — INTERNAL only — does not
+   * see them. They are main's rows only, so no other operation of this state answers differently.
    */
   private Setup manifestsThatPinArtifacts() {
     emptyEstate();
@@ -371,6 +375,24 @@ public class ProviderStates {
             "2026.813.1",
             null,
             "from:1"));
+    store.replaceMainPins(
+        REPOSITORY,
+        HEAD_SHA,
+        List.of(
+            new MaintenanceStore.MainPin(
+                Ecosystem.DOCKER.wireName(),
+                "hub/library/postgres",
+                "18.4",
+                "docker/Dockerfile",
+                null,
+                PinKind.EXTERNAL),
+            new MaintenanceStore.MainPin(
+                Ecosystem.DOCKER.wireName(),
+                "node",
+                "24-alpine",
+                "frontend/Dockerfile",
+                null,
+                PinKind.EXTERNAL)));
     Instant released = Instant.parse("2026-08-11T10:00:00Z");
     store.upsertArtifact(
         Ecosystem.MAVEN,

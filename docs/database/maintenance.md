@@ -148,6 +148,7 @@ erDiagram
   mt_main_pin {
     uuid id PK "not null"
     string ecosystem "not null, length 32"
+    string kind "not null, length 32"
     string manifest_path "not null, length 1024"
     string name "not null, length 512"
     string repository "not null, length 255"

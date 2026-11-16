@@ -3568,9 +3568,15 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
    * One pin main declared, in the shape {@code GET /pins} serves it.
    *
    * @param via provenance, null for a pin a manifest wrote out
+   * @param kind INTERNAL, or EXTERNAL for a docker pin {@code GET /pins/images} serves (V33)
    */
   public record MainPin(
-      String ecosystem, String name, String version, String manifestPath, String via) {}
+      String ecosystem,
+      String name,
+      String version,
+      String manifestPath,
+      String via,
+      PinKind kind) {}
 
   /**
    * Replaces what one repository's MAIN declared. Only a main scan calls this: a release scan reads
@@ -3595,6 +3601,7 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
             stored.version = pin.version();
             stored.manifestPath = pin.manifestPath() == null ? "" : pin.manifestPath();
             stored.via = pin.via();
+            stored.kind = (pin.kind() == null ? PinKind.INTERNAL : pin.kind()).name();
             stored.persist();
           }
           getEntityManager().flush();

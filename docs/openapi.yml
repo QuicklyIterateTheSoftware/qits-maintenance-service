@@ -393,6 +393,13 @@ components:
         pending:
           type: integer
           format: int32
+    ImagePinDto:
+      type: object
+      properties:
+        name:
+          type: string
+        version:
+          type: string
     IngestRequest:
       type: object
       properties:
@@ -1127,6 +1134,37 @@ paths:
           description: "The answer would not be complete: the inventory holds no repository\
             \ at all, the deployed versions could not be read, or a deployed or rollback\
             \ release of a repository this inventory holds is not in the release ledger"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      tags:
+      - Pins Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+        - qits:admin-agent
+        - qits:desk-admin
+        - qits:desk
+        - qits:system
+        - qits:agent
+  /maintenance/api/pins/images:
+    get:
+      summary: Every external docker image tag the platform's manifests still pin
+      operationId: listImagePins
+      responses:
+        "200":
+          description: "The image tags, one per (name, version), ordered by name then\
+            \ version"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ImagePinDto"
+        "503":
+          description: "The answer would not be complete: every case listDependencyPins\
+            \ refuses, and an empty set, which would evict every mirrored tag"
         "401":
           description: Not Authorized
         "403":
