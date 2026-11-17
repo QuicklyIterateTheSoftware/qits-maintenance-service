@@ -322,6 +322,8 @@ class ForeignEventContractTest {
     assertEquals(SCMPublishCommit.class.getSimpleName(), ScmEventListener.PUSH_SIGNATURE);
     assertEquals(
         ReleaseRequestStateChanged.class.getSimpleName(), ReleaseFinalizedListener.SIGNATURE);
+    assertEquals(
+        ReleaseRequestStateChanged.class.getSimpleName(), ReleaseReleasedListener.SIGNATURE);
   }
 
   /**
@@ -334,6 +336,7 @@ class ForeignEventContractTest {
     assertEquals("maintenance-internal-latest", SoftwareReleaseListener.CONSUMER_ID);
     assertEquals("maintenance-branch-tracking", ScmEventListener.CONSUMER_ID);
     assertEquals("maintenance-release-finalized", ReleaseFinalizedListener.CONSUMER_ID);
+    assertEquals("maintenance-release-released", ReleaseReleasedListener.CONSUMER_ID);
   }
 
   /**
@@ -357,6 +360,7 @@ class ForeignEventContractTest {
     assertNotEquals(abandoned, SoftwareReleaseListener.CONSUMER_ID);
     assertNotEquals(abandoned, ScmEventListener.CONSUMER_ID);
     assertNotEquals(abandoned, ReleaseFinalizedListener.CONSUMER_ID);
+    assertNotEquals(abandoned, ReleaseReleasedListener.CONSUMER_ID);
   }
 
   // --- the field lists ----------------------------------------------------------------------------
@@ -512,6 +516,31 @@ class ForeignEventContractTest {
     }
     assertTrue(json.has("branches"), "the publisher really does send the fields we ignore");
     assertTrue(json.has("changedAt"), "and changedAt, which is not occurredAt");
+  }
+
+  /**
+   * The release (qits-2290): {@code releaseRequestId} and {@code mergedSha} are what the stranded
+   * bump is looked up by — the request the automation rows carry, and the fold that released.
+   */
+  @Test
+  void aReleasedStateChangeBindsIntoTheRecordTheReleasedListenerReads() throws Exception {
+    String payload =
+        releaseRequestStateChangedPayload(
+            "daf73ae4-1c9a-4f8e-9a51-0b0d0e0f1234", "RELEASED", "2026.901.1");
+
+    ReleaseReleasedListener.ReleasedPayload read =
+        CanonicalJson.payloadTo(payload, ReleaseReleasedListener.ReleasedPayload.class);
+    assertEquals("rr-uuid-1", read.releaseRequestId());
+    assertEquals("qits-eventstream-javalib-rr-7", read.releaseRequestQualifiedId());
+    assertEquals("daf73ae4-1c9a-4f8e-9a51-0b0d0e0f1234", read.repoId());
+    assertEquals("qits-eventstream-javalib", read.repoName());
+    assertEquals("RELEASED", read.state());
+    assertEquals("abc1234", read.mergedSha());
+
+    JsonNode json = MAPPER.readTree(payload);
+    for (String field : List.of("releaseRequestId", "state", "mergedSha")) {
+      assertTrue(json.has(field), "the canonical payload carries no " + field);
+    }
   }
 
   /**

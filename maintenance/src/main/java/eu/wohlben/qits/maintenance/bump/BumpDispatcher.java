@@ -149,7 +149,8 @@ import org.jboss.logging.Logger;
  *
  * <p><b>Except a repository owed a RE-OFFER, which goes before all of them</b> (qits-1578). When a
  * {@code dependency-bump} ends SUPERSEDED because its release request closed before the bump could
- * land, {@code mt_repository.reoffer_owed_at} is set; such a repository's main-only request was
+ * land — or COMMITTED onto the very fold its request then released without it (qits-2290) — {@code
+ * mt_repository.reoffer_owed_at} is set; such a repository's main-only request was
  * opened recently, which cleared its {@code owed_since}, so the order above alone would put it
  * behind the tick's free room. The mark sorts it ahead of every unmarked one (each group keeping the
  * order above), never decides whether it is held, and is cleared when its main-only request is

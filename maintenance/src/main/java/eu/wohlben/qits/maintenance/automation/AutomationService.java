@@ -242,6 +242,8 @@ public class AutomationService {
 
   @Inject MaintenanceStore store;
 
+  @Inject StrandedBumpReoffer reoffers;
+
   @Inject MaintenanceConfig config;
 
   @Inject CiClient ci;
@@ -2231,13 +2233,11 @@ public class AutomationService {
 
   /**
    * A {@code dependency-bump} stranded on a closed request leaves its repository owed a prompt
-   * re-offer against main (qits-1578): the dispatcher sorts it first and clears the mark when it
-   * opens the main-only request. Nothing is ever committed onto the closed request.
+   * re-offer against main (qits-1578) — see {@link StrandedBumpReoffer}, which also marks one
+   * COMMITTED onto a fold that released without it (qits-2290).
    */
   private void owedAReoffer(MtBump row) {
-    if (DependencyBumpAutomation.KIND.equals(row.automationKind)) {
-      store.markReofferOwed(row.repository, Instant.now());
-    }
+    reoffers.owedAReoffer(row);
   }
 
   /**

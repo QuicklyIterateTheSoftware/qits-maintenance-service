@@ -344,7 +344,7 @@ to; on a group row it was the request it asked for, or a sentinel (`converged`, 
 
 ## The event bus
 
-**This service subscribes and publishes nothing.** Three durable listeners on the platform's
+**This service subscribes and publishes nothing.** Four durable listeners on the platform's
 `qits-eventstream` bus turn five facts other services know into inventory writes within seconds,
 where v1 waited up to six hours for a poll.
 
@@ -352,6 +352,7 @@ where v1 waited up to six hours for a poll.
 |---|---|---|---|
 | `bus/SoftwareReleaseListener` | `maintenance-internal-latest` | `SoftwareRelease` (qits-ci) | writes the artifact row and records the package as **published** (`mt_published_artifact`); moves `mt_latest` **forward only** only once its repository has finalized at or above that version (qits-1472) |
 | `bus/ReleaseFinalizedListener` | `maintenance-release-finalized` | `ReleaseRequestStateChanged` (qits-projects), `state=FINALIZED` only | records the finalized `(repoId, version)` (`mt_finalized_release`, idempotent) and **adopts** every published, unadopted artifact of that repository at or below it — the highest per package — into `mt_latest` |
+| `bus/ReleaseReleasedListener` | `maintenance-release-released` | `ReleaseRequestStateChanged` (qits-projects), `state=RELEASED` only | marks the repository owed a prompt **re-offer** when a `dependency-bump` row COMMITTED at exactly the released `mergedSha` — its commit is not in the release (qits-2290) |
 | `bus/ScmEventListener` | `maintenance-branch-tracking` | `SCMRelease` (qits-projects), `SCMDeleteBranch`, `SCMPublishCommit` (qits-githost) | records every release in the **release ledger**, clears a maintenance branch when it is deleted, and after a push to a repository's main branch sets its **gitlink** latest to the release main's head carries and re-reads its manifests |
 
 - **FINALIZATION is the green light, not the publish (qits-1472).** qits-ci announces

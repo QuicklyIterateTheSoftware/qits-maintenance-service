@@ -98,7 +98,8 @@ public class MtRepository extends PanacheEntityBase {
   /**
    * When a {@code dependency-bump} of this repository ended SUPERSEDED because its release request
    * closed before the bump could land (qits-1578, V28) — the repository is owed a prompt re-offer
-   * against main. Also set when a GITLINK this repository embeds released while it had no open
+   * against main — or, alike, when its release request RELEASED the very fold a COMMITTED {@code
+   * dependency-bump} had pushed on top of (qits-2290). Also set when a GITLINK this repository embeds released while it had no open
    * request (qits-1653). The dispatcher sorts a marked repository ahead of every unmarked one and
    * clears the mark when it opens a main-only request for it. Order only: it never decides whether
    * the repository is held. Untouched by a scan. Null when nothing is owed.

@@ -15,8 +15,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.bootstrap.graph.manifest.ParsedPin;
+import eu.wohlben.qits.eventstream.control.EventFrame;
 import eu.wohlben.qits.maintenance.api.Fixture;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
+import eu.wohlben.qits.maintenance.bus.ReleaseReleasedListener;
 import eu.wohlben.qits.maintenance.bump.BumpDispatcher;
 import eu.wohlben.qits.maintenance.bump.BumpService;
 import eu.wohlben.qits.maintenance.bump.CiClient;
@@ -72,6 +74,8 @@ class UpstreamReplanTest {
   @Inject AutomationService automations;
 
   @Inject BumpDispatcher dispatcher;
+
+  @Inject ReleaseReleasedListener released;
 
   @Inject BumpService bumps;
 
@@ -673,6 +677,33 @@ class UpstreamReplanTest {
 
     // 4. The request finalizes with main still on 2026.811.1. Another repository is owed too, and
     // was reached a fortnight ago — the clock alone would send it first.
+    String olderCollection = finalizedBesideAnOlderOwedRepository();
+
+    List<UUID> sent = dispatcher.tick();
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    assertEquals(List.of(UUID.fromString(MAIN_REQUEST)), sent, "the stranded consumer goes first");
+    MtReleaseRequest reoffer = store.releaseRequest(MAIN_REQUEST).orElseThrow();
+    assertEquals(Fixture.REPOSITORY, reoffer.repository);
+    assertEquals(MtReleaseRequest.MAIN_ONLY, reoffer.purpose);
+    assertEquals("main", reoffer.branch);
+    assertTrue(reoffer.changes.contains(EVENTSTREAM), reoffer.changes);
+    assertTrue(reoffer.changes.contains("2026.821.3"), "carrying the newer upstream: " + reoffer.changes);
+    assertTrue(
+        peers.bodiesFor(olderCollection).stream().noneMatch(java.util.Objects::nonNull),
+        "the older one waits for the next tick");
+    assertNull(store.repository(Fixture.REPOSITORY).orElseThrow().reofferOwedAt, "mark cleared");
+    assertEquals(
+        List.of(id), bumpRows(REQUEST).stream().map(row -> row.id).toList(),
+        "nothing more was ever opened onto the closed request");
+  }
+
+  /**
+   * The request FINALIZED at FOLD_A with main still on 2026.811.1, beside another repository that
+   * is owed too and was reached a fortnight ago — the clock alone would send it first — under one
+   * free CI slot. Answers that repository's release-request collection.
+   */
+  private String finalizedBesideAnOlderOwedRepository() {
     AutomationFixture.scriptRequest(peers, REQUEST, "FINALIZED", FOLD_A);
     peers.answer(
         PeerTarget.PROJECTS,
@@ -718,7 +749,83 @@ class UpstreamReplanTest {
         Instant.now().minus(Duration.ofDays(14)));
     // One CI slot free for bumps.
     Fixture.scriptCiRoom(peers, 1);
+    return olderCollection;
+  }
 
+  // --- the race: a bump committed past the fold that released (qits-2290) ------------------------
+
+  /** A {@code kind} row of REQUEST that went green at {@code fold} and pushed PUSHED. */
+  private UUID committedAt(String kind, String fold) {
+    UUID id =
+        store.openAutomation(
+            new MaintenanceStore.AutomationOpening(
+                Fixture.REPOSITORY,
+                kind,
+                REQUEST,
+                fold,
+                null,
+                false,
+                AutomationFixture.branch(kind, REQUEST),
+                null,
+                "test",
+                BumpTrigger.UPSTREAM,
+                List.of(),
+                Map.of(),
+                BumpStatus.RUNNING,
+                null),
+            false,
+            Instant.now());
+    store.bumpFinished(
+        id, BumpStatus.SUCCEEDED, "SUCCESS", "committed", PUSHED, Instant.now());
+    return id;
+  }
+
+  /** qits-projects announcing REQUEST in {@code state} at {@code mergedSha}, as the bus hands it. */
+  private void announced(String state, String mergedSha) {
+    released.onFrame(
+        new EventFrame(
+            UUID.randomUUID().toString(),
+            "ReleaseRequestStateChanged",
+            Instant.now(),
+            "{\"releaseRequestId\":\"" + REQUEST + "\",\"releaseRequestQualifiedId\":\""
+                + Fixture.REPOSITORY + "-rr-252\",\"repoId\":\"catalog-" + Fixture.REPOSITORY
+                + "\",\"repoName\":\"" + Fixture.REPOSITORY + "\",\"state\":\"" + state
+                + "\",\"previousState\":\"READY\",\"mergedSha\":\"" + mergedSha
+                + "\",\"version\":\"2026.1117.1\"}",
+            null,
+            null,
+            null));
+  }
+
+  /**
+   * <b>Reproduction (qits-2290, qits-system-service-rr-252).</b> The request's fold F (FOLD_A) is
+   * building when its {@code dependency-bump} goes green and pushes a newer pin onto the request's
+   * source branch; qits-projects does not refold for that push and releases F. The commit is not in
+   * the release, so the RELEASED event marks the repository owed a re-offer — once, however often
+   * it is announced — and the dispatcher's next tick, once the request finalized, re-offers the bump
+   * against main FIRST, ahead of a repository it reached a fortnight ago, under a cap of one.
+   */
+  @Test
+  void aBumpCommittedPastTheFoldThatReleasedIsReofferedAgainstMainFirst() {
+    // 1. The consumer has an open main-only request at FOLD_A, and its bump commits on top of it.
+    store.recordOpenedRequest(
+        REQUEST, Fixture.REPOSITORY, "main", MtReleaseRequest.MAIN_ONLY, List.of(),
+        Instant.now());
+    UUID id = committedAt(DependencyBumpAutomation.KIND, FOLD_A);
+    MtBump committed = store.bump(id).orElseThrow();
+    assertEquals(AutomationState.COMMITTED, AutomationState.of(committed.status));
+    assertEquals(PUSHED, committed.resultSha);
+    assertNull(reofferOwedAt(), "nothing is owed while the request is open");
+
+    // 2. The request releases FOLD_A — without the commit — and says so twice.
+    announced("RELEASED", FOLD_A);
+    Instant marked = reofferOwedAt();
+    assertNotNull(marked, "a bump committed past the released fold is owed again");
+    announced("RELEASED", FOLD_A);
+    assertEquals(marked, reofferOwedAt(), "a duplicated RELEASED marks once");
+
+    // 3. Once it finalized, the stranded consumer goes first.
+    String olderCollection = finalizedBesideAnOlderOwedRepository();
     List<UUID> sent = dispatcher.tick();
     queue.awaitIdle(Duration.ofSeconds(30));
 
@@ -726,16 +833,41 @@ class UpstreamReplanTest {
     MtReleaseRequest reoffer = store.releaseRequest(MAIN_REQUEST).orElseThrow();
     assertEquals(Fixture.REPOSITORY, reoffer.repository);
     assertEquals(MtReleaseRequest.MAIN_ONLY, reoffer.purpose);
-    assertEquals("main", reoffer.branch);
-    assertTrue(reoffer.changes.contains(EVENTSTREAM), reoffer.changes);
-    assertTrue(reoffer.changes.contains("2026.821.3"), "carrying the newer upstream: " + reoffer.changes);
     assertTrue(
         peers.bodiesFor(olderCollection).stream().noneMatch(java.util.Objects::nonNull),
         "the older one waits for the next tick");
-    assertNull(store.repository(Fixture.REPOSITORY).orElseThrow().reofferOwedAt, "mark cleared");
-    assertEquals(
-        List.of(id), bumpRows(REQUEST).stream().map(row -> row.id).toList(),
-        "nothing more was ever opened onto the closed request");
+    assertNull(reofferOwedAt(), "mark cleared");
+  }
+
+  /** A row COMMITTED at an older fold was folded into the one that released: nothing is owed. */
+  @Test
+  void aBumpCommittedAtAnOlderFoldIsShippedAndMarksNothing() {
+    committedAt(DependencyBumpAutomation.KIND, FOLD_A);
+
+    announced("RELEASED", FOLD_B);
+
+    assertNull(reofferOwedAt());
+  }
+
+  /** Only a dependency bump is re-offered; another kind's commit is the next fold's to redo. */
+  @Test
+  void anotherKindCommittedPastTheReleasedFoldMarksNothing() {
+    committedAt(ScreenshotBaselinesAutomation.KIND, FOLD_A);
+
+    announced("RELEASED", FOLD_A);
+
+    assertNull(reofferOwedAt());
+  }
+
+  /** Every other state settles without a mark — FINALIZED and PENDING included. */
+  @Test
+  void aStateOtherThanReleasedMarksNothing() {
+    committedAt(DependencyBumpAutomation.KIND, FOLD_A);
+
+    announced("PENDING", FOLD_A);
+    announced("FINALIZED", FOLD_A);
+
+    assertNull(reofferOwedAt());
   }
 
   // --- a consumer's first pact jar: the provider is re-planned for its adoption (qits-1952) ------

@@ -2042,8 +2042,9 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
 
   /**
    * Marks a repository as owed a prompt re-offer (qits-1578): its {@code dependency-bump} ended
-   * SUPERSEDED because its release request closed — or a GITLINK it embeds released while it had
-   * no open request (qits-1653). The first mark is kept — a second stranding changes nothing about
+   * SUPERSEDED because its release request closed, or COMMITTED onto the very fold its request
+   * then released without it (qits-2290) — or a GITLINK it embeds released while it had no open
+   * request (qits-1653). The first mark is kept — a second stranding changes nothing about
    * how long it has waited. A repository this inventory does not hold is ignored.
    */
   @ActivateRequestContext

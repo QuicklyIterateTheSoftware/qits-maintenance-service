@@ -425,8 +425,11 @@ then least-recently-dispatched (`MaintenanceStore.lastDispatchedAt`, the newest 
 RE-OFFER (`mt_repository.reoffer_owed_at`, V28, qits-1578) sorts before every unmarked one. The mark
 is set when a `dependency-bump` row ends SUPERSEDED because its request CLOSED — asked again at
 dispatch, so a row that waited REQUESTED while its request released is never sent onto a fold
-branch that is gone, and asked at a red ending, since a closed request keeps its `mergedSha` — and
-cleared when the main-only request is opened. It only reorders: `held()` never reads it. A pick is
+branch that is gone, and asked at a red ending, since a closed request keeps its `mergedSha` — or
+when its request RELEASES at the very fold a COMMITTED `dependency-bump` row pushed on top of
+(qits-2290, `bus/ReleaseReleasedListener` → `automation/StrandedBumpReoffer`: qits-projects does not
+refold for that push, so the commit is not in the release) — and cleared when the main-only request
+is opened. It only reorders: `held()` never reads it. A pick is
 `ReleaseRequestClient.requestMainOnly` — `POST …/release-requests` with `branch = main` and
 `priority = LOWEST` — recorded with `recordOpenedRequest(MAIN_ONLY, changes)`; a repository with no
 catalog id, or a refused ask, is set aside for `bump.dispatch.refusal-ttl` (in memory). No
@@ -695,9 +698,10 @@ terminal FAILED (`DAEMON_SBOM_UNREAD`) because the fetch took an `Ecosystem`; V1
 jar. Its rules live in that library's own repository and are not restated here. **This service
 subscribes and publishes nothing.**
 
-- **Three listeners, and their `consumerId()`s are STORAGE.** `maintenance-internal-latest`
+- **Four listeners, and their `consumerId()`s are STORAGE.** `maintenance-internal-latest`
   (`SoftwareRelease`), `maintenance-branch-tracking` (`SCMRelease`, `SCMDeleteBranch`,
-  `SCMPublishCommit`) and `maintenance-release-finalized` (`ReleaseRequestStateChanged`, qits-1472). Change one and you mint a brand-new consumer that initializes at the head of
+  `SCMPublishCommit`), `maintenance-release-finalized` (`ReleaseRequestStateChanged`, qits-1472) and
+  `maintenance-release-released` (`ReleaseRequestStateChanged` at RELEASED, qits-2290). Change one and you mint a brand-new consumer that initializes at the head of
   the log, silently skipping everything in between; the old watermark is orphaned. Reuse one and a
   listener inherits another's watermark, believing it has handled events it was never offered. Both
   are pinned as literals in `bus/ForeignEventContractTest` for that reason.

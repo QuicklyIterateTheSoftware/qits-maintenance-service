@@ -40,8 +40,9 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
  *       package-private in the library. <b>Without it the stream works in the binary and CATCH-UP
  *       ALONE fails</b> — the half that only matters after a cutover, which is the half a durable
  *       consumer exists for.
- *   <li>{@link SoftwareReleaseListener.SoftwareReleasePayload} and {@link ScmEventListener}'s three
- *       payload records — every type this service binds a frame's payload INTO. They are the whole
+ *   <li>{@link SoftwareReleaseListener.SoftwareReleasePayload}, the two {@code
+ *       ReleaseRequestStateChanged} readings (FINALIZED's and RELEASED's, qits-2290) and {@link
+ *       ScmEventListener}'s three payload records — every type this service binds a frame's payload INTO. They are the whole
  *       of what {@code CanonicalJson.payloadTo} is asked for here.
  *   <li>{@link EventEnvelope} — the PUT body. This service publishes nothing today, and the
  *       registration is here for the day something does: qits-projects carried it for exactly that
@@ -69,6 +70,7 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
       EventEnvelope.class,
       SoftwareReleaseListener.SoftwareReleasePayload.class,
       ReleaseFinalizedListener.ReleaseRequestStateChangedPayload.class,
+      ReleaseReleasedListener.ReleasedPayload.class,
       ScmEventListener.ScmReleasePayload.class,
       ScmEventListener.ScmDeleteBranchPayload.class,
       ScmEventListener.ScmPublishCommitPayload.class
