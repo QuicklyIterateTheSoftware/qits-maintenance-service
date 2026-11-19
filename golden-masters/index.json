@@ -485,6 +485,77 @@
       ]
     },
     {
+      "name": "dependencies of a project, some behind",
+      "slug": "dependencies-of-a-project-some-behind",
+      "params": {
+        "projectId": "00000000-0000-4000-8000-000000000001"
+      },
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "listDependencies",
+          "method": "GET",
+          "path": "/maintenance/api/dependencies",
+          "query": {
+            "kind": "INTERNAL"
+          },
+          "status": 200,
+          "file": "dependencies-of-a-project-some-behind/listDependencies.json",
+          "frozen": {
+            "ids": [],
+            "instants": [
+              "$[*].checkedAt"
+            ],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        },
+        {
+          "operationId": "listRepositories",
+          "method": "GET",
+          "path": "/maintenance/api/repositories",
+          "status": 200,
+          "file": "dependencies-of-a-project-some-behind/listRepositories.json",
+          "frozen": {
+            "ids": [],
+            "instants": [
+              "$[*].lastScanAt"
+            ],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "external dependencies of a project, some behind",
+      "slug": "external-dependencies-of-a-project-some-behind",
+      "params": {
+        "projectId": "00000000-0000-4000-8000-000000000001"
+      },
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "listDependencies",
+          "method": "GET",
+          "path": "/maintenance/api/dependencies",
+          "query": {
+            "kind": "EXTERNAL"
+          },
+          "status": 200,
+          "file": "external-dependencies-of-a-project-some-behind/listDependencies.json",
+          "frozen": {
+            "ids": [],
+            "instants": [
+              "$[*].checkedAt"
+            ],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
       "name": "manifests that pin artifacts",
       "slug": "manifests-that-pin-artifacts",
       "params": {
@@ -579,6 +650,67 @@
           "path": "/maintenance/api/pins/images",
           "status": 200,
           "file": "manifests-that-pin-artifacts/listImagePins.json",
+          "frozen": {
+            "ids": [],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "no dependencies",
+      "slug": "no-dependencies",
+      "params": {},
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "listDependencies",
+          "method": "GET",
+          "path": "/maintenance/api/dependencies",
+          "query": {
+            "kind": "INTERNAL"
+          },
+          "status": 200,
+          "file": "no-dependencies/listDependencies.json",
+          "frozen": {
+            "ids": [],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        },
+        {
+          "operationId": "listRepositories",
+          "method": "GET",
+          "path": "/maintenance/api/repositories",
+          "status": 200,
+          "file": "no-dependencies/listRepositories.json",
+          "frozen": {
+            "ids": [],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "no external dependencies",
+      "slug": "no-external-dependencies",
+      "params": {},
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "listDependencies",
+          "method": "GET",
+          "path": "/maintenance/api/dependencies",
+          "query": {
+            "kind": "EXTERNAL"
+          },
+          "status": 200,
+          "file": "no-external-dependencies/listDependencies.json",
           "frozen": {
             "ids": [],
             "instants": [],

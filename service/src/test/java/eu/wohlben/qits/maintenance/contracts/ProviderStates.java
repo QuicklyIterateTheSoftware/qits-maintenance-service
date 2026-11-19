@@ -10,6 +10,7 @@ import eu.wohlben.qits.maintenance.automation.AutomationService;
 import eu.wohlben.qits.maintenance.automation.ReleaseRequestAutomation;
 import eu.wohlben.qits.maintenance.automation.ScreenshotBaselinesAutomation;
 import eu.wohlben.qits.maintenance.bump.ReleaseRequestClient;
+import eu.wohlben.qits.maintenance.latest.LatestLookup;
 import eu.wohlben.qits.maintenance.entity.MtBump;
 import eu.wohlben.qits.maintenance.entity.MtReleaseRequest;
 import eu.wohlben.qits.maintenance.manifest.GroupConfig;
@@ -88,6 +89,22 @@ public class ProviderStates {
       "a release request this service opened";
   public static final String A_STORED_SBOM_CHECK_REPORT = "a stored SBOM check report";
   public static final String A_FINISHED_SCAN = "a finished scan";
+  public static final String DEPENDENCIES_OF_A_PROJECT_SOME_BEHIND =
+      "dependencies of a project, some behind";
+
+  /**
+   * {@link #DEPENDENCIES_OF_A_PROJECT_SOME_BEHIND} again, under the name its {@code
+   * listDependencies?kind=EXTERNAL} recording is kept by: a golden master is one answer per
+   * operation per state, so the second query of one operation needs a state of its own — as {@link
+   * #A_RELEASE_REQUEST_WITH_AUTOMATIONS_AT_ITS_NEWEST_FOLD} is for its read without a fold.
+   */
+  public static final String EXTERNAL_DEPENDENCIES_OF_A_PROJECT_SOME_BEHIND =
+      "external dependencies of a project, some behind";
+
+  public static final String NO_DEPENDENCIES = "no dependencies";
+
+  /** {@link #NO_DEPENDENCIES} again, for its {@code kind=EXTERNAL} recording. */
+  public static final String NO_EXTERNAL_DEPENDENCIES = "no external dependencies";
 
   /** The work item the CLI's {@code qits maintenance automation run --work-item} names. */
   static final String WORK_ITEM = "qits-112";
@@ -108,6 +125,15 @@ public class ProviderStates {
   static final String BRANCH = "feature/export";
 
   private static final Instant SCANNED = Instant.parse("2026-01-01T00:00:00Z");
+
+  /**
+   * The project the dependencies states seed: the id the landing app's harness opens, from
+   * {@code @qits/projects-golden-masters}' "a project exists".
+   */
+  static final String PROJECT_ID = "00000000-0000-4000-8000-000000000001";
+
+  /** Another project, whose repository a consumer filtering by {@link #PROJECT_ID} must not show. */
+  static final String OTHER_PROJECT_ID = "00000000-0000-4000-8000-000000000002";
 
   /**
    * What a state hands back: its parameters, keys sorted, and its unique tokens (none here).
@@ -161,6 +187,11 @@ public class ProviderStates {
     states.put(A_RELEASE_REQUEST_THIS_SERVICE_OPENED, this::releaseRequestThisServiceOpened);
     states.put(A_STORED_SBOM_CHECK_REPORT, this::storedSbomCheckReport);
     states.put(A_FINISHED_SCAN, this::finishedScan);
+    states.put(DEPENDENCIES_OF_A_PROJECT_SOME_BEHIND, this::dependenciesOfAProjectSomeBehind);
+    states.put(
+        EXTERNAL_DEPENDENCIES_OF_A_PROJECT_SOME_BEHIND, this::dependenciesOfAProjectSomeBehind);
+    states.put(NO_DEPENDENCIES, this::noDependencies);
+    states.put(NO_EXTERNAL_DEPENDENCIES, this::noDependencies);
   }
 
   /** Every state name this provider answers for. */
@@ -626,6 +657,126 @@ public class ProviderStates {
     params.put("repoName", REPOSITORY);
     params.put("scanId", scan.toString());
     return new Setup(params, List.of());
+  }
+
+  /**
+   * Two repositories of {@link #PROJECT_ID} and one of {@link #OTHER_PROJECT_ID}, each pinning
+   * INTERNAL ({@code eu.wohlben.qits:*}, {@code @qits/*}) and EXTERNAL dependencies, every latest
+   * looked up at {@link #SCANNED}:
+   *
+   * <ul>
+   *   <li>{@code contract-frontend} (this project): {@code @qits/ui-components} 2026.8.1, behind
+   *       2026.9.1; {@code rxjs} 7.8.1, behind 7.8.2; {@code left-pad} 1.3.0, whose lookup FAILED —
+   *       no latest, and the registry's reason as the error.
+   *   <li>{@code contract-service} (this project): {@code eu.wohlben.qits:qits-eventstream}
+   *       2026.811.1 and {@code io.quarkus.platform:quarkus-bom} 3.40.1, both current.
+   *   <li>{@code other-project-service} (the other project): the same eventstream, current, and
+   *       quarkus-bom 3.30.1, behind — the pin a consumer filtering by project leaves out.
+   * </ul>
+   *
+   * <p>{@code listRepositories} answers the three; {@code listDependencies?kind=INTERNAL} the two
+   * internal dependencies and {@code ?kind=EXTERNAL} the three external ones, every pin of each.
+   */
+  private Setup dependenciesOfAProjectSomeBehind() {
+    emptyEstate();
+    scannedIn(
+        PROJECT_ID,
+        "contract-frontend",
+        "0c0a1d1e-0000-4000-8000-00000000d001",
+        RepositoryArchetype.FRONTEND,
+        ParsedPin.of(
+            Ecosystem.NPM,
+            "package.json",
+            "@qits/ui-components",
+            "2026.8.1",
+            null,
+            "dependency:@qits/ui-components"),
+        ParsedPin.of(Ecosystem.NPM, "package.json", "rxjs", "7.8.1", null, "dependency:rxjs"),
+        ParsedPin.of(
+            Ecosystem.NPM, "package.json", "left-pad", "1.3.0", null, "dependency:left-pad"));
+    scannedIn(
+        PROJECT_ID,
+        REPOSITORY,
+        REPOSITORY_ID,
+        RepositoryArchetype.SERVICE,
+        eventstream(),
+        quarkusBom("3.40.1"));
+    scannedIn(
+        OTHER_PROJECT_ID,
+        "other-project-service",
+        "0c0a1d1e-0000-4000-8000-00000000d002",
+        RepositoryArchetype.SERVICE,
+        eventstream(),
+        quarkusBom("3.30.1"));
+    latest(Ecosystem.NPM, "@qits/ui-components", LatestLookup.found("2026.9.1", null));
+    latest(Ecosystem.NPM, "rxjs", LatestLookup.found("7.8.2", null));
+    latest(Ecosystem.NPM, "left-pad", LatestLookup.failed(null, "the packument lists no versions"));
+    latest(
+        Ecosystem.MAVEN,
+        "eu.wohlben.qits:qits-eventstream",
+        LatestLookup.found("2026.811.1", null));
+    latest(Ecosystem.MAVEN, "io.quarkus.platform:quarkus-bom", LatestLookup.found("3.40.1", null));
+    Map<String, String> params = new TreeMap<>();
+    params.put("projectId", PROJECT_ID);
+    return new Setup(params, List.of());
+  }
+
+  /** An empty inventory: no repository, so no pin of either kind. */
+  private Setup noDependencies() {
+    emptyEstate();
+    return new Setup(Map.of(), List.of());
+  }
+
+  /** One repository of {@code project}, its pins INTERNAL when they are ours and EXTERNAL else. */
+  private void scannedIn(
+      String project,
+      String repository,
+      String catalogId,
+      RepositoryArchetype archetype,
+      ParsedPin... pins) {
+    store.replaceInventory(
+        repository,
+        project,
+        catalogId,
+        archetype.name(),
+        "main",
+        RepositoryStatus.OK,
+        HEAD_SHA,
+        null,
+        List.of(pins),
+        List.of(
+            GroupConfig.Group.ofKind(GroupConfig.DEFAULT_GROUP, PinKind.INTERNAL),
+            GroupConfig.Group.ofKind(GroupConfig.EXTERNAL_GROUP, PinKind.EXTERNAL)),
+        GroupSource.DEFAULT,
+        pin ->
+            pin.name().startsWith("eu.wohlben.qits:") || pin.name().startsWith("@qits/")
+                ? PinKind.INTERNAL
+                : PinKind.EXTERNAL,
+        SCANNED);
+  }
+
+  private void latest(Ecosystem ecosystem, String name, LatestLookup lookup) {
+    store.recordLatest(ecosystem, name, lookup, SCANNED);
+  }
+
+  private static ParsedPin eventstream() {
+    return ParsedPin.of(
+        Ecosystem.MAVEN,
+        "pom.xml",
+        "eu.wohlben.qits:qits-eventstream",
+        "2026.811.1",
+        null,
+        "dependency:eu.wohlben.qits:qits-eventstream");
+  }
+
+  private static ParsedPin quarkusBom(String version) {
+    return ParsedPin.of(
+        Ecosystem.MAVEN,
+        "pom.xml",
+        "io.quarkus.platform:quarkus-bom",
+        version,
+        null,
+        "dependency:io.quarkus.platform:quarkus-bom");
   }
 
   private static ParsedPin gitlink(String repository) {

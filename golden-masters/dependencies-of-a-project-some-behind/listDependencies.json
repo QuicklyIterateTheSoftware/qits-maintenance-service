@@ -1,0 +1,38 @@
+[
+  {
+    "ecosystem": "npm",
+    "name": "@qits/ui-components",
+    "latest": "2026.9.1",
+    "checkedAt": "2026-01-01T00:00:00Z",
+    "error": null,
+    "pins": [
+      {
+        "repository": "contract-frontend",
+        "version": "2026.8.1",
+        "manifestPath": "package.json",
+        "pending": true
+      }
+    ]
+  },
+  {
+    "ecosystem": "maven",
+    "name": "eu.wohlben.qits:qits-eventstream",
+    "latest": "2026.811.1",
+    "checkedAt": "2026-01-01T00:00:00Z",
+    "error": null,
+    "pins": [
+      {
+        "repository": "contract-service",
+        "version": "2026.811.1",
+        "manifestPath": "pom.xml",
+        "pending": false
+      },
+      {
+        "repository": "other-project-service",
+        "version": "2026.811.1",
+        "manifestPath": "pom.xml",
+        "pending": false
+      }
+    ]
+  }
+]

@@ -251,4 +251,24 @@ class ConsumerPactVerificationTest {
   Map<String, String> aFinishedScan() {
     return states.params(ProviderStates.A_FINISHED_SCAN);
   }
+
+  @State(ProviderStates.DEPENDENCIES_OF_A_PROJECT_SOME_BEHIND)
+  Map<String, String> dependenciesOfAProjectSomeBehind() {
+    return states.params(ProviderStates.DEPENDENCIES_OF_A_PROJECT_SOME_BEHIND);
+  }
+
+  @State(ProviderStates.EXTERNAL_DEPENDENCIES_OF_A_PROJECT_SOME_BEHIND)
+  Map<String, String> externalDependenciesOfAProjectSomeBehind() {
+    return states.params(ProviderStates.EXTERNAL_DEPENDENCIES_OF_A_PROJECT_SOME_BEHIND);
+  }
+
+  @State(ProviderStates.NO_DEPENDENCIES)
+  Map<String, String> noDependencies() {
+    return states.params(ProviderStates.NO_DEPENDENCIES);
+  }
+
+  @State(ProviderStates.NO_EXTERNAL_DEPENDENCIES)
+  Map<String, String> noExternalDependencies() {
+    return states.params(ProviderStates.NO_EXTERNAL_DEPENDENCIES);
+  }
 }
