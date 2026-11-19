@@ -356,6 +356,20 @@ class GoldenMasterRecordingTest {
               "/maintenance/api/adoption/by-release",
               Map.of("repository", "{repoName}", "version", "2026.905.1"),
               null),
+          // The landing app's adoption page (qits-2333): a journey some adopters took and others owe,
+          // two levels deep with a merge, and a release nothing consumes.
+          Interaction.read(
+              ProviderStates.A_RELEASE_SOME_CONSUMERS_ADOPTED,
+              "getAdoptionByRelease",
+              "/maintenance/api/adoption/by-release",
+              Map.of("repository", "{repoName}", "version", "{version}"),
+              null),
+          Interaction.read(
+              ProviderStates.A_RELEASE_NOBODY_CONSUMES,
+              "getAdoptionByRelease",
+              "/maintenance/api/adoption/by-release",
+              Map.of("repository", "{repoName}", "version", "{version}"),
+              null),
           // Every artifact this platform publishes (MaintenanceApi.artifacts); one row per name.
           new Interaction(
               ProviderStates.MANIFESTS_THAT_PIN_ARTIFACTS,
