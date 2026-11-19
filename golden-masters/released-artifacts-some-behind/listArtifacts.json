@@ -1,0 +1,57 @@
+[
+  {
+    "ecosystem": "npm",
+    "name": "@qits/contract-ui",
+    "repository": "contract-frontend",
+    "latest": null,
+    "version": "2026.1103.1",
+    "occurredAt": "2026-01-01T00:00:00Z",
+    "sbomStatus": "MISSING",
+    "dependentCount": 0,
+    "behindCount": 0
+  },
+  {
+    "ecosystem": "daemon",
+    "name": "contract-daemon",
+    "repository": "contract-daemon",
+    "latest": null,
+    "version": "2026.1104.1",
+    "occurredAt": "2026-01-01T00:00:00Z",
+    "sbomStatus": "INGESTED",
+    "dependentCount": 0,
+    "behindCount": 0
+  },
+  {
+    "ecosystem": "maven",
+    "name": "eu.wohlben.qits:contract-core",
+    "repository": "contract-javalib",
+    "latest": "2026.1101.2",
+    "version": "2026.1101.2",
+    "occurredAt": "2026-01-01T00:00:00Z",
+    "sbomStatus": "INGESTED",
+    "dependentCount": 3,
+    "behindCount": 1
+  },
+  {
+    "ecosystem": "maven",
+    "name": "eu.wohlben.qits:contract-service-client",
+    "repository": "contract-service",
+    "latest": null,
+    "version": "2026.1102.1",
+    "occurredAt": "2026-01-01T00:00:00Z",
+    "sbomStatus": "INGESTED",
+    "dependentCount": 0,
+    "behindCount": 0
+  },
+  {
+    "ecosystem": "docker",
+    "name": "qits/contract-service",
+    "repository": "contract-service",
+    "latest": null,
+    "version": "2026.1102.1",
+    "occurredAt": "2026-01-01T00:00:00Z",
+    "sbomStatus": "INGESTED",
+    "dependentCount": 0,
+    "behindCount": 0
+  }
+]

@@ -271,4 +271,14 @@ class ConsumerPactVerificationTest {
   Map<String, String> noExternalDependencies() {
     return states.params(ProviderStates.NO_EXTERNAL_DEPENDENCIES);
   }
+
+  @State(ProviderStates.RELEASED_ARTIFACTS_SOME_BEHIND)
+  Map<String, String> releasedArtifactsSomeBehind() {
+    return states.params(ProviderStates.RELEASED_ARTIFACTS_SOME_BEHIND);
+  }
+
+  @State(ProviderStates.NO_RELEASED_ARTIFACTS)
+  Map<String, String> noReleasedArtifacts() {
+    return states.params(ProviderStates.NO_RELEASED_ARTIFACTS);
+  }
 }

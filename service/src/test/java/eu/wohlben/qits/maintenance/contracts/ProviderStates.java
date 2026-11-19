@@ -25,6 +25,7 @@ import eu.wohlben.qits.maintenance.model.ScanStatus;
 import eu.wohlben.qits.maintenance.peer.FakePeers;
 import eu.wohlben.qits.maintenance.peer.PeerTarget;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
+import eu.wohlben.qits.maintenance.sbom.ParsedSbom;
 import eu.wohlben.qits.maintenance.sbomcheck.SbomCheckService;
 import eu.wohlben.qits.maintenance.work.WorkQueue;
 import io.quarkus.narayana.jta.QuarkusTransaction;
@@ -105,6 +106,9 @@ public class ProviderStates {
 
   /** {@link #NO_DEPENDENCIES} again, for its {@code kind=EXTERNAL} recording. */
   public static final String NO_EXTERNAL_DEPENDENCIES = "no external dependencies";
+
+  public static final String RELEASED_ARTIFACTS_SOME_BEHIND = "released artifacts, some behind";
+  public static final String NO_RELEASED_ARTIFACTS = "no released artifacts";
 
   /** The work item the CLI's {@code qits maintenance automation run --work-item} names. */
   static final String WORK_ITEM = "qits-112";
@@ -192,6 +196,8 @@ public class ProviderStates {
         EXTERNAL_DEPENDENCIES_OF_A_PROJECT_SOME_BEHIND, this::dependenciesOfAProjectSomeBehind);
     states.put(NO_DEPENDENCIES, this::noDependencies);
     states.put(NO_EXTERNAL_DEPENDENCIES, this::noDependencies);
+    states.put(RELEASED_ARTIFACTS_SOME_BEHIND, this::releasedArtifactsSomeBehind);
+    states.put(NO_RELEASED_ARTIFACTS, this::noReleasedArtifacts);
   }
 
   /** Every state name this provider answers for. */
@@ -725,6 +731,121 @@ public class ProviderStates {
   private Setup noDependencies() {
     emptyEstate();
     return new Setup(Map.of(), List.of());
+  }
+
+  /**
+   * Four repositories of {@link #PROJECT_ID}, what each released, and the bills of materials behind
+   * those releases — the landing app's artifacts page (qits-2330):
+   *
+   * <ul>
+   *   <li>{@code contract-javalib} released the maven jar {@code eu.wohlben.qits:contract-core}
+   *       2026.1101.2, INGESTED, whose latest is looked up as that same 2026.1101.2.
+   *   <li>{@code contract-service} pins it and released the image {@code qits/contract-service},
+   *       which embeds it DIRECTLY at 2026.1101.2 — current — and the maven jar {@code
+   *       eu.wohlben.qits:contract-service-client}, which embeds it TRANSITIVELY at 2026.1101.2,
+   *       through {@code eu.wohlben.qits:contract-api}.
+   *   <li>{@code contract-daemon} pins it a release back and released the daemon binary {@code
+   *       contract-daemon}, which embeds it DIRECTLY at 2026.1101.1 — behind.
+   *   <li>{@code contract-frontend} released the npm package {@code @qits/contract-ui}, whose
+   *       document qits-artifacts does not hold: MISSING, so nothing is known of what it embeds.
+   * </ul>
+   *
+   * <p>{@code listArtifacts} answers the five, contract-core with three dependents of which one is
+   * behind; {@code listDependencyDependents} for contract-core answers those three; and {@code
+   * listRepositories} the four.
+   */
+  private Setup releasedArtifactsSomeBehind() {
+    emptyEstate();
+    String core = "eu.wohlben.qits:contract-core";
+    scannedIn(
+        PROJECT_ID,
+        "contract-javalib",
+        "0c0a1d1e-0000-4000-8000-00000000e001",
+        RepositoryArchetype.LIBRARY);
+    scannedIn(
+        PROJECT_ID,
+        REPOSITORY,
+        REPOSITORY_ID,
+        RepositoryArchetype.SERVICE,
+        ParsedPin.of(Ecosystem.MAVEN, "pom.xml", core, "2026.1101.2", null, "dependency:" + core));
+    scannedIn(
+        PROJECT_ID,
+        "contract-daemon",
+        "0c0a1d1e-0000-4000-8000-00000000e002",
+        RepositoryArchetype.DAEMON,
+        ParsedPin.of(Ecosystem.MAVEN, "pom.xml", core, "2026.1101.1", null, "dependency:" + core));
+    scannedIn(
+        PROJECT_ID,
+        "contract-frontend",
+        "0c0a1d1e-0000-4000-8000-00000000e003",
+        RepositoryArchetype.FRONTEND);
+    store.replaceGraph(
+        store.upsertArtifact(
+            Ecosystem.MAVEN,
+            core,
+            "2026.1101.2",
+            "contract-javalib",
+            Instant.parse("2026-11-01T10:00:00Z")),
+        List.of(
+            sbomComponent(
+                Ecosystem.MAVEN, "com.fasterxml.jackson.core:jackson-databind", "2.18.2", true)),
+        List.of(new ParsedSbom.Edge(-1, 0)),
+        SCANNED);
+    store.replaceGraph(
+        store.upsertArtifact(
+            Ecosystem.DOCKER,
+            "qits/contract-service",
+            "2026.1102.1",
+            REPOSITORY,
+            Instant.parse("2026-11-02T10:00:00Z")),
+        List.of(sbomComponent(Ecosystem.MAVEN, core, "2026.1101.2", true)),
+        List.of(new ParsedSbom.Edge(-1, 0)),
+        SCANNED);
+    store.replaceGraph(
+        store.upsertArtifact(
+            Ecosystem.MAVEN,
+            "eu.wohlben.qits:contract-service-client",
+            "2026.1102.1",
+            REPOSITORY,
+            Instant.parse("2026-11-02T10:00:00Z")),
+        List.of(
+            sbomComponent(Ecosystem.MAVEN, "eu.wohlben.qits:contract-api", "2026.1102.1", true),
+            sbomComponent(Ecosystem.MAVEN, core, "2026.1101.2", false)),
+        List.of(new ParsedSbom.Edge(-1, 0), new ParsedSbom.Edge(0, 1)),
+        SCANNED);
+    store.replaceGraph(
+        store.upsertDaemonArtifact(
+            "contract-daemon",
+            "2026.1104.1",
+            "contract-daemon",
+            Instant.parse("2026-11-04T10:00:00Z")),
+        List.of(sbomComponent(Ecosystem.MAVEN, core, "2026.1101.1", true)),
+        List.of(new ParsedSbom.Edge(-1, 0)),
+        SCANNED);
+    store.markArtifactMissing(
+        store.upsertArtifact(
+            Ecosystem.NPM,
+            "@qits/contract-ui",
+            "2026.1103.1",
+            "contract-frontend",
+            Instant.parse("2026-11-03T10:00:00Z")));
+    latest(Ecosystem.MAVEN, core, LatestLookup.found("2026.1101.2", null));
+    Map<String, String> params = new TreeMap<>();
+    params.put("projectId", PROJECT_ID);
+    return new Setup(params, List.of());
+  }
+
+  /** Nothing released and nothing scanned: no artifact, so nobody embeds anything. */
+  private Setup noReleasedArtifacts() {
+    emptyEstate();
+    return new Setup(Map.of(), List.of());
+  }
+
+  /** One component of a released artifact's bill of materials; its bom-ref is its purl. */
+  private static ParsedSbom.Component sbomComponent(
+      Ecosystem ecosystem, String name, String version, boolean direct) {
+    String purl = "pkg:" + ecosystem.wireName() + "/" + name.replace(':', '/') + "@" + version;
+    return new ParsedSbom.Component(purl, purl, ecosystem, name, version, direct);
   }
 
   /** One repository of {@code project}, its pins INTERNAL when they are ours and EXTERNAL else. */

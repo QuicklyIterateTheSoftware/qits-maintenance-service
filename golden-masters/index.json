@@ -745,6 +745,57 @@
       ]
     },
     {
+      "name": "no released artifacts",
+      "slug": "no-released-artifacts",
+      "params": {},
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "listArtifacts",
+          "method": "GET",
+          "path": "/maintenance/api/artifacts",
+          "status": 200,
+          "file": "no-released-artifacts/listArtifacts.json",
+          "frozen": {
+            "ids": [],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        },
+        {
+          "operationId": "listDependencyDependents",
+          "method": "GET",
+          "path": "/maintenance/api/dependencies/dependents",
+          "query": {
+            "ecosystem": "maven",
+            "name": "eu.wohlben.qits:contract-core"
+          },
+          "status": 200,
+          "file": "no-released-artifacts/listDependencyDependents.json",
+          "frozen": {
+            "ids": [],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        },
+        {
+          "operationId": "listRepositories",
+          "method": "GET",
+          "path": "/maintenance/api/repositories",
+          "status": 200,
+          "file": "no-released-artifacts/listRepositories.json",
+          "frozen": {
+            "ids": [],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
       "name": "pending bumps",
       "slug": "pending-bumps",
       "params": {
@@ -821,6 +872,65 @@
             ],
             "strings": [],
             "listFilteredTo": "$.bumps"
+          }
+        }
+      ]
+    },
+    {
+      "name": "released artifacts, some behind",
+      "slug": "released-artifacts-some-behind",
+      "params": {
+        "projectId": "00000000-0000-4000-8000-000000000001"
+      },
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "listArtifacts",
+          "method": "GET",
+          "path": "/maintenance/api/artifacts",
+          "status": 200,
+          "file": "released-artifacts-some-behind/listArtifacts.json",
+          "frozen": {
+            "ids": [],
+            "instants": [
+              "$[*].occurredAt"
+            ],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        },
+        {
+          "operationId": "listDependencyDependents",
+          "method": "GET",
+          "path": "/maintenance/api/dependencies/dependents",
+          "query": {
+            "ecosystem": "maven",
+            "name": "eu.wohlben.qits:contract-core"
+          },
+          "status": 200,
+          "file": "released-artifacts-some-behind/listDependencyDependents.json",
+          "frozen": {
+            "ids": [],
+            "instants": [
+              "$.dependents[*].occurredAt"
+            ],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        },
+        {
+          "operationId": "listRepositories",
+          "method": "GET",
+          "path": "/maintenance/api/repositories",
+          "status": 200,
+          "file": "released-artifacts-some-behind/listRepositories.json",
+          "frozen": {
+            "ids": [],
+            "instants": [
+              "$[*].lastScanAt"
+            ],
+            "strings": [],
+            "listFilteredTo": null
           }
         }
       ]

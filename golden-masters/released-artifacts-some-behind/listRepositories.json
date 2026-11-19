@@ -1,0 +1,122 @@
+[
+  {
+    "name": "contract-daemon",
+    "project": "00000000-0000-4000-8000-000000000001",
+    "archetype": "DAEMON",
+    "lastScanAt": "2026-01-01T00:00:00Z",
+    "headSha": "3f1a9c0b7d2e4f5a6b8c9d0e1f2a3b4c5d6e7f80",
+    "status": "OK",
+    "message": null,
+    "pending": 1,
+    "groups": [
+      {
+        "name": "dependencies",
+        "source": "DEFAULT",
+        "kind": "INTERNAL",
+        "branch": "maintenance/dependencies",
+        "state": "NONE",
+        "headSha": null,
+        "pending": 1
+      },
+      {
+        "name": "external",
+        "source": "DEFAULT",
+        "kind": "EXTERNAL",
+        "branch": "maintenance/external",
+        "state": "NONE",
+        "headSha": null,
+        "pending": 0
+      }
+    ]
+  },
+  {
+    "name": "contract-frontend",
+    "project": "00000000-0000-4000-8000-000000000001",
+    "archetype": "FRONTEND",
+    "lastScanAt": "2026-01-01T00:00:00Z",
+    "headSha": "3f1a9c0b7d2e4f5a6b8c9d0e1f2a3b4c5d6e7f80",
+    "status": "OK",
+    "message": null,
+    "pending": 0,
+    "groups": [
+      {
+        "name": "dependencies",
+        "source": "DEFAULT",
+        "kind": "INTERNAL",
+        "branch": "maintenance/dependencies",
+        "state": "NONE",
+        "headSha": null,
+        "pending": 0
+      },
+      {
+        "name": "external",
+        "source": "DEFAULT",
+        "kind": "EXTERNAL",
+        "branch": "maintenance/external",
+        "state": "NONE",
+        "headSha": null,
+        "pending": 0
+      }
+    ]
+  },
+  {
+    "name": "contract-javalib",
+    "project": "00000000-0000-4000-8000-000000000001",
+    "archetype": "LIBRARY",
+    "lastScanAt": "2026-01-01T00:00:00Z",
+    "headSha": "3f1a9c0b7d2e4f5a6b8c9d0e1f2a3b4c5d6e7f80",
+    "status": "OK",
+    "message": null,
+    "pending": 0,
+    "groups": [
+      {
+        "name": "dependencies",
+        "source": "DEFAULT",
+        "kind": "INTERNAL",
+        "branch": "maintenance/dependencies",
+        "state": "NONE",
+        "headSha": null,
+        "pending": 0
+      },
+      {
+        "name": "external",
+        "source": "DEFAULT",
+        "kind": "EXTERNAL",
+        "branch": "maintenance/external",
+        "state": "NONE",
+        "headSha": null,
+        "pending": 0
+      }
+    ]
+  },
+  {
+    "name": "contract-service",
+    "project": "00000000-0000-4000-8000-000000000001",
+    "archetype": "SERVICE",
+    "lastScanAt": "2026-01-01T00:00:00Z",
+    "headSha": "3f1a9c0b7d2e4f5a6b8c9d0e1f2a3b4c5d6e7f80",
+    "status": "OK",
+    "message": null,
+    "pending": 0,
+    "groups": [
+      {
+        "name": "dependencies",
+        "source": "DEFAULT",
+        "kind": "INTERNAL",
+        "branch": "maintenance/dependencies",
+        "state": "NONE",
+        "headSha": null,
+        "pending": 0
+      },
+      {
+        "name": "external",
+        "source": "DEFAULT",
+        "kind": "EXTERNAL",
+        "branch": "maintenance/external",
+        "state": "NONE",
+        "headSha": null,
+        "pending": 0
+      }
+    ]
+  }
+]
