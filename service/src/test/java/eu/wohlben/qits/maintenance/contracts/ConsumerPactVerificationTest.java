@@ -316,4 +316,14 @@ class ConsumerPactVerificationTest {
   Map<String, String> noSuchBump() {
     return states.params(ProviderStates.NO_SUCH_BUMP);
   }
+
+  @State(ProviderStates.A_RELEASE_SOME_CONSUMERS_ADOPTED)
+  Map<String, String> aReleaseSomeConsumersAdopted() {
+    return states.params(ProviderStates.A_RELEASE_SOME_CONSUMERS_ADOPTED);
+  }
+
+  @State(ProviderStates.A_RELEASE_NOBODY_CONSUMES)
+  Map<String, String> aReleaseNobodyConsumes() {
+    return states.params(ProviderStates.A_RELEASE_NOBODY_CONSUMES);
+  }
 }

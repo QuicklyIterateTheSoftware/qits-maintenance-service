@@ -1,0 +1,12 @@
+{
+  "repository": "contract-ui-jslib",
+  "catalogId": "00000000-0000-4000-8000-000000000001",
+  "version": "2026.905.1",
+  "packages": [
+    {
+      "ecosystem": "npm",
+      "name": "@qits/contract-ui"
+    }
+  ],
+  "adopters": []
+}

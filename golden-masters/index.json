@@ -140,6 +140,36 @@
       ]
     },
     {
+      "name": "a release nobody consumes",
+      "slug": "a-release-nobody-consumes",
+      "params": {
+        "repoName": "contract-ui-jslib",
+        "version": "2026.905.1"
+      },
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "getAdoptionByRelease",
+          "method": "GET",
+          "path": "/maintenance/api/adoption/by-release",
+          "query": {
+            "repository": "{repoName}",
+            "version": "{version}"
+          },
+          "status": 200,
+          "file": "a-release-nobody-consumes/getAdoptionByRelease.json",
+          "frozen": {
+            "ids": [
+              "$.catalogId"
+            ],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
       "name": "a release request this service opened",
       "slug": "a-release-request-this-service-opened",
       "params": {
@@ -377,6 +407,39 @@
             "strings": [
               "$.automations[*].branch"
             ],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "a release some consumers adopted",
+      "slug": "a-release-some-consumers-adopted",
+      "params": {
+        "repoName": "contract-ui-jslib",
+        "version": "2026.905.1"
+      },
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "getAdoptionByRelease",
+          "method": "GET",
+          "path": "/maintenance/api/adoption/by-release",
+          "query": {
+            "repository": "{repoName}",
+            "version": "{version}"
+          },
+          "status": 200,
+          "file": "a-release-some-consumers-adopted/getAdoptionByRelease.json",
+          "frozen": {
+            "ids": [
+              "$.catalogId",
+              "$.adopters[*].catalogId"
+            ],
+            "instants": [
+              "$.adopters[*].adoptedAt"
+            ],
+            "strings": [],
             "listFilteredTo": null
           }
         }

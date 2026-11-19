@@ -169,6 +169,29 @@ public class ProviderStates {
   /** The fold the bump-page states' automations ran at, abbreviated into their sentences. */
   static final String BUMP_FOLD_SHA = "0123456789abcdef0123456789abcdef01234567";
 
+  /**
+   * The landing app's adoption page (qits-2333): {@code contract-ui-jslib} released {@code
+   * @qits/contract-ui} at {@link #ADOPTION_VERSION}; {@code contract-frontend} shipped it in its own
+   * release (ADOPTED, with {@code adoptedVersion} and {@code adoptedAt}), {@code
+   * contract-admin-frontend} pins it and has not released (PENDING), and {@code contract-service}
+   * carries both frontends as submodules — depth 2, its {@code via} naming both (PENDING, since the
+   * service never released). {@code getAdoptionByRelease} answers it under the params {@code
+   * repoName} and {@code version}.
+   */
+  public static final String A_RELEASE_SOME_CONSUMERS_ADOPTED =
+      "a release some consumers adopted";
+
+  /**
+   * The adoption page's empty journey (qits-2333): {@code contract-ui-jslib} released {@code
+   * @qits/contract-ui} at {@link #ADOPTION_VERSION} and nothing pins or embeds it, so {@code
+   * getAdoptionByRelease} answers its one package and no adopters, under the params {@code
+   * repoName} and {@code version}.
+   */
+  public static final String A_RELEASE_NOBODY_CONSUMES = "a release nobody consumes";
+
+  /** The release the adoption-page states ask about. */
+  static final String ADOPTION_VERSION = "2026.905.1";
+
   public static final String RELEASED_ARTIFACTS_SOME_BEHIND = "released artifacts, some behind";
   public static final String NO_RELEASED_ARTIFACTS = "no released artifacts";
 
@@ -265,6 +288,8 @@ public class ProviderStates {
     states.put(A_BUMP_THAT_CHANGED_NOTHING, this::bumpThatChangedNothing);
     states.put(A_FAILED_BUMP, this::failedBump);
     states.put(NO_SUCH_BUMP, ProviderStates::noSuchBump);
+    states.put(A_RELEASE_SOME_CONSUMERS_ADOPTED, this::releaseSomeConsumersAdopted);
+    states.put(A_RELEASE_NOBODY_CONSUMES, this::releaseNobodyConsumes);
     states.put(RELEASED_ARTIFACTS_SOME_BEHIND, this::releasedArtifactsSomeBehind);
     states.put(NO_RELEASED_ARTIFACTS, this::noReleasedArtifacts);
   }
@@ -634,6 +659,93 @@ public class ProviderStates {
     Map<String, String> params = new TreeMap<>();
     params.put("repoName", library);
     params.put("repositoryId", libraryId);
+    return new Setup(params, List.of());
+  }
+
+  /**
+   * The adoption page's journey (qits-2333). The library releases {@code @qits/contract-ui} at
+   * {@link #ADOPTION_VERSION}; both frontends pin it; {@code contract-frontend}'s own release
+   * {@code 2026.905.2}, its bill of materials naming the library's package, is what makes it
+   * ADOPTED at {@code 2026-09-06T09:00:00Z}; {@code contract-admin-frontend} never released, so it
+   * is PENDING. The service gitlinks both frontends — the merge, at depth 2 via both — and is
+   * PENDING. The wrapper has everything and is never on the journey.
+   */
+  private Setup releaseSomeConsumersAdopted() {
+    emptyEstate();
+    String library = "contract-ui-jslib";
+    String frontend = "contract-frontend";
+    String adminFrontend = "contract-admin-frontend";
+    String service = REPOSITORY;
+    ParsedPin libraryPin =
+        ParsedPin.of(
+            Ecosystem.NPM,
+            "package.json",
+            "@qits/contract-ui",
+            ADOPTION_VERSION,
+            null,
+            "dependency:@qits/contract-ui");
+    scanned(library, "0c0a1d1e-0000-4000-8000-00000000b001", RepositoryArchetype.LIBRARY);
+    store.upsertArtifact(
+        Ecosystem.NPM,
+        "@qits/contract-ui",
+        ADOPTION_VERSION,
+        library,
+        Instant.parse("2026-09-05T09:00:00Z"));
+    scanned(
+        frontend, "0c0a1d1e-0000-4000-8000-00000000b002", RepositoryArchetype.FRONTEND, libraryPin);
+    store.replaceGraph(
+        store.upsertArtifact(
+            Ecosystem.NPM,
+            "@qits/contract-frontend",
+            "2026.905.2",
+            frontend,
+            Instant.parse("2026-09-06T09:00:00Z")),
+        List.of(sbomComponent(Ecosystem.NPM, "@qits/contract-ui", ADOPTION_VERSION, true)),
+        List.of(new ParsedSbom.Edge(-1, 0)),
+        SCANNED);
+    scanned(
+        adminFrontend,
+        "0c0a1d1e-0000-4000-8000-00000000b003",
+        RepositoryArchetype.FRONTEND,
+        libraryPin);
+    scanned(
+        service,
+        REPOSITORY_ID,
+        RepositoryArchetype.SERVICE,
+        gitlink(frontend),
+        gitlink(adminFrontend));
+    scanned(
+        "qits-qits",
+        "0c0a1d1e-0000-4000-8000-00000000b004",
+        RepositoryArchetype.PROJECT,
+        gitlink(library),
+        gitlink(frontend),
+        gitlink(adminFrontend),
+        gitlink(service));
+    Map<String, String> params = new TreeMap<>();
+    params.put("repoName", library);
+    params.put("version", ADOPTION_VERSION);
+    return new Setup(params, List.of());
+  }
+
+  /**
+   * The library alone, its release of {@code @qits/contract-ui} at {@link #ADOPTION_VERSION}
+   * published and nothing in the inventory pinning, embedding or submoduling it: one package, no
+   * adopters.
+   */
+  private Setup releaseNobodyConsumes() {
+    emptyEstate();
+    String library = "contract-ui-jslib";
+    scanned(library, "0c0a1d1e-0000-4000-8000-00000000b001", RepositoryArchetype.LIBRARY);
+    store.upsertArtifact(
+        Ecosystem.NPM,
+        "@qits/contract-ui",
+        ADOPTION_VERSION,
+        library,
+        Instant.parse("2026-09-05T09:00:00Z"));
+    Map<String, String> params = new TreeMap<>();
+    params.put("repoName", library);
+    params.put("version", ADOPTION_VERSION);
     return new Setup(params, List.of());
   }
 
