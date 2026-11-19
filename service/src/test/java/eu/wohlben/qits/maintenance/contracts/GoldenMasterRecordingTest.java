@@ -146,6 +146,31 @@ class GoldenMasterRecordingTest {
               "/maintenance/api/bumps/{releasedBumpId}",
               Map.of(),
               null),
+          // The landing app's bump page (qits-2332): an automation that changed nothing, one that
+          // failed with its failing step, and an id that names no bump.
+          Interaction.read(
+              ProviderStates.A_BUMP_THAT_CHANGED_NOTHING,
+              "getBump",
+              "/maintenance/api/bumps/{bumpId}",
+              Map.of(),
+              null),
+          Interaction.read(
+              ProviderStates.A_FAILED_BUMP,
+              "getBump",
+              "/maintenance/api/bumps/{bumpId}",
+              Map.of(),
+              null),
+          new Interaction(
+              ProviderStates.NO_SUCH_BUMP,
+              "getBump",
+              "GET",
+              "/maintenance/api/bumps/{bumpId}",
+              Map.of(),
+              404,
+              null,
+              null,
+              List.of(),
+              null),
           Interaction.read(
               ProviderStates.MANIFESTS_THAT_PIN_ARTIFACTS,
               "listDependencyPins",

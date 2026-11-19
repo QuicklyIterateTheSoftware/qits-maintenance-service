@@ -1,0 +1,35 @@
+{
+  "id": "00000000-0000-4000-8000-000000000001",
+  "repository": "contract-service",
+  "group": "golden-recordings-maven",
+  "mode": "AUTOMATION",
+  "branch": "maintenance/automations/golden-recordings-maven/00000000-0000-4000-8000-000000000002",
+  "environment": "dev",
+  "trigger": "FOLD",
+  "status": "FAILED",
+  "ciEventId": null,
+  "ciRunId": "run-contract-1,run-contract-2",
+  "ciRunIds": [
+    "run-contract-1",
+    "run-contract-2"
+  ],
+  "configPath": "ci/src/main/resources/platform-pipelines/automations/golden-recordings-maven.yml",
+  "ciRunStatus": "FAILED",
+  "startedAt": "2026-01-01T00:00:00Z",
+  "finishedAt": "2026-01-01T00:00:00Z",
+  "message": "the golden recordings (maven) run ended FAILED at step 0 (exit 1): [ERROR] Tests run: 42, Failures: 1, Errors: 0, Skipped: 0",
+  "resultSha": null,
+  "releaseRequestId": "00000000-0000-4000-8000-000000000002",
+  "releaseState": null,
+  "releaseDetail": null,
+  "releaseStateAt": null,
+  "baseRef": null,
+  "replaceHead": null,
+  "changes": [],
+  "failure": {
+    "stepIndex": 0,
+    "image": "qits/build-images/ci-slot:latest",
+    "exitCode": 1,
+    "excerpt": "[ERROR] Tests run: 42, Failures: 1, Errors: 0, Skipped: 0\n[ERROR] GoldenMasterRecordingTest.goldenMastersMatchTheProvider:118 golden-masters/pending-bumps/getBump.json differs\n[ERROR] BUILD FAILURE"
+  }
+}

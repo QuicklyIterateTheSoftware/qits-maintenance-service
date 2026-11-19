@@ -301,4 +301,19 @@ class ConsumerPactVerificationTest {
   Map<String, String> noExternalDependenciesMatchingAGlob() {
     return states.params(ProviderStates.NO_EXTERNAL_DEPENDENCIES_MATCHING_A_GLOB);
   }
+
+  @State(ProviderStates.A_BUMP_THAT_CHANGED_NOTHING)
+  Map<String, String> aBumpThatChangedNothing() {
+    return states.params(ProviderStates.A_BUMP_THAT_CHANGED_NOTHING);
+  }
+
+  @State(ProviderStates.A_FAILED_BUMP)
+  Map<String, String> aFailedBump() {
+    return states.params(ProviderStates.A_FAILED_BUMP);
+  }
+
+  @State(ProviderStates.NO_SUCH_BUMP)
+  Map<String, String> noSuchBump() {
+    return states.params(ProviderStates.NO_SUCH_BUMP);
+  }
 }

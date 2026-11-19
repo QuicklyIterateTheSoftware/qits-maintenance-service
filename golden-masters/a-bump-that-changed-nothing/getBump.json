@@ -1,0 +1,29 @@
+{
+  "id": "00000000-0000-4000-8000-000000000001",
+  "repository": "contract-service",
+  "group": "entity-diagram",
+  "mode": "AUTOMATION",
+  "branch": "maintenance/automations/entity-diagram/00000000-0000-4000-8000-000000000002",
+  "environment": "dev",
+  "trigger": "FOLD",
+  "status": "NOTHING_TO_DO",
+  "ciEventId": null,
+  "ciRunId": "run-contract-1",
+  "ciRunIds": [
+    "run-contract-1"
+  ],
+  "configPath": "ci/src/main/resources/platform-pipelines/automations/entity-diagram.yml",
+  "ciRunStatus": "SUCCESS",
+  "startedAt": "2026-01-01T00:00:00Z",
+  "finishedAt": "2026-01-01T00:00:00Z",
+  "message": "unchanged: the run passed and maintenance/automations/entity-diagram/00000000-0000-4000-8000-000000000002 did not move, so entity diagram are fresh at 0123456789ab",
+  "resultSha": null,
+  "releaseRequestId": "00000000-0000-4000-8000-000000000002",
+  "releaseState": null,
+  "releaseDetail": null,
+  "releaseStateAt": null,
+  "baseRef": null,
+  "replaceHead": null,
+  "changes": [],
+  "failure": null
+}

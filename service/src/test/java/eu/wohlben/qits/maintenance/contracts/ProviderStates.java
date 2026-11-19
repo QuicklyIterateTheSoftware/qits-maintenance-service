@@ -143,6 +143,32 @@ public class ProviderStates {
   /** A glob no dependency of {@link #DEPENDENCIES_MATCHING_A_GLOB_SOME_BEHIND} is named by. */
   static final String UNMATCHED_GLOB = "nothing-matches-*";
 
+  /**
+   * The landing app's bump page (qits-2332): one FOLD automation of {@code entity-diagram} that ran
+   * green and left its branch where it was — NOTHING_TO_DO, one CI run, no changes and no failure.
+   * {@code getBump} answers it under the param {@code bumpId}.
+   */
+  public static final String A_BUMP_THAT_CHANGED_NOTHING = "a bump that changed nothing";
+
+  /**
+   * The bump page's red row (qits-2332): one FOLD automation of {@code golden-recordings-maven}
+   * FAILED over two CI runs, its failing step recorded — {@code getBump} answers it, {@code
+   * failure} set, under the param {@code bumpId}.
+   */
+  public static final String A_FAILED_BUMP = "a failed bump";
+
+  /**
+   * The bump page's unknown id (qits-2332): {@code bumpId} names no row, so {@code getBump} answers
+   * 404. Nothing is seeded.
+   */
+  public static final String NO_SUCH_BUMP = "no such bump";
+
+  /** The id {@link #NO_SUCH_BUMP} asks for: a well-formed uuid no state ever seeds. */
+  static final String UNKNOWN_BUMP_ID = "0b0b0b0b-0000-4000-8000-00000000dead";
+
+  /** The fold the bump-page states' automations ran at, abbreviated into their sentences. */
+  static final String BUMP_FOLD_SHA = "0123456789abcdef0123456789abcdef01234567";
+
   public static final String RELEASED_ARTIFACTS_SOME_BEHIND = "released artifacts, some behind";
   public static final String NO_RELEASED_ARTIFACTS = "no released artifacts";
 
@@ -236,6 +262,9 @@ public class ProviderStates {
     states.put(EXTERNAL_DEPENDENCIES_MATCHING_A_GLOB_SOME_BEHIND, this::dependenciesMatchingAGlob);
     states.put(NO_DEPENDENCIES_MATCHING_A_GLOB, this::dependenciesMatchingAGlob);
     states.put(NO_EXTERNAL_DEPENDENCIES_MATCHING_A_GLOB, this::dependenciesMatchingAGlob);
+    states.put(A_BUMP_THAT_CHANGED_NOTHING, this::bumpThatChangedNothing);
+    states.put(A_FAILED_BUMP, this::failedBump);
+    states.put(NO_SUCH_BUMP, ProviderStates::noSuchBump);
     states.put(RELEASED_ARTIFACTS_SOME_BEHIND, this::releasedArtifactsSomeBehind);
     states.put(NO_RELEASED_ARTIFACTS, this::noReleasedArtifacts);
   }
@@ -378,6 +407,54 @@ public class ProviderStates {
   /** Nothing of this state's own: the list it answers holds no bump a state created. */
   private Setup noPendingBumps() {
     return new Setup(Map.of(), List.of());
+  }
+
+  /**
+   * One {@code entity-diagram} automation of {@link #REQUEST_ID} at {@link #BUMP_FOLD_SHA}, run on
+   * its own branch by one CI run that passed, the branch unmoved: NOTHING_TO_DO with the sentence
+   * {@code AutomationService} writes for it, no changes, no failure and no release state.
+   */
+  private Setup bumpThatChangedNothing() {
+    String kind = "entity-diagram";
+    String branch = AutomationService.BRANCH_PREFIX + kind + "/" + REQUEST_ID;
+    UUID id =
+        automationBump(
+            kind,
+            branch,
+            "NOTHING_TO_DO",
+            "run-contract-1",
+            "SUCCESS",
+            "unchanged: the run passed and "
+                + branch
+                + " did not move, so entity diagram are fresh at "
+                + BUMP_FOLD_SHA.substring(0, 12),
+            false);
+    return new Setup(Map.of("bumpId", id.toString()), List.of());
+  }
+
+  /**
+   * One {@code golden-recordings-maven} automation of {@link #REQUEST_ID} at {@link
+   * #BUMP_FOLD_SHA} that FAILED on its second CI run — both run ids on the row — with the failing
+   * step, its image, exit code and a three-line surefire excerpt; no changes.
+   */
+  private Setup failedBump() {
+    String kind = "golden-recordings-maven";
+    UUID id =
+        automationBump(
+            kind,
+            AutomationService.BRANCH_PREFIX + kind + "/" + REQUEST_ID,
+            "FAILED",
+            "run-contract-1,run-contract-2",
+            "FAILED",
+            "the golden recordings (maven) run ended FAILED at step 0 (exit 1): [ERROR] Tests run:"
+                + " 42, Failures: 1, Errors: 0, Skipped: 0",
+            true);
+    return new Setup(Map.of("bumpId", id.toString()), List.of());
+  }
+
+  /** No row: {@link #UNKNOWN_BUMP_ID} is a uuid no state seeds, so {@code getBump} answers 404. */
+  private static Setup noSuchBump() {
+    return new Setup(Map.of("bumpId", UNKNOWN_BUMP_ID), List.of());
   }
 
   /**
@@ -1103,6 +1180,53 @@ public class ProviderStates {
               }
               row.persist();
             });
+  }
+
+  /** One FOLD automation row of {@link #REPOSITORY}, ended at {@link #FUTURE} plus a minute. */
+  private UUID automationBump(
+      String kind,
+      String branch,
+      String status,
+      String runIds,
+      String ciRunStatus,
+      String message,
+      boolean failedStep) {
+    UUID id = UUID.randomUUID();
+    QuarkusTransaction.requiringNew()
+        .run(
+            () -> {
+              MtBump row = new MtBump();
+              row.id = id;
+              row.repository = REPOSITORY;
+              row.groupName = kind;
+              row.mode = BumpMode.AUTOMATION.name();
+              row.automationKind = kind;
+              row.branch = branch;
+              row.environment = "dev";
+              row.trigger = "FOLD";
+              row.status = status;
+              row.changes = "[]";
+              row.releaseRequestId = REQUEST_ID;
+              row.foldSha = BUMP_FOLD_SHA;
+              row.ciRunId = runIds;
+              row.ciRunStatus = ciRunStatus;
+              row.message = message;
+              row.startedAt = FUTURE;
+              row.finishedAt = FUTURE.plusSeconds(60);
+              if (failedStep) {
+                row.failedStepIndex = 0;
+                row.failedStepImage = "qits/build-images/ci-slot:latest";
+                row.failedStepExit = 1;
+                row.failureExcerpt =
+                    "[ERROR] Tests run: 42, Failures: 1, Errors: 0, Skipped: 0\n"
+                        + "[ERROR] GoldenMasterRecordingTest.goldenMastersMatchTheProvider:118"
+                        + " golden-masters/pending-bumps/getBump.json differs\n"
+                        + "[ERROR] BUILD FAILURE";
+              }
+              row.persist();
+            });
+    created.add(id);
+    return id;
   }
 
   private static Map<String, String> change(

@@ -3,6 +3,69 @@
   "provider": "qits-maintenance",
   "states": [
     {
+      "name": "a bump that changed nothing",
+      "slug": "a-bump-that-changed-nothing",
+      "params": {
+        "bumpId": "00000000-0000-4000-8000-000000000001"
+      },
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "getBump",
+          "method": "GET",
+          "path": "/maintenance/api/bumps/{bumpId}",
+          "status": 200,
+          "file": "a-bump-that-changed-nothing/getBump.json",
+          "frozen": {
+            "ids": [
+              "$.id",
+              "$.releaseRequestId"
+            ],
+            "instants": [
+              "$.startedAt",
+              "$.finishedAt"
+            ],
+            "strings": [
+              "$.branch",
+              "$.message"
+            ],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "a failed bump",
+      "slug": "a-failed-bump",
+      "params": {
+        "bumpId": "00000000-0000-4000-8000-000000000001"
+      },
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "getBump",
+          "method": "GET",
+          "path": "/maintenance/api/bumps/{bumpId}",
+          "status": 200,
+          "file": "a-failed-bump/getBump.json",
+          "frozen": {
+            "ids": [
+              "$.id",
+              "$.releaseRequestId"
+            ],
+            "instants": [
+              "$.startedAt",
+              "$.finishedAt"
+            ],
+            "strings": [
+              "$.branch"
+            ],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
       "name": "a finished scan",
       "slug": "a-finished-scan",
       "params": {
@@ -932,6 +995,31 @@
             "ids": [],
             "instants": [],
             "strings": [],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "no such bump",
+      "slug": "no-such-bump",
+      "params": {
+        "bumpId": "00000000-0000-4000-8000-000000000001"
+      },
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "getBump",
+          "method": "GET",
+          "path": "/maintenance/api/bumps/{bumpId}",
+          "status": 404,
+          "file": "no-such-bump/getBump.json",
+          "frozen": {
+            "ids": [],
+            "instants": [],
+            "strings": [
+              "$.message"
+            ],
             "listFilteredTo": null
           }
         }
