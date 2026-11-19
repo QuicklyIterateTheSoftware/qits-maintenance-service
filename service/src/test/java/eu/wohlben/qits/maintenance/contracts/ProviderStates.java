@@ -72,30 +72,6 @@ public class ProviderStates {
       "a repository whose manifests pin golden masters";
   public static final String A_REPOSITORY_WITH_DOWNSTREAM_COMPONENTS =
       "a repository with downstream components";
-
-  /**
-   * The landing app's adoption page (qits-2333): {@code contract-ui-jslib} released {@code
-   * @qits/contract-ui} at {@link #ADOPTION_VERSION}; {@code contract-frontend} shipped it in its own
-   * release (ADOPTED, with {@code adoptedVersion} and {@code adoptedAt}), {@code
-   * contract-admin-frontend} pins it and has not released (PENDING), and {@code contract-service}
-   * carries both frontends as submodules — depth 2, its {@code via} naming both (PENDING, since the
-   * service never released). {@code getAdoptionByRelease} answers it under the params {@code
-   * repoName} and {@code version}.
-   */
-  public static final String A_RELEASE_SOME_CONSUMERS_ADOPTED =
-      "a release some consumers adopted";
-
-  /**
-   * The adoption page's empty journey (qits-2333): {@code contract-ui-jslib} released {@code
-   * @qits/contract-ui} at {@link #ADOPTION_VERSION} and nothing pins or embeds it, so {@code
-   * getAdoptionByRelease} answers its one package and no adopters, under the params {@code
-   * repoName} and {@code version}.
-   */
-  public static final String A_RELEASE_NOBODY_CONSUMES = "a release nobody consumes";
-
-  /** The release the adoption-page states ask about. */
-  static final String ADOPTION_VERSION = "2026.905.1";
-
   public static final String A_RELEASE_REQUEST_WITH_AUTOMATIONS =
       "a release request with automations";
   public static final String A_RELEASE_REQUEST_WITH_A_FAILED_AUTOMATION =
@@ -222,6 +198,29 @@ public class ProviderStates {
   /** The name {@link #NO_SUCH_REPOSITORY} asks for: one no state ever scans. */
   static final String UNKNOWN_REPOSITORY = "contract-unknown-service";
 
+  /**
+   * The landing app's adoption page (qits-2333): {@code contract-ui-jslib} released {@code
+   * @qits/contract-ui} at {@link #ADOPTION_VERSION}; {@code contract-frontend} shipped it in its own
+   * release (ADOPTED, with {@code adoptedVersion} and {@code adoptedAt}), {@code
+   * contract-admin-frontend} pins it and has not released (PENDING), and {@code contract-service}
+   * carries both frontends as submodules — depth 2, its {@code via} naming both (PENDING, since the
+   * service never released). {@code getAdoptionByRelease} answers it under the params {@code
+   * repoName} and {@code version}.
+   */
+  public static final String A_RELEASE_SOME_CONSUMERS_ADOPTED =
+      "a release some consumers adopted";
+
+  /**
+   * The adoption page's empty journey (qits-2333): {@code contract-ui-jslib} released {@code
+   * @qits/contract-ui} at {@link #ADOPTION_VERSION} and nothing pins or embeds it, so {@code
+   * getAdoptionByRelease} answers its one package and no adopters, under the params {@code
+   * repoName} and {@code version}.
+   */
+  public static final String A_RELEASE_NOBODY_CONSUMES = "a release nobody consumes";
+
+  /** The release the adoption-page states ask about. */
+  static final String ADOPTION_VERSION = "2026.905.1";
+
   public static final String RELEASED_ARTIFACTS_SOME_BEHIND = "released artifacts, some behind";
   public static final String NO_RELEASED_ARTIFACTS = "no released artifacts";
 
@@ -291,8 +290,6 @@ public class ProviderStates {
     states.put(
         A_REPOSITORY_WHOSE_MANIFESTS_PIN_GOLDEN_MASTERS, this::repositoryPinningGoldenMasters);
     states.put(A_REPOSITORY_WITH_DOWNSTREAM_COMPONENTS, this::downstreamComponents);
-    states.put(A_RELEASE_SOME_CONSUMERS_ADOPTED, this::releaseSomeConsumersAdopted);
-    states.put(A_RELEASE_NOBODY_CONSUMES, this::releaseNobodyConsumes);
     states.put(A_RELEASE_REQUEST_WITH_AUTOMATIONS, this::releaseRequestWithAutomations);
     states.put(A_RELEASE_REQUEST_WITH_A_FAILED_AUTOMATION, this::releaseRequestToRerun);
     states.put(A_RELEASE_REQUEST_WITH_AN_AUTOMATION_TO_RERUN, this::releaseRequestToRerun);
@@ -323,6 +320,8 @@ public class ProviderStates {
     states.put(A_REPOSITORY_WITH_PINS_AND_BUMPS, this::repositoryWithPinsAndBumps);
     states.put(A_REPOSITORY_WITH_NOTHING_PINNED, this::repositoryWithNothingPinned);
     states.put(NO_SUCH_REPOSITORY, this::noSuchRepository);
+    states.put(A_RELEASE_SOME_CONSUMERS_ADOPTED, this::releaseSomeConsumersAdopted);
+    states.put(A_RELEASE_NOBODY_CONSUMES, this::releaseNobodyConsumes);
     states.put(RELEASED_ARTIFACTS_SOME_BEHIND, this::releasedArtifactsSomeBehind);
     states.put(NO_RELEASED_ARTIFACTS, this::noReleasedArtifacts);
   }
