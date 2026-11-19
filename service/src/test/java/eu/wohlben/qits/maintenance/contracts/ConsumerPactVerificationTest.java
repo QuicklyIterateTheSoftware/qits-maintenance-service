@@ -316,4 +316,19 @@ class ConsumerPactVerificationTest {
   Map<String, String> noSuchBump() {
     return states.params(ProviderStates.NO_SUCH_BUMP);
   }
+
+  @State(ProviderStates.A_REPOSITORY_WITH_PINS_AND_BUMPS)
+  Map<String, String> aRepositoryWithPinsAndBumps() {
+    return states.params(ProviderStates.A_REPOSITORY_WITH_PINS_AND_BUMPS);
+  }
+
+  @State(ProviderStates.A_REPOSITORY_WITH_NOTHING_PINNED)
+  Map<String, String> aRepositoryWithNothingPinned() {
+    return states.params(ProviderStates.A_REPOSITORY_WITH_NOTHING_PINNED);
+  }
+
+  @State(ProviderStates.NO_SUCH_REPOSITORY)
+  Map<String, String> noSuchRepository() {
+    return states.params(ProviderStates.NO_SUCH_REPOSITORY);
+  }
 }

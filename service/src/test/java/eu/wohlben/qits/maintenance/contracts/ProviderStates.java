@@ -169,6 +169,35 @@ public class ProviderStates {
   /** The fold the bump-page states' automations ran at, abbreviated into their sentences. */
   static final String BUMP_FOLD_SHA = "0123456789abcdef0123456789abcdef01234567";
 
+  /**
+   * The landing app's repository page (qits-2334), read by name: {@code contract-javalib} scanned
+   * OK with two INTERNAL pins (one pending), two EXTERNAL (one pending), one REACTOR and one
+   * UNRESOLVED; its released jar's SBOM carrying two transitives, one behind; three bumps of its own
+   * — a RUNNING group bump, a SUCCEEDED {@code dependency-bump} automation and a NOTHING_TO_DO
+   * {@code entity-diagram} one; the jar embedded by one current and one behind dependent; and a
+   * downstream closure two levels deep. {@code getRepository}, {@code listBumps}, {@code
+   * listRepositoryDependents} and {@code getRepositoryDownstream} answer it under {@code repoName}.
+   */
+  public static final String A_REPOSITORY_WITH_PINS_AND_BUMPS = "a repository with pins and bumps";
+
+  /**
+   * The repository page's empty case (qits-2334): {@code repoName} scanned OK with no pin, nothing
+   * released, no bump and nobody downstream — the same four reads, each answering empty.
+   */
+  public static final String A_REPOSITORY_WITH_NOTHING_PINNED = "a repository with nothing pinned";
+
+  /**
+   * The repository page's unknown name (qits-2334): {@code repoName} names no inventory row, so
+   * {@code getRepository} answers 404; the other three reads answer 200 and empty, as they do live.
+   */
+  public static final String NO_SUCH_REPOSITORY = "no such repository";
+
+  /** The repository {@link #A_REPOSITORY_WITH_PINS_AND_BUMPS} seeds and reads. */
+  static final String PINNED_REPOSITORY = "contract-javalib";
+
+  /** The name {@link #NO_SUCH_REPOSITORY} asks for: one no state ever scans. */
+  static final String UNKNOWN_REPOSITORY = "contract-unknown-service";
+
   public static final String RELEASED_ARTIFACTS_SOME_BEHIND = "released artifacts, some behind";
   public static final String NO_RELEASED_ARTIFACTS = "no released artifacts";
 
@@ -265,6 +294,9 @@ public class ProviderStates {
     states.put(A_BUMP_THAT_CHANGED_NOTHING, this::bumpThatChangedNothing);
     states.put(A_FAILED_BUMP, this::failedBump);
     states.put(NO_SUCH_BUMP, ProviderStates::noSuchBump);
+    states.put(A_REPOSITORY_WITH_PINS_AND_BUMPS, this::repositoryWithPinsAndBumps);
+    states.put(A_REPOSITORY_WITH_NOTHING_PINNED, this::repositoryWithNothingPinned);
+    states.put(NO_SUCH_REPOSITORY, this::noSuchRepository);
     states.put(RELEASED_ARTIFACTS_SOME_BEHIND, this::releasedArtifactsSomeBehind);
     states.put(NO_RELEASED_ARTIFACTS, this::noReleasedArtifacts);
   }
@@ -971,6 +1003,210 @@ public class ProviderStates {
     return new Setup(params, List.of());
   }
 
+  /**
+   * {@link #PINNED_REPOSITORY}, a library of {@link #PROJECT_ID}, and the estate around it:
+   *
+   * <ul>
+   *   <li>Its pins: INTERNAL {@code eu.wohlben.qits:qits-eventstream} 2026.811.1, pending
+   *       2026.821.3, and {@code eu.wohlben.qits:qits-arch-rules} 2026.1101.1, current; EXTERNAL
+   *       {@code io.quarkus.platform:quarkus-bom} 3.30.1, pending 3.40.1, and {@code
+   *       org.junit:junit-bom} 6.0.1, current; REACTOR {@code eu.wohlben.qits:contract-api} at
+   *       {@code ${project.version}}; UNRESOLVED {@code org.example:mystery} at {@code
+   *       ${mystery.version}}.
+   *   <li>It released {@code eu.wohlben.qits:contract-core} 2026.1101.2 (latest that same version),
+   *       whose SBOM names eventstream direct and, through it, {@code jackson-databind} 2.18.2 —
+   *       behind 2.18.3 — and {@code slf4j-api} 2.0.16, current: the two transitives.
+   *   <li>{@code contract-service} pins contract-core 2026.1101.2 and released the image {@code
+   *       qits/contract-service} embedding it at that version (current) and the jar {@code
+   *       eu.wohlben.qits:contract-service-client}; {@code contract-daemon} pins it at 2026.1101.1
+   *       and released the daemon binary {@code contract-daemon} embedding that (behind). Both are
+   *       downstream at depth 1, and {@code contract-cli}, pinning contract-service-client, at depth
+   *       2 through contract-service.
+   *   <li>Its bumps, newest first: a RUNNING group bump of quarkus-bom, a SUCCEEDED {@code
+   *       dependency-bump} automation of {@link #REQUEST_ID} that pushed a commit, and a
+   *       NOTHING_TO_DO {@code entity-diagram} one.
+   * </ul>
+   */
+  private Setup repositoryWithPinsAndBumps() {
+    emptyEstate();
+    String core = "eu.wohlben.qits:contract-core";
+    String client = "eu.wohlben.qits:contract-service-client";
+    Map<String, PinKind> kinds =
+        Map.of(
+            "eu.wohlben.qits:contract-api",
+            PinKind.REACTOR,
+            "org.example:mystery",
+            PinKind.UNRESOLVED);
+    store.replaceInventory(
+        PINNED_REPOSITORY,
+        PROJECT_ID,
+        "0c0a1d1e-0000-4000-8000-00000000f001",
+        RepositoryArchetype.LIBRARY.name(),
+        "main",
+        RepositoryStatus.OK,
+        HEAD_SHA,
+        null,
+        List.of(
+            eventstream(),
+            ParsedPin.of(
+                Ecosystem.MAVEN,
+                "pom.xml",
+                "eu.wohlben.qits:qits-arch-rules",
+                "2026.1101.1",
+                null,
+                "dependency:eu.wohlben.qits:qits-arch-rules"),
+            quarkusBom("3.30.1"),
+            ParsedPin.of(
+                Ecosystem.MAVEN,
+                "pom.xml",
+                "org.junit:junit-bom",
+                "6.0.1",
+                null,
+                "dependency:org.junit:junit-bom"),
+            ParsedPin.of(
+                Ecosystem.MAVEN,
+                "pom.xml",
+                "eu.wohlben.qits:contract-api",
+                "${project.version}",
+                null,
+                "dependency:eu.wohlben.qits:contract-api"),
+            ParsedPin.of(
+                Ecosystem.MAVEN,
+                "pom.xml",
+                "org.example:mystery",
+                "${mystery.version}",
+                null,
+                "dependency:org.example:mystery")),
+        List.of(
+            GroupConfig.Group.ofKind(GroupConfig.DEFAULT_GROUP, PinKind.INTERNAL),
+            GroupConfig.Group.ofKind(GroupConfig.EXTERNAL_GROUP, PinKind.EXTERNAL)),
+        GroupSource.DEFAULT,
+        pin ->
+            kinds.getOrDefault(
+                pin.name(),
+                pin.name().startsWith("eu.wohlben.qits:") ? PinKind.INTERNAL : PinKind.EXTERNAL),
+        SCANNED);
+    scannedIn(
+        PROJECT_ID,
+        REPOSITORY,
+        REPOSITORY_ID,
+        RepositoryArchetype.SERVICE,
+        ParsedPin.of(Ecosystem.MAVEN, "pom.xml", core, "2026.1101.2", null, "dependency:" + core));
+    scannedIn(
+        PROJECT_ID,
+        "contract-daemon",
+        "0c0a1d1e-0000-4000-8000-00000000f002",
+        RepositoryArchetype.DAEMON,
+        ParsedPin.of(Ecosystem.MAVEN, "pom.xml", core, "2026.1101.1", null, "dependency:" + core));
+    scannedIn(
+        PROJECT_ID,
+        "contract-cli",
+        "0c0a1d1e-0000-4000-8000-00000000f003",
+        RepositoryArchetype.CLI,
+        ParsedPin.of(
+            Ecosystem.MAVEN, "pom.xml", client, "2026.1102.1", null, "dependency:" + client));
+    store.replaceGraph(
+        store.upsertArtifact(
+            Ecosystem.MAVEN,
+            core,
+            "2026.1101.2",
+            PINNED_REPOSITORY,
+            Instant.parse("2026-11-01T10:00:00Z")),
+        List.of(
+            sbomComponent(Ecosystem.MAVEN, "eu.wohlben.qits:qits-eventstream", "2026.811.1", true),
+            sbomComponent(
+                Ecosystem.MAVEN, "com.fasterxml.jackson.core:jackson-databind", "2.18.2", false),
+            sbomComponent(Ecosystem.MAVEN, "org.slf4j:slf4j-api", "2.0.16", false)),
+        List.of(
+            new ParsedSbom.Edge(-1, 0), new ParsedSbom.Edge(0, 1), new ParsedSbom.Edge(0, 2)),
+        SCANNED);
+    store.replaceGraph(
+        store.upsertArtifact(
+            Ecosystem.DOCKER,
+            "qits/contract-service",
+            "2026.1102.1",
+            REPOSITORY,
+            Instant.parse("2026-11-02T10:00:00Z")),
+        List.of(sbomComponent(Ecosystem.MAVEN, core, "2026.1101.2", true)),
+        List.of(new ParsedSbom.Edge(-1, 0)),
+        SCANNED);
+    store.upsertArtifact(
+        Ecosystem.MAVEN, client, "2026.1102.1", REPOSITORY, Instant.parse("2026-11-02T10:00:00Z"));
+    store.replaceGraph(
+        store.upsertDaemonArtifact(
+            "contract-daemon",
+            "2026.1104.1",
+            "contract-daemon",
+            Instant.parse("2026-11-04T10:00:00Z")),
+        List.of(sbomComponent(Ecosystem.MAVEN, core, "2026.1101.1", true)),
+        List.of(new ParsedSbom.Edge(-1, 0)),
+        SCANNED);
+    latest(Ecosystem.MAVEN, core, LatestLookup.found("2026.1101.2", null));
+    latest(
+        Ecosystem.MAVEN,
+        "eu.wohlben.qits:qits-eventstream",
+        LatestLookup.found("2026.821.3", null));
+    latest(
+        Ecosystem.MAVEN, "eu.wohlben.qits:qits-arch-rules", LatestLookup.found("2026.1101.1", null));
+    latest(Ecosystem.MAVEN, "io.quarkus.platform:quarkus-bom", LatestLookup.found("3.40.1", null));
+    latest(Ecosystem.MAVEN, "org.junit:junit-bom", LatestLookup.found("6.0.1", null));
+    latest(
+        Ecosystem.MAVEN,
+        "com.fasterxml.jackson.core:jackson-databind",
+        LatestLookup.found("2.18.3", null));
+    latest(Ecosystem.MAVEN, "org.slf4j:slf4j-api", LatestLookup.found("2.0.16", null));
+
+    bump(
+        PINNED_REPOSITORY,
+        "GROUP",
+        "maintenance/dependencies",
+        "RUNNING",
+        FUTURE.plusSeconds(3),
+        change("MAVEN", "pom.xml", "io.quarkus.platform:quarkus-bom", "3.30.1", "3.40.1"),
+        null,
+        null);
+    repositoryAutomation(
+        "dependency-bump",
+        "SUCCEEDED",
+        FUTURE.plusSeconds(2),
+        "run-contract-2",
+        "SUCCESS",
+        "committed the dependency bump",
+        "0123456789abcdef0123456789abcdef01234567");
+    String diagramBranch = AutomationService.BRANCH_PREFIX + "entity-diagram/" + REQUEST_ID;
+    repositoryAutomation(
+        "entity-diagram",
+        "NOTHING_TO_DO",
+        FUTURE.plusSeconds(1),
+        "run-contract-1",
+        "SUCCESS",
+        "unchanged: the run passed and "
+            + diagramBranch
+            + " did not move, so entity diagram are fresh at "
+            + BUMP_FOLD_SHA.substring(0, 12),
+        null);
+    Map<String, String> params = new TreeMap<>();
+    params.put("repoName", PINNED_REPOSITORY);
+    return new Setup(params, List.of());
+  }
+
+  /** {@link #REPOSITORY} scanned OK with no pin, and nothing else in the estate. */
+  private Setup repositoryWithNothingPinned() {
+    emptyEstate();
+    scannedIn(PROJECT_ID, REPOSITORY, REPOSITORY_ID, RepositoryArchetype.SERVICE);
+    Map<String, String> params = new TreeMap<>();
+    params.put("repoName", REPOSITORY);
+    return new Setup(params, List.of());
+  }
+
+  /** An empty estate: {@link #UNKNOWN_REPOSITORY} is a name nothing scans. */
+  private Setup noSuchRepository() {
+    emptyEstate();
+    Map<String, String> params = new TreeMap<>();
+    params.put("repoName", UNKNOWN_REPOSITORY);
+    return new Setup(params, List.of());
+  }
+
   /** Nothing released and nothing scanned: no artifact, so nobody embeds anything. */
   private Setup noReleasedArtifacts() {
     emptyEstate();
@@ -1227,6 +1463,46 @@ public class ProviderStates {
             });
     created.add(id);
     return id;
+  }
+
+  /**
+   * One FOLD automation row of {@link #PINNED_REPOSITORY} for {@link #REQUEST_ID} at {@link
+   * #BUMP_FOLD_SHA}, on its own branch, ended a minute after it started.
+   */
+  private void repositoryAutomation(
+      String kind,
+      String status,
+      Instant startedAt,
+      String runIds,
+      String ciRunStatus,
+      String message,
+      String resultSha) {
+    UUID id = UUID.randomUUID();
+    QuarkusTransaction.requiringNew()
+        .run(
+            () -> {
+              MtBump row = new MtBump();
+              row.id = id;
+              row.repository = PINNED_REPOSITORY;
+              row.groupName = kind;
+              row.mode = BumpMode.AUTOMATION.name();
+              row.automationKind = kind;
+              row.branch = AutomationService.BRANCH_PREFIX + kind + "/" + REQUEST_ID;
+              row.environment = "dev";
+              row.trigger = "FOLD";
+              row.status = status;
+              row.changes = "[]";
+              row.releaseRequestId = REQUEST_ID;
+              row.foldSha = BUMP_FOLD_SHA;
+              row.ciRunId = runIds;
+              row.ciRunStatus = ciRunStatus;
+              row.message = message;
+              row.resultSha = resultSha;
+              row.startedAt = startedAt;
+              row.finishedAt = startedAt.plusSeconds(60);
+              row.persist();
+            });
+    created.add(id);
   }
 
   private static Map<String, String> change(

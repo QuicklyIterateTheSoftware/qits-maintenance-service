@@ -483,6 +483,158 @@
       ]
     },
     {
+      "name": "a repository with nothing pinned",
+      "slug": "a-repository-with-nothing-pinned",
+      "params": {
+        "repoName": "contract-service"
+      },
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "getRepository",
+          "method": "GET",
+          "path": "/maintenance/api/repositories/{repoName}",
+          "status": 200,
+          "file": "a-repository-with-nothing-pinned/getRepository.json",
+          "frozen": {
+            "ids": [],
+            "instants": [
+              "$.lastScanAt"
+            ],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        },
+        {
+          "operationId": "getRepositoryDownstream",
+          "method": "GET",
+          "path": "/maintenance/api/repositories/{repoName}/downstream",
+          "status": 200,
+          "file": "a-repository-with-nothing-pinned/getRepositoryDownstream.json",
+          "frozen": {
+            "ids": [
+              "$.catalogId"
+            ],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        },
+        {
+          "operationId": "listBumps",
+          "method": "GET",
+          "path": "/maintenance/api/bumps",
+          "query": {
+            "limit": "20",
+            "repository": "{repoName}"
+          },
+          "status": 200,
+          "file": "a-repository-with-nothing-pinned/listBumps.json",
+          "frozen": {
+            "ids": [],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        },
+        {
+          "operationId": "listRepositoryDependents",
+          "method": "GET",
+          "path": "/maintenance/api/repositories/{repoName}/dependents",
+          "status": 200,
+          "file": "a-repository-with-nothing-pinned/listRepositoryDependents.json",
+          "frozen": {
+            "ids": [],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "a repository with pins and bumps",
+      "slug": "a-repository-with-pins-and-bumps",
+      "params": {
+        "repoName": "contract-javalib"
+      },
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "getRepository",
+          "method": "GET",
+          "path": "/maintenance/api/repositories/{repoName}",
+          "status": 200,
+          "file": "a-repository-with-pins-and-bumps/getRepository.json",
+          "frozen": {
+            "ids": [],
+            "instants": [
+              "$.lastScanAt"
+            ],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        },
+        {
+          "operationId": "getRepositoryDownstream",
+          "method": "GET",
+          "path": "/maintenance/api/repositories/{repoName}/downstream",
+          "status": 200,
+          "file": "a-repository-with-pins-and-bumps/getRepositoryDownstream.json",
+          "frozen": {
+            "ids": [
+              "$.catalogId",
+              "$.downstream[*].catalogId"
+            ],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        },
+        {
+          "operationId": "listBumps",
+          "method": "GET",
+          "path": "/maintenance/api/bumps",
+          "query": {
+            "limit": "20",
+            "repository": "{repoName}"
+          },
+          "status": 200,
+          "file": "a-repository-with-pins-and-bumps/listBumps.json",
+          "frozen": {
+            "ids": [
+              "$[*].id",
+              "$[*].releaseRequestId"
+            ],
+            "instants": [
+              "$[*].startedAt",
+              "$[*].finishedAt"
+            ],
+            "strings": [
+              "$[*].branch",
+              "$[*].message"
+            ],
+            "listFilteredTo": null
+          }
+        },
+        {
+          "operationId": "listRepositoryDependents",
+          "method": "GET",
+          "path": "/maintenance/api/repositories/{repoName}/dependents",
+          "status": 200,
+          "file": "a-repository-with-pins-and-bumps/listRepositoryDependents.json",
+          "frozen": {
+            "ids": [],
+            "instants": [
+              "$.artifacts[*].dependents[*].occurredAt"
+            ],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
       "name": "a stored SBOM check report",
       "slug": "a-stored-sbom-check-report",
       "params": {
@@ -1020,6 +1172,72 @@
             "strings": [
               "$.message"
             ],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "no such repository",
+      "slug": "no-such-repository",
+      "params": {
+        "repoName": "contract-unknown-service"
+      },
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "getRepository",
+          "method": "GET",
+          "path": "/maintenance/api/repositories/{repoName}",
+          "status": 404,
+          "file": "no-such-repository/getRepository.json",
+          "frozen": {
+            "ids": [],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        },
+        {
+          "operationId": "getRepositoryDownstream",
+          "method": "GET",
+          "path": "/maintenance/api/repositories/{repoName}/downstream",
+          "status": 200,
+          "file": "no-such-repository/getRepositoryDownstream.json",
+          "frozen": {
+            "ids": [],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        },
+        {
+          "operationId": "listBumps",
+          "method": "GET",
+          "path": "/maintenance/api/bumps",
+          "query": {
+            "limit": "20",
+            "repository": "{repoName}"
+          },
+          "status": 200,
+          "file": "no-such-repository/listBumps.json",
+          "frozen": {
+            "ids": [],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        },
+        {
+          "operationId": "listRepositoryDependents",
+          "method": "GET",
+          "path": "/maintenance/api/repositories/{repoName}/dependents",
+          "status": 200,
+          "file": "no-such-repository/listRepositoryDependents.json",
+          "frozen": {
+            "ids": [],
+            "instants": [],
+            "strings": [],
             "listFilteredTo": null
           }
         }

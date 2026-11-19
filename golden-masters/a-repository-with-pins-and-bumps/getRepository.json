@@ -1,0 +1,132 @@
+{
+  "name": "contract-javalib",
+  "project": "00000000-0000-4000-8000-000000000001",
+  "archetype": "LIBRARY",
+  "lastScanAt": "2026-01-01T00:00:00Z",
+  "headSha": "3f1a9c0b7d2e4f5a6b8c9d0e1f2a3b4c5d6e7f80",
+  "status": "OK",
+  "message": null,
+  "pending": 2,
+  "groups": [
+    {
+      "name": "dependencies",
+      "source": "DEFAULT",
+      "kind": "INTERNAL",
+      "branch": "maintenance/dependencies",
+      "state": "NONE",
+      "headSha": null,
+      "pending": 1
+    },
+    {
+      "name": "external",
+      "source": "DEFAULT",
+      "kind": "EXTERNAL",
+      "branch": "maintenance/external",
+      "state": "NONE",
+      "headSha": null,
+      "pending": 1
+    }
+  ],
+  "pins": [
+    {
+      "manifestPath": "pom.xml",
+      "ecosystem": "maven",
+      "name": "eu.wohlben.qits:contract-api",
+      "version": "${project.version}",
+      "range": null,
+      "kind": "REACTOR",
+      "latest": null,
+      "latestError": null,
+      "pending": false,
+      "group": null,
+      "location": "dependency:eu.wohlben.qits:contract-api",
+      "scope": "DIRECT"
+    },
+    {
+      "manifestPath": "pom.xml",
+      "ecosystem": "maven",
+      "name": "eu.wohlben.qits:qits-arch-rules",
+      "version": "2026.1101.1",
+      "range": null,
+      "kind": "INTERNAL",
+      "latest": "2026.1101.1",
+      "latestError": null,
+      "pending": false,
+      "group": "dependencies",
+      "location": "dependency:eu.wohlben.qits:qits-arch-rules",
+      "scope": "DIRECT"
+    },
+    {
+      "manifestPath": "pom.xml",
+      "ecosystem": "maven",
+      "name": "eu.wohlben.qits:qits-eventstream",
+      "version": "2026.811.1",
+      "range": null,
+      "kind": "INTERNAL",
+      "latest": "2026.821.3",
+      "latestError": null,
+      "pending": true,
+      "group": "dependencies",
+      "location": "dependency:eu.wohlben.qits:qits-eventstream",
+      "scope": "DIRECT"
+    },
+    {
+      "manifestPath": "pom.xml",
+      "ecosystem": "maven",
+      "name": "io.quarkus.platform:quarkus-bom",
+      "version": "3.30.1",
+      "range": null,
+      "kind": "EXTERNAL",
+      "latest": "3.40.1",
+      "latestError": null,
+      "pending": true,
+      "group": "external",
+      "location": "dependency:io.quarkus.platform:quarkus-bom",
+      "scope": "DIRECT"
+    },
+    {
+      "manifestPath": "pom.xml",
+      "ecosystem": "maven",
+      "name": "org.example:mystery",
+      "version": "${mystery.version}",
+      "range": null,
+      "kind": "UNRESOLVED",
+      "latest": null,
+      "latestError": null,
+      "pending": false,
+      "group": null,
+      "location": "dependency:org.example:mystery",
+      "scope": "DIRECT"
+    },
+    {
+      "manifestPath": "pom.xml",
+      "ecosystem": "maven",
+      "name": "org.junit:junit-bom",
+      "version": "6.0.1",
+      "range": null,
+      "kind": "EXTERNAL",
+      "latest": "6.0.1",
+      "latestError": null,
+      "pending": false,
+      "group": "external",
+      "location": "dependency:org.junit:junit-bom",
+      "scope": "DIRECT"
+    }
+  ],
+  "transitives": [
+    {
+      "ecosystem": "maven",
+      "name": "com.fasterxml.jackson.core:jackson-databind",
+      "version": "2.18.2",
+      "via": "eu.wohlben.qits:qits-eventstream",
+      "behind": true
+    },
+    {
+      "ecosystem": "maven",
+      "name": "org.slf4j:slf4j-api",
+      "version": "2.0.16",
+      "via": "eu.wohlben.qits:qits-eventstream",
+      "behind": false
+    }
+  ]
+}

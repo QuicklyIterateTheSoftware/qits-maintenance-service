@@ -1,0 +1,33 @@
+{
+  "repository": "contract-javalib",
+  "catalogId": "00000000-0000-4000-8000-000000000001",
+  "downstream": [
+    {
+      "repository": "contract-daemon",
+      "catalogId": "00000000-0000-4000-8000-000000000002",
+      "archetype": "DAEMON",
+      "depth": 1,
+      "via": [
+        "contract-javalib"
+      ]
+    },
+    {
+      "repository": "contract-service",
+      "catalogId": "00000000-0000-4000-8000-000000000003",
+      "archetype": "SERVICE",
+      "depth": 1,
+      "via": [
+        "contract-javalib"
+      ]
+    },
+    {
+      "repository": "contract-cli",
+      "catalogId": "00000000-0000-4000-8000-000000000004",
+      "archetype": "CLI",
+      "depth": 2,
+      "via": [
+        "contract-service"
+      ]
+    }
+  ]
+}

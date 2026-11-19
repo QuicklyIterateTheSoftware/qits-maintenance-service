@@ -1,0 +1,32 @@
+{
+  "repository": "contract-javalib",
+  "artifacts": [
+    {
+      "ecosystem": "maven",
+      "name": "eu.wohlben.qits:contract-core",
+      "latest": "2026.1101.2",
+      "dependents": [
+        {
+          "artifactEcosystem": "daemon",
+          "artifactName": "contract-daemon",
+          "artifactVersion": "2026.1104.1",
+          "repository": "contract-daemon",
+          "embeddedVersion": "2026.1101.1",
+          "direct": true,
+          "occurredAt": "2026-01-01T00:00:00Z",
+          "sbomStatus": "INGESTED"
+        },
+        {
+          "artifactEcosystem": "docker",
+          "artifactName": "qits/contract-service",
+          "artifactVersion": "2026.1102.1",
+          "repository": "contract-service",
+          "embeddedVersion": "2026.1101.2",
+          "direct": true,
+          "occurredAt": "2026-01-01T00:00:00Z",
+          "sbomStatus": "INGESTED"
+        }
+      ]
+    }
+  ]
+}
