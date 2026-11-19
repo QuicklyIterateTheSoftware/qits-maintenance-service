@@ -281,4 +281,24 @@ class ConsumerPactVerificationTest {
   Map<String, String> noReleasedArtifacts() {
     return states.params(ProviderStates.NO_RELEASED_ARTIFACTS);
   }
+
+  @State(ProviderStates.DEPENDENCIES_MATCHING_A_GLOB_SOME_BEHIND)
+  Map<String, String> dependenciesMatchingAGlobSomeBehind() {
+    return states.params(ProviderStates.DEPENDENCIES_MATCHING_A_GLOB_SOME_BEHIND);
+  }
+
+  @State(ProviderStates.EXTERNAL_DEPENDENCIES_MATCHING_A_GLOB_SOME_BEHIND)
+  Map<String, String> externalDependenciesMatchingAGlobSomeBehind() {
+    return states.params(ProviderStates.EXTERNAL_DEPENDENCIES_MATCHING_A_GLOB_SOME_BEHIND);
+  }
+
+  @State(ProviderStates.NO_DEPENDENCIES_MATCHING_A_GLOB)
+  Map<String, String> noDependenciesMatchingAGlob() {
+    return states.params(ProviderStates.NO_DEPENDENCIES_MATCHING_A_GLOB);
+  }
+
+  @State(ProviderStates.NO_EXTERNAL_DEPENDENCIES_MATCHING_A_GLOB)
+  Map<String, String> noExternalDependenciesMatchingAGlob() {
+    return states.params(ProviderStates.NO_EXTERNAL_DEPENDENCIES_MATCHING_A_GLOB);
+  }
 }

@@ -1,0 +1,17 @@
+[
+  {
+    "ecosystem": "npm",
+    "name": "@qits/ui-components",
+    "latest": "2026.9.1",
+    "checkedAt": "2026-01-01T00:00:00Z",
+    "error": null,
+    "pins": [
+      {
+        "repository": "contract-frontend",
+        "version": "2026.8.1",
+        "manifestPath": "package.json",
+        "pending": true
+      }
+    ]
+  }
+]

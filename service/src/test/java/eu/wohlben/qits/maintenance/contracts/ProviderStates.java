@@ -107,6 +107,42 @@ public class ProviderStates {
   /** {@link #NO_DEPENDENCIES} again, for its {@code kind=EXTERNAL} recording. */
   public static final String NO_EXTERNAL_DEPENDENCIES = "no external dependencies";
 
+  /**
+   * The landing app's name search (qits-2331): {@link #DEPENDENCIES_OF_A_PROJECT_SOME_BEHIND} and
+   * one more repository, read through {@code listDependencies?kind=INTERNAL&name=}{@link
+   * #MATCHING_GLOB}.
+   */
+  public static final String DEPENDENCIES_MATCHING_A_GLOB_SOME_BEHIND =
+      "dependencies matching a glob, some behind";
+
+  /**
+   * {@link #DEPENDENCIES_MATCHING_A_GLOB_SOME_BEHIND} again, for its {@code kind=EXTERNAL} read.
+   */
+  public static final String EXTERNAL_DEPENDENCIES_MATCHING_A_GLOB_SOME_BEHIND =
+      "external dependencies matching a glob, some behind";
+
+  /**
+   * {@link #DEPENDENCIES_MATCHING_A_GLOB_SOME_BEHIND}'s inventory, searched with {@link
+   * #UNMATCHED_GLOB}: repositories and pins there, none of them named so — a search that matched
+   * nothing, not an empty inventory ({@link #NO_DEPENDENCIES}).
+   */
+  public static final String NO_DEPENDENCIES_MATCHING_A_GLOB = "no dependencies matching a glob";
+
+  /** {@link #NO_DEPENDENCIES_MATCHING_A_GLOB} again, for its {@code kind=EXTERNAL} read. */
+  public static final String NO_EXTERNAL_DEPENDENCIES_MATCHING_A_GLOB =
+      "no external dependencies matching a glob";
+
+  /**
+   * The glob the search states record: a whole-name match, so {@code *p*} keeps every name with a
+   * {@code p} — {@code @qits/ui-components} (behind) but not {@code qits-eventstream}; {@code
+   * left-pad} (failed lookup), {@code typescript} (behind) and {@code quarkus-bom} but not {@code
+   * rxjs}.
+   */
+  static final String MATCHING_GLOB = "*p*";
+
+  /** A glob no dependency of {@link #DEPENDENCIES_MATCHING_A_GLOB_SOME_BEHIND} is named by. */
+  static final String UNMATCHED_GLOB = "nothing-matches-*";
+
   public static final String RELEASED_ARTIFACTS_SOME_BEHIND = "released artifacts, some behind";
   public static final String NO_RELEASED_ARTIFACTS = "no released artifacts";
 
@@ -196,6 +232,10 @@ public class ProviderStates {
         EXTERNAL_DEPENDENCIES_OF_A_PROJECT_SOME_BEHIND, this::dependenciesOfAProjectSomeBehind);
     states.put(NO_DEPENDENCIES, this::noDependencies);
     states.put(NO_EXTERNAL_DEPENDENCIES, this::noDependencies);
+    states.put(DEPENDENCIES_MATCHING_A_GLOB_SOME_BEHIND, this::dependenciesMatchingAGlob);
+    states.put(EXTERNAL_DEPENDENCIES_MATCHING_A_GLOB_SOME_BEHIND, this::dependenciesMatchingAGlob);
+    states.put(NO_DEPENDENCIES_MATCHING_A_GLOB, this::dependenciesMatchingAGlob);
+    states.put(NO_EXTERNAL_DEPENDENCIES_MATCHING_A_GLOB, this::dependenciesMatchingAGlob);
     states.put(RELEASED_ARTIFACTS_SOME_BEHIND, this::releasedArtifactsSomeBehind);
     states.put(NO_RELEASED_ARTIFACTS, this::noReleasedArtifacts);
   }
@@ -725,6 +765,25 @@ public class ProviderStates {
     Map<String, String> params = new TreeMap<>();
     params.put("projectId", PROJECT_ID);
     return new Setup(params, List.of());
+  }
+
+  /**
+   * {@link #dependenciesOfAProjectSomeBehind()} and {@code contract-tooling}, a third repository of
+   * {@link #PROJECT_ID} pinning {@code typescript} 5.9.2, behind 5.9.3: an EXTERNAL pin of the open
+   * project that is behind and named by {@link #MATCHING_GLOB}, which {@code rxjs} is not. The
+   * extra repository keeps the four unfiltered recordings as they were.
+   */
+  private Setup dependenciesMatchingAGlob() {
+    Setup setup = dependenciesOfAProjectSomeBehind();
+    scannedIn(
+        PROJECT_ID,
+        "contract-tooling",
+        "0c0a1d1e-0000-4000-8000-00000000d003",
+        RepositoryArchetype.FRONTEND,
+        ParsedPin.of(
+            Ecosystem.NPM, "package.json", "typescript", "5.9.2", null, "dependency:typescript"));
+    latest(Ecosystem.NPM, "typescript", LatestLookup.found("5.9.3", null));
+    return setup;
   }
 
   /** An empty inventory: no repository, so no pin of either kind. */

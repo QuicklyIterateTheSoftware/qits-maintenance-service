@@ -485,6 +485,50 @@
       ]
     },
     {
+      "name": "dependencies matching a glob, some behind",
+      "slug": "dependencies-matching-a-glob-some-behind",
+      "params": {
+        "projectId": "00000000-0000-4000-8000-000000000001"
+      },
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "listDependencies",
+          "method": "GET",
+          "path": "/maintenance/api/dependencies",
+          "query": {
+            "kind": "INTERNAL",
+            "name": "*p*"
+          },
+          "status": 200,
+          "file": "dependencies-matching-a-glob-some-behind/listDependencies.json",
+          "frozen": {
+            "ids": [],
+            "instants": [
+              "$[*].checkedAt"
+            ],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        },
+        {
+          "operationId": "listRepositories",
+          "method": "GET",
+          "path": "/maintenance/api/repositories",
+          "status": 200,
+          "file": "dependencies-matching-a-glob-some-behind/listRepositories.json",
+          "frozen": {
+            "ids": [],
+            "instants": [
+              "$[*].lastScanAt"
+            ],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
       "name": "dependencies of a project, some behind",
       "slug": "dependencies-of-a-project-some-behind",
       "params": {
@@ -520,6 +564,35 @@
             "ids": [],
             "instants": [
               "$[*].lastScanAt"
+            ],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "external dependencies matching a glob, some behind",
+      "slug": "external-dependencies-matching-a-glob-some-behind",
+      "params": {
+        "projectId": "00000000-0000-4000-8000-000000000001"
+      },
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "listDependencies",
+          "method": "GET",
+          "path": "/maintenance/api/dependencies",
+          "query": {
+            "kind": "EXTERNAL",
+            "name": "*p*"
+          },
+          "status": 200,
+          "file": "external-dependencies-matching-a-glob-some-behind/listDependencies.json",
+          "frozen": {
+            "ids": [],
+            "instants": [
+              "$[*].checkedAt"
             ],
             "strings": [],
             "listFilteredTo": null
@@ -697,6 +770,48 @@
       ]
     },
     {
+      "name": "no dependencies matching a glob",
+      "slug": "no-dependencies-matching-a-glob",
+      "params": {
+        "projectId": "00000000-0000-4000-8000-000000000001"
+      },
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "listDependencies",
+          "method": "GET",
+          "path": "/maintenance/api/dependencies",
+          "query": {
+            "kind": "INTERNAL",
+            "name": "nothing-matches-*"
+          },
+          "status": 200,
+          "file": "no-dependencies-matching-a-glob/listDependencies.json",
+          "frozen": {
+            "ids": [],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        },
+        {
+          "operationId": "listRepositories",
+          "method": "GET",
+          "path": "/maintenance/api/repositories",
+          "status": 200,
+          "file": "no-dependencies-matching-a-glob/listRepositories.json",
+          "frozen": {
+            "ids": [],
+            "instants": [
+              "$[*].lastScanAt"
+            ],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
       "name": "no external dependencies",
       "slug": "no-external-dependencies",
       "params": {},
@@ -711,6 +826,33 @@
           },
           "status": 200,
           "file": "no-external-dependencies/listDependencies.json",
+          "frozen": {
+            "ids": [],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "no external dependencies matching a glob",
+      "slug": "no-external-dependencies-matching-a-glob",
+      "params": {
+        "projectId": "00000000-0000-4000-8000-000000000001"
+      },
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "listDependencies",
+          "method": "GET",
+          "path": "/maintenance/api/dependencies",
+          "query": {
+            "kind": "EXTERNAL",
+            "name": "nothing-matches-*"
+          },
+          "status": 200,
+          "file": "no-external-dependencies-matching-a-glob/listDependencies.json",
           "frozen": {
             "ids": [],
             "instants": [],
