@@ -193,7 +193,7 @@
             <scope>test</scope>
         </dependency>
         <dependency>
-            <!-- The qits CLI's (qits-platform-access-cli) consumer pact against this service,
+            <!-- The qits-landing-app's consumer pact against this service,
                  verified by the same ConsumerPactVerificationTest. Pinned in the root pom. -->
             <groupId>${project.groupId}</groupId>
             <artifactId>qits-landing-app-pacts-qits-maintenance-service</artifactId>
