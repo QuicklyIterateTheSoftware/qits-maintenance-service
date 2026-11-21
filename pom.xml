@@ -73,8 +73,8 @@
         <qits.artifacts-golden-masters.version>2026.1120.165405</qits.artifacts-golden-masters.version>
         <qits.githost-golden-masters.version>2026.1109.41303</qits.githost-golden-masters.version>
         <qits.idp-golden-masters.version>2026.1109.13349</qits.idp-golden-masters.version>
-        <qits.mirror-golden-masters.version>2026.1116.184039</qits.mirror-golden-masters.version>
-        <qits.system-golden-masters.version>2026.1120.184909</qits.system-golden-masters.version>
+        <qits.mirror-golden-masters.version>2026.1121.32635</qits.mirror-golden-masters.version>
+        <qits.system-golden-masters.version>2026.1120.213800</qits.system-golden-masters.version>
         <!-- The shared JVM consumer helper (qits-integrations-quarkus-javalib): golden-master reader,
              row builder, pact-file compare. Test scope. -->
         <qits.pact-consumer.version>2026.1106.507</qits.pact-consumer.version>
