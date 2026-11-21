@@ -1,0 +1,23 @@
+[
+  {
+    "ecosystem": "npm",
+    "name": "left-pad",
+    "latest": "1.3.0",
+    "checkedAt": "2026-01-01T00:00:00Z",
+    "error": null,
+    "pins": [
+      {
+        "repository": "contract-frontend",
+        "version": "1.3.0",
+        "manifestPath": "package.json",
+        "pending": false
+      },
+      {
+        "repository": "contract-service",
+        "version": "1.2.0",
+        "manifestPath": "src/main/webui/package.json",
+        "pending": true
+      }
+    ]
+  }
+]

@@ -1,0 +1,27 @@
+{
+  "ecosystem": "npm",
+  "name": "left-pad",
+  "latest": "1.3.0",
+  "dependents": [
+    {
+      "artifactEcosystem": "docker",
+      "artifactName": "qits/contract-service",
+      "artifactVersion": "2026.1102.1",
+      "repository": "contract-service",
+      "embeddedVersion": "1.2.0",
+      "direct": false,
+      "occurredAt": "2026-01-01T00:00:00Z",
+      "sbomStatus": "INGESTED"
+    },
+    {
+      "artifactEcosystem": "npm",
+      "artifactName": "@qits/contract-ui",
+      "artifactVersion": "2026.1103.1",
+      "repository": "contract-frontend",
+      "embeddedVersion": "1.3.0",
+      "direct": true,
+      "occurredAt": "2026-01-01T00:00:00Z",
+      "sbomStatus": "INGESTED"
+    }
+  ]
+}

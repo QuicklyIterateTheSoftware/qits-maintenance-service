@@ -665,6 +665,24 @@ class GoldenMasterRecordingTest {
               "listDependencyDependents",
               "/maintenance/api/dependencies/dependents",
               Map.of("ecosystem", "maven", "name", "eu.wohlben.qits:contract-core"),
+              null),
+          // The landing app's mirror package page (qits-2488): who embeds and who pins left-pad.
+          Interaction.read(
+              ProviderStates.AN_EXTERNAL_PACKAGE_OUR_RELEASES_EMBED,
+              "listDependencyDependents",
+              "/maintenance/api/dependencies/dependents",
+              Map.of("ecosystem", "npm", "name", ProviderStates.EMBEDDED_PACKAGE),
+              null),
+          new Interaction(
+              ProviderStates.AN_EXTERNAL_PACKAGE_OUR_RELEASES_EMBED,
+              "listDependencies",
+              "GET",
+              "/maintenance/api/dependencies",
+              Map.of("kind", "EXTERNAL", "name", ProviderStates.EMBEDDED_PACKAGE),
+              200,
+              null,
+              "$:name",
+              List.of(),
               null));
 
   private static final ObjectMapper JSON = new ObjectMapper();

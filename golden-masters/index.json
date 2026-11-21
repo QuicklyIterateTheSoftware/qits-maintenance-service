@@ -738,6 +738,55 @@
       ]
     },
     {
+      "name": "an external package our releases embed",
+      "slug": "an-external-package-our-releases-embed",
+      "params": {
+        "name": "left-pad",
+        "projectId": "00000000-0000-4000-8000-000000000001"
+      },
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "listDependencies",
+          "method": "GET",
+          "path": "/maintenance/api/dependencies",
+          "query": {
+            "kind": "EXTERNAL",
+            "name": "left-pad"
+          },
+          "status": 200,
+          "file": "an-external-package-our-releases-embed/listDependencies.json",
+          "frozen": {
+            "ids": [],
+            "instants": [
+              "$[*].checkedAt"
+            ],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        },
+        {
+          "operationId": "listDependencyDependents",
+          "method": "GET",
+          "path": "/maintenance/api/dependencies/dependents",
+          "query": {
+            "ecosystem": "npm",
+            "name": "left-pad"
+          },
+          "status": 200,
+          "file": "an-external-package-our-releases-embed/listDependencyDependents.json",
+          "frozen": {
+            "ids": [],
+            "instants": [
+              "$.dependents[*].occurredAt"
+            ],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
       "name": "bumps owed to a repository",
       "slug": "bumps-owed-to-a-repository",
       "params": {

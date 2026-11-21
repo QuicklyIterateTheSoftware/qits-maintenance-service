@@ -225,6 +225,18 @@ public class ProviderStates {
   public static final String RELEASED_ARTIFACTS_SOME_BEHIND = "released artifacts, some behind";
   public static final String NO_RELEASED_ARTIFACTS = "no released artifacts";
 
+  /**
+   * The landing app's mirror package page (qits-2488): an external npm package, {@link
+   * #EMBEDDED_PACKAGE}, that two releases of ours embed at two versions and two repositories pin.
+   * {@code listDependencyDependents} and {@code listDependencies?kind=EXTERNAL&name=} answer it
+   * under its name.
+   */
+  public static final String AN_EXTERNAL_PACKAGE_OUR_RELEASES_EMBED =
+      "an external package our releases embed";
+
+  /** The npm package {@link #AN_EXTERNAL_PACKAGE_OUR_RELEASES_EMBED} is about. */
+  static final String EMBEDDED_PACKAGE = "left-pad";
+
   /** The work item the CLI's {@code qits maintenance automation run --work-item} names. */
   static final String WORK_ITEM = "qits-112";
 
@@ -325,6 +337,7 @@ public class ProviderStates {
     states.put(NO_SUCH_REPOSITORY, this::noSuchRepository);
     states.put(RELEASED_ARTIFACTS_SOME_BEHIND, this::releasedArtifactsSomeBehind);
     states.put(NO_RELEASED_ARTIFACTS, this::noReleasedArtifacts);
+    states.put(AN_EXTERNAL_PACKAGE_OUR_RELEASES_EMBED, this::anExternalPackageOurReleasesEmbed);
   }
 
   /** Every state name this provider answers for. */
@@ -1113,6 +1126,66 @@ public class ProviderStates {
     latest(Ecosystem.MAVEN, core, LatestLookup.found("2026.1101.2", null));
     Map<String, String> params = new TreeMap<>();
     params.put("projectId", PROJECT_ID);
+    return new Setup(params, List.of());
+  }
+
+  /**
+   * {@link #EMBEDDED_PACKAGE} from outside, as qits-mirror caches it:
+   *
+   * <ul>
+   *   <li>{@code contract-frontend} pins it at 1.3.0 (its latest) and released the npm package
+   *       {@code @qits/contract-ui} 2026.1103.1, which embeds it directly at 1.3.0.
+   *   <li>{@link #REPOSITORY} pins it at 1.2.0 in its webui and released the image {@code
+   *       qits/contract-service} 2026.1102.1, which embeds it transitively at 1.2.0.
+   * </ul>
+   */
+  private Setup anExternalPackageOurReleasesEmbed() {
+    emptyEstate();
+    String dependency = "dependency:" + EMBEDDED_PACKAGE;
+    scannedIn(
+        PROJECT_ID,
+        "contract-frontend",
+        "0c0a1d1e-0000-4000-8000-00000000e003",
+        RepositoryArchetype.FRONTEND,
+        ParsedPin.of(Ecosystem.NPM, "package.json", EMBEDDED_PACKAGE, "1.3.0", null, dependency));
+    scannedIn(
+        PROJECT_ID,
+        REPOSITORY,
+        REPOSITORY_ID,
+        RepositoryArchetype.SERVICE,
+        ParsedPin.of(
+            Ecosystem.NPM,
+            "src/main/webui/package.json",
+            EMBEDDED_PACKAGE,
+            "1.2.0",
+            null,
+            dependency));
+    store.replaceGraph(
+        store.upsertArtifact(
+            Ecosystem.NPM,
+            "@qits/contract-ui",
+            "2026.1103.1",
+            "contract-frontend",
+            Instant.parse("2026-11-03T10:00:00Z")),
+        List.of(sbomComponent(Ecosystem.NPM, EMBEDDED_PACKAGE, "1.3.0", true)),
+        List.of(new ParsedSbom.Edge(-1, 0)),
+        SCANNED);
+    store.replaceGraph(
+        store.upsertArtifact(
+            Ecosystem.DOCKER,
+            "qits/contract-service",
+            "2026.1102.1",
+            REPOSITORY,
+            Instant.parse("2026-11-02T10:00:00Z")),
+        List.of(
+            sbomComponent(Ecosystem.NPM, "@qits/contract-ui", "2026.1101.1", true),
+            sbomComponent(Ecosystem.NPM, EMBEDDED_PACKAGE, "1.2.0", false)),
+        List.of(new ParsedSbom.Edge(-1, 0), new ParsedSbom.Edge(0, 1)),
+        SCANNED);
+    latest(Ecosystem.NPM, EMBEDDED_PACKAGE, LatestLookup.found("1.3.0", null));
+    Map<String, String> params = new TreeMap<>();
+    params.put("projectId", PROJECT_ID);
+    params.put("name", EMBEDDED_PACKAGE);
     return new Setup(params, List.of());
   }
 

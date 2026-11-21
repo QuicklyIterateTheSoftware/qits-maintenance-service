@@ -277,6 +277,11 @@ class ConsumerPactVerificationTest {
     return states.params(ProviderStates.RELEASED_ARTIFACTS_SOME_BEHIND);
   }
 
+  @State(ProviderStates.AN_EXTERNAL_PACKAGE_OUR_RELEASES_EMBED)
+  Map<String, String> anExternalPackageOurReleasesEmbed() {
+    return states.params(ProviderStates.AN_EXTERNAL_PACKAGE_OUR_RELEASES_EMBED);
+  }
+
   @State(ProviderStates.NO_RELEASED_ARTIFACTS)
   Map<String, String> noReleasedArtifacts() {
     return states.params(ProviderStates.NO_RELEASED_ARTIFACTS);
