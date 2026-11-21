@@ -7,7 +7,9 @@ import eu.wohlben.qits.maintenance.entity.MtPin;
 import eu.wohlben.qits.maintenance.entity.MtRepository;
 import eu.wohlben.qits.maintenance.model.PinKind;
 import eu.wohlben.qits.maintenance.model.RepositoryArchetype;
+import eu.wohlben.qits.maintenance.model.RepositoryStatus;
 import eu.wohlben.qits.maintenance.persistence.MaintenanceStore;
+import eu.wohlben.qits.maintenance.persistence.RepositoryNames;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.util.ArrayList;
@@ -53,6 +55,33 @@ import org.jboss.logging.Logger;
  * platform — and that exclusion is kept, in the shape it should always have had: the wrapper is
  * dropped by its ARCHETYPE, not by pretending the ecosystem does not exist.
  *
+ * <h2>Renamed and retired repositories (qits-2375)</h2>
+ *
+ * <p>{@code mt_artifact.repository} is history, and history keeps the name a repository had on the
+ * day it released. A library's closure therefore met BOTH {@code qits-edge-platform-service} (the
+ * ABSENT row a rename left behind, sharing its {@code catalog_id}) and {@code qits-edge-service}
+ * (the live one), measured live on the closure of {@code qits-eventstream-javalib} — because this
+ * class kept a private translation that only mapped a catalog id to whichever row came last in name
+ * order. Every spelling is now read through {@link RepositoryNames}, the same translation {@code
+ * ArtifactGraph} answers with, so:
+ *
+ * <ul>
+ *   <li><b>a renamed repository is reported under its LIVE name, once</b> — a retired name whose
+ *       catalog id a live row answers for reads out as that live row, and a shared id answers with
+ *       the live row first, then the newest scan, then the lowest name;
+ *   <li><b>a RETIRED repository is not downstream of anything</b> — a consumer whose own inventory
+ *       row is ABSENT or UNDECLARED ({@link RepositoryStatus#retired}) after that translation is
+ *       neither an answer nor a way through. It only ever arrives through an old bill of materials,
+ *       it will never release again, and expanding it would add everything IT once consumed;
+ *   <li><b>a live repository's coordinates include what it released under its old name</b> — the
+ *       "what does it publish" read asks under every {@link RepositoryNames#spellings spelling}, so
+ *       a consumer of an artifact filed before the rename is still downstream of it.
+ * </ul>
+ *
+ * <p>A consumer with NO inventory row still passes through, exactly as before: nothing here says it
+ * is retired. And a root asked by a retired name walks from the live name when one answers for its
+ * id, from the name as given otherwise.
+ *
  * <h2>What terminates it</h2>
  *
  * <p>The estate's dependency graph is not guaranteed acyclic and this runs inside a human GET, so
@@ -63,7 +92,8 @@ import org.jboss.logging.Logger;
  * must not break because a graph got strange.
  *
  * <p><b>Pure reads, no HTTP, no writes.</b> Everything here is one pass over {@code repositories()}
- * and {@code allPins()} held in memory, plus one {@code dependents} read per coordinate per level.
+ * and {@code allPins()} held in memory, plus one {@code artifactsOfRepository} read per repository
+ * and one {@code dependents} read per coordinate per level.
  */
 @ApplicationScoped
 public class DownstreamResolver {
@@ -88,8 +118,6 @@ public class DownstreamResolver {
   public static final int MAX_REPOSITORIES = 500;
 
   @Inject MaintenanceStore store;
-
-  @Inject ReleaseCoordinates coordinates;
 
   /**
    * One repository downstream of the root.
@@ -148,6 +176,13 @@ public class DownstreamResolver {
       for (String upstream : frontier) {
         for (String consumer : consumersOf(upstream, consumersByCoordinate, catalog)) {
           if (consumer == null || consumer.isBlank() || visited.contains(consumer)) {
+            continue;
+          }
+          if (catalog.retired(consumer)) {
+            // RETIRED, AFTER THE TRANSLATION (qits-2375). A renamed row's old name has already been
+            // read out as the live name by now, so what is left here is a row nothing replaced: it
+            // only arrives through an old bill of materials, will never release again, and is
+            // neither an answer nor a hop. See the class comment.
             continue;
           }
           if (catalog.wrapper(consumer)) {
@@ -219,7 +254,7 @@ public class DownstreamResolver {
   private Set<String> consumersOf(
       String repository, Map<Coordinate, Set<String>> consumersByCoordinate, Catalog catalog) {
     Set<String> consumers = new LinkedHashSet<>();
-    for (Coordinate coordinate : publishedBy(repository)) {
+    for (Coordinate coordinate : publishedBy(repository, catalog)) {
       consumers.addAll(consumersByCoordinate.getOrDefault(coordinate, Set.of()));
       if (coordinate.ecosystem() == Ecosystem.GITLINK) {
         // Nothing releases a gitlink into a registry, so there is no evidence side for it — the
@@ -229,7 +264,8 @@ public class DownstreamResolver {
       for (MaintenanceStore.Dependent dependent :
           store.dependents(coordinate.ecosystem(), coordinate.name(), true)) {
         // mt_artifact.repository may still hold another context's spelling on rows written before
-        // the listener learned to resolve it; the catalog reads it back as the name this joins on.
+        // the listener learned to resolve it, or the name a repository had before a rename; the
+        // catalog reads it back as the live name this joins on (qits-2375).
         consumers.add(catalog.name(dependent.artifact().repository));
       }
     }
@@ -242,11 +278,16 @@ public class DownstreamResolver {
    *
    * <p>The second is synthetic and it is the point — see the class comment. It costs nothing when
    * nobody submodules the repository, because the pin index simply has no entry for it.
+   *
+   * <p><b>The artifacts are read under every spelling {@link RepositoryNames} knows</b> — the name,
+   * the catalog id, and every retired name a rename left on that id (qits-2375). {@code
+   * ReleaseCoordinates.spellings} stops at the first two on purpose: it answers "what did THIS
+   * release carry" and is keyed by the version the ledger recorded, which is not this question.
    */
-  private Set<Coordinate> publishedBy(String repository) {
+  private Set<Coordinate> publishedBy(String repository, Catalog catalog) {
     Set<Coordinate> published = new LinkedHashSet<>();
     published.add(new Coordinate(Ecosystem.GITLINK, repository));
-    for (MtArtifact artifact : store.artifactsOfRepository(coordinates.spellings(repository))) {
+    for (MtArtifact artifact : store.artifactsOfRepository(catalog.spellings(repository))) {
       Ecosystem.of(artifact.ecosystem)
           .filter(ecosystem -> ecosystem != Ecosystem.GITLINK)
           .ifPresent(ecosystem -> published.add(new Coordinate(ecosystem, artifact.name)));
@@ -284,24 +325,27 @@ public class DownstreamResolver {
     return index;
   }
 
-  /** {@code mt_repository} in the three shapes a walk reads it in, in ONE query. */
+  /**
+   * {@code mt_repository} in the shapes a walk reads it in, in ONE query: the shared translation
+   * both ways round, and the rows by name.
+   */
   private Catalog catalog() {
-    Map<String, String> nameByCatalogId = new LinkedHashMap<>();
+    List<MtRepository> rows = store.repositories();
     Map<String, MtRepository> byName = new LinkedHashMap<>();
-    for (MtRepository row : store.repositories()) {
-      if (row.name == null) {
-        continue;
-      }
-      byName.put(row.name, row);
-      if (row.catalogId != null && !row.catalogId.isBlank()) {
-        nameByCatalogId.put(row.catalogId, row.name);
+    for (MtRepository row : rows) {
+      if (row.name != null) {
+        byName.put(row.name, row);
       }
     }
-    return new Catalog(nameByCatalogId, byName);
+    return new Catalog(RepositoryNames.from(rows), byName);
   }
 
   /**
    * The inventory as a walk reads it.
+   *
+   * <p><b>The translation is {@link RepositoryNames}, not a copy of it</b> (qits-2375): this record
+   * used to carry its own catalog-id map, built by a last-wins put in name order, and it missed both
+   * the live-first preference and the retired-name arm that {@code ArtifactGraph} already had.
    *
    * <p><b>An unknown spelling passes through untouched</b>, the stance every translation in this
    * service takes: a repository this inventory has never scanned still released something, and a
@@ -309,14 +353,28 @@ public class DownstreamResolver {
    * with a null {@code catalogId} and a null archetype rather than being dropped — the alias column
    * that would fix the mismatch properly is a later decision.
    */
-  private record Catalog(Map<String, String> nameByCatalogId, Map<String, MtRepository> byName) {
+  private record Catalog(RepositoryNames names, Map<String, MtRepository> byName) {
 
-    /** A caller's or a row's spelling of a repository, as this inventory keys one. */
+    /**
+     * A caller's or a row's spelling of a repository, as this inventory keys one: a catalog id or a
+     * retired name reads out as the live name answering for it.
+     */
     String name(String spelling) {
-      if (spelling == null) {
-        return null;
-      }
-      return nameByCatalogId.getOrDefault(spelling, spelling);
+      return names.of(spelling);
+    }
+
+    /** Every string this repository's artifact rows may carry, retired names included. */
+    List<String> spellings(String name) {
+      return names.spellings(name);
+    }
+
+    /**
+     * Whether this repository's own inventory row is ABSENT or UNDECLARED. False for a name with no
+     * row at all — nothing here says that one is retired.
+     */
+    boolean retired(String name) {
+      MtRepository row = row(name);
+      return row != null && RepositoryStatus.retired(row.status);
     }
 
     /** One repository's inventory row, or null when nothing here knows the name. */

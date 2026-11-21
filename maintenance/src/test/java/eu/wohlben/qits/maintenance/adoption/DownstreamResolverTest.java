@@ -99,6 +99,37 @@ class DownstreamResolverTest {
     store.upsertArtifact(ecosystem, name, version, repository, Instant.now());
   }
 
+  /**
+   * A row a scan RETIRED — {@code ScanService.reconcile}'s ABSENT, {@code retireRenamed}'s ABSENT, or
+   * a project's UNDECLARED. It keeps its {@code catalog_id}, which is what a rename shares with the
+   * live row, and it has no pins: retiring a row deletes them.
+   */
+  private void retired(
+      String repository, String catalogId, RepositoryArchetype archetype, RepositoryStatus status) {
+    store.markRepository(
+        repository,
+        "qits",
+        catalogId,
+        archetype == null ? null : archetype.name(),
+        status,
+        "dropped from the catalog",
+        Instant.now());
+  }
+
+  /**
+   * One release filed under {@code storedAs} — a name, an old name or a catalog id, whatever the bus
+   * wrote — whose bill of materials embeds {@code embedded}: the evidence side's whole input.
+   */
+  private void shipping(String storedAs, String artifact, String embedded) {
+    UUID release =
+        store.upsertArtifact(Ecosystem.MAVEN, artifact, "1.0.0", storedAs, Instant.now());
+    store.replaceGraph(
+        release,
+        List.of(new ParsedSbom.Component("c-1", null, Ecosystem.MAVEN, embedded, "1.0.0", false)),
+        List.of(new ParsedSbom.Edge(-1, 0)),
+        Instant.now());
+  }
+
   private static List<String> names(DownstreamResolver.Closure closure) {
     return closure.downstream().stream().map(DownstreamResolver.Downstream::repository).toList();
   }
@@ -346,5 +377,151 @@ class DownstreamResolverTest {
     assertEquals("qits-never-scanned" + run, closure.repository(), "the spelling is kept");
     assertNull(closure.catalogId());
     assertTrue(closure.downstream().isEmpty());
+  }
+
+  // --- renamed and retired repositories (qits-2375) ---------------------------------------------
+
+  /**
+   * <b>A rename is reported ONCE, under the live name</b> (qits-2375). Measured live: the closure of
+   * {@code qits-eventstream-javalib} named both {@code qits-edge-platform-service} — the ABSENT row
+   * the rename left, sharing its {@code catalog_id} — and {@code qits-edge-service}, because the
+   * release before the rename filed its bill of materials under the old name and the old private
+   * translation only knew catalog ids.
+   */
+  @Test
+  void aRenamedConsumerIsReportedOnceUnderItsLiveNameAndNeverTheOldOne() {
+    String library = "qits-eventstream-javalib" + run;
+    String pkg = "eu.wohlben.qits:qits-eventstream" + run;
+    String catalogId = "row-" + UUID.randomUUID();
+    String live = "qits-edge-service" + run;
+    String old = "qits-edge-platform-service" + run;
+
+    scanned(library, null, RepositoryArchetype.LIBRARY);
+    published(library, Ecosystem.MAVEN, pkg, "1.0.0");
+    scanned(live, catalogId, RepositoryArchetype.SERVICE);
+    retired(old, catalogId, RepositoryArchetype.SERVICE, RepositoryStatus.ABSENT);
+    // The release before the rename, filed under the old name, and one after it under the new.
+    shipping(old, "eu.wohlben.qits:qits-edge-before" + run, pkg);
+    shipping(live, "eu.wohlben.qits:qits-edge-after" + run, pkg);
+
+    DownstreamResolver.Closure closure = resolver.of(library);
+
+    assertEquals(List.of(live), names(closure), "the live name once, the old one never");
+    assertEquals(catalogId, entry(closure, live).catalogId());
+    assertEquals("SERVICE", entry(closure, live).archetype());
+  }
+
+  /**
+   * <b>An UNDECLARED repository with no successor is not downstream</b>: its project dropped it, it
+   * will never release again, and the only way it reaches a closure is an old bill of materials.
+   */
+  @Test
+  void anUndeclaredConsumerWithNoLiveSuccessorIsOmitted() {
+    String library = "qits-lib-undeclared" + run;
+    String pkg = "eu.wohlben.qits:qits-lib-undeclared" + run;
+    String gone = "qits-ci-runner-daemon" + run;
+
+    scanned(library, null, RepositoryArchetype.LIBRARY);
+    published(library, Ecosystem.MAVEN, pkg, "1.0.0");
+    retired(gone, "row-" + UUID.randomUUID(), RepositoryArchetype.DAEMON, RepositoryStatus.UNDECLARED);
+    shipping(gone, "eu.wohlben.qits:qits-ci-runner" + run, pkg);
+
+    assertTrue(resolver.of(library).downstream().isEmpty());
+  }
+
+  /** And the catalog's ABSENT, with nothing answering for its id, is the same: omitted. */
+  @Test
+  void anAbsentConsumerWithNoLiveSuccessorIsOmitted() {
+    String library = "qits-lib-absent" + run;
+    String pkg = "eu.wohlben.qits:qits-lib-absent" + run;
+    String gone = "qits-dropped" + run;
+
+    scanned(library, null, RepositoryArchetype.LIBRARY);
+    published(library, Ecosystem.MAVEN, pkg, "1.0.0");
+    retired(gone, "row-" + UUID.randomUUID(), RepositoryArchetype.SERVICE, RepositoryStatus.ABSENT);
+    shipping(gone, "eu.wohlben.qits:qits-dropped" + run, pkg);
+
+    assertTrue(resolver.of(library).downstream().isEmpty());
+  }
+
+  /**
+   * <b>A retired consumer is not a way through either.</b> Expanding it would add everything IT
+   * once published to — here a live repository that pins the retired one's package and is
+   * downstream of the root by nothing else.
+   */
+  @Test
+  void aRetiredConsumerIsNotExpanded() {
+    String library = "qits-lib-dead-end" + run;
+    String pkg = "eu.wohlben.qits:qits-lib-dead-end" + run;
+    String gone = "qits-dead-end" + run;
+    String goneMaven = "eu.wohlben.qits:qits-dead-end" + run;
+    String beyond = "qits-beyond" + run;
+
+    scanned(library, null, RepositoryArchetype.LIBRARY);
+    published(library, Ecosystem.MAVEN, pkg, "1.0.0");
+    retired(gone, "row-" + UUID.randomUUID(), RepositoryArchetype.LIBRARY, RepositoryStatus.ABSENT);
+    shipping(gone, goneMaven, pkg);
+    scanned(
+        beyond,
+        null,
+        RepositoryArchetype.SERVICE,
+        ParsedPin.of(Ecosystem.MAVEN, "pom.xml", goneMaven, "1.0.0", null, "dependency:" + goneMaven));
+
+    assertTrue(
+        resolver.of(library).downstream().isEmpty(),
+        "neither the retired repository nor what is downstream only of it");
+  }
+
+  /**
+   * <b>What a live repository released under its OLD name is still its coordinate.</b> The package
+   * was filed under the name it had before the rename; a consumer pinning it is downstream of the
+   * repository that now carries that name's catalog id — and asking by the old name walks from the
+   * live one.
+   */
+  @Test
+  void anArtifactFiledUnderARetiredOldNameCountsAsTheLiveRepositorysCoordinate() {
+    String catalogId = "row-" + UUID.randomUUID();
+    String live = "qits-renamed-jslib" + run;
+    String old = "qits-renamed-platform-jslib" + run;
+    String pkg = "@qits/renamed" + run;
+    String consumer = "qits-renamed-consumer" + run;
+
+    scanned(live, catalogId, RepositoryArchetype.LIBRARY);
+    retired(old, catalogId, RepositoryArchetype.LIBRARY, RepositoryStatus.ABSENT);
+    published(old, Ecosystem.NPM, pkg, "1.0.0");
+    scanned(consumer, null, RepositoryArchetype.FRONTEND, npm(pkg));
+
+    assertEquals(List.of(consumer), names(resolver.of(live)));
+
+    DownstreamResolver.Closure byOldName = resolver.of(old);
+    assertEquals(live, byOldName.repository(), "asked by the old name, answered by the live one");
+    assertEquals(catalogId, byOldName.catalogId());
+    assertEquals(List.of(consumer), names(byOldName));
+  }
+
+  /**
+   * <b>A catalog id two rows share answers with the LIVE one</b>, whatever the name order
+   * (qits-1735's rule, which the old private translation lacked). The retired name sorts after the
+   * live one here — exactly the row a last-wins put in name order let answer.
+   */
+  @Test
+  void aSharedCatalogIdResolvesToTheLiveRowEvenWhenTheRetiredNameSortsAfterIt() {
+    String library = "qits-lib-tie" + run;
+    String pkg = "eu.wohlben.qits:qits-lib-tie" + run;
+    String catalogId = "row-" + UUID.randomUUID();
+    String live = "qits-a-live" + run;
+    String old = "qits-z-retired" + run;
+
+    scanned(library, null, RepositoryArchetype.LIBRARY);
+    published(library, Ecosystem.MAVEN, pkg, "1.0.0");
+    scanned(live, catalogId, RepositoryArchetype.SERVICE);
+    retired(old, catalogId, RepositoryArchetype.SERVICE, RepositoryStatus.ABSENT);
+    // Filed under the catalog id, as qits-ci's SoftwareRelease spells it.
+    shipping(catalogId, "eu.wohlben.qits:qits-tie-service" + run, pkg);
+
+    DownstreamResolver.Closure closure = resolver.of(library);
+
+    assertEquals(List.of(live), names(closure));
+    assertEquals(live, resolver.of(catalogId).repository(), "and the root reads the same way");
   }
 }

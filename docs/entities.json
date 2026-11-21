@@ -14,7 +14,7 @@
           "type" : "eu.wohlben.qits.maintenance.adoption.ReleaseCoordinates$Coordinate",
           "kind" : "assembler",
           "via" : null,
-          "site" : "DownstreamResolver.publishedBy(String)"
+          "site" : "DownstreamResolver.publishedBy(String, Catalog)"
         },
         {
           "type" : "eu.wohlben.qits.maintenance.dto.AdoptionJourneyDto",
