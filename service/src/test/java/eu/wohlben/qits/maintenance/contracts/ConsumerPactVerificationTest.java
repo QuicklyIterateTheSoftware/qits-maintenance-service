@@ -287,6 +287,11 @@ class ConsumerPactVerificationTest {
     return states.params(ProviderStates.NO_RELEASED_ARTIFACTS);
   }
 
+  @State(ProviderStates.AN_ARTIFACT_RELEASED_IN_SEVERAL_VERSIONS)
+  Map<String, String> anArtifactReleasedInSeveralVersions() {
+    return states.params(ProviderStates.AN_ARTIFACT_RELEASED_IN_SEVERAL_VERSIONS);
+  }
+
   @State(ProviderStates.DEPENDENCIES_MATCHING_A_GLOB_SOME_BEHIND)
   Map<String, String> dependenciesMatchingAGlobSomeBehind() {
     return states.params(ProviderStates.DEPENDENCIES_MATCHING_A_GLOB_SOME_BEHIND);

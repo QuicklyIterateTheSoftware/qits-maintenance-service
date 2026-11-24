@@ -738,6 +738,37 @@
       ]
     },
     {
+      "name": "an artifact released in several versions",
+      "slug": "an-artifact-released-in-several-versions",
+      "params": {
+        "ecosystem": "maven",
+        "name": "eu.wohlben.qits:contract-core"
+      },
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "listArtifactVersions",
+          "method": "GET",
+          "path": "/maintenance/api/artifacts/versions",
+          "query": {
+            "ecosystem": "{ecosystem}",
+            "name": "{name}"
+          },
+          "status": 200,
+          "file": "an-artifact-released-in-several-versions/listArtifactVersions.json",
+          "frozen": {
+            "ids": [],
+            "instants": [
+              "$[*].occurredAt",
+              "$[*].ingestedAt"
+            ],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
       "name": "an external package our releases embed",
       "slug": "an-external-package-our-releases-embed",
       "params": {
@@ -1219,6 +1250,23 @@
       "params": {},
       "dependsOn": [],
       "operations": [
+        {
+          "operationId": "listArtifactVersions",
+          "method": "GET",
+          "path": "/maintenance/api/artifacts/versions",
+          "query": {
+            "ecosystem": "maven",
+            "name": "eu.wohlben.qits:contract-core"
+          },
+          "status": 200,
+          "file": "no-released-artifacts/listArtifactVersions.json",
+          "frozen": {
+            "ids": [],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        },
         {
           "operationId": "listArtifacts",
           "method": "GET",

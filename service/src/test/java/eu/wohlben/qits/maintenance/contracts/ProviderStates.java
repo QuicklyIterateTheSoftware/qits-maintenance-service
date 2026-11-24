@@ -226,6 +226,17 @@ public class ProviderStates {
   public static final String NO_RELEASED_ARTIFACTS = "no released artifacts";
 
   /**
+   * The landing app's maven and npm package pages (qits-2490): one artifact, {@link
+   * #VERSIONED_ARTIFACT}, released in four versions whose bills of materials got four different
+   * distances. {@code listArtifactVersions} answers them newest first.
+   */
+  public static final String AN_ARTIFACT_RELEASED_IN_SEVERAL_VERSIONS =
+      "an artifact released in several versions";
+
+  /** The maven jar {@link #AN_ARTIFACT_RELEASED_IN_SEVERAL_VERSIONS} releases. */
+  static final String VERSIONED_ARTIFACT = "eu.wohlben.qits:contract-core";
+
+  /**
    * The landing app's mirror package page (qits-2488): an external npm package, {@link
    * #EMBEDDED_PACKAGE}, that two releases of ours embed at two versions and two repositories pin.
    * {@code listDependencyDependents} and {@code listDependencies?kind=EXTERNAL&name=} answer it
@@ -337,6 +348,8 @@ public class ProviderStates {
     states.put(NO_SUCH_REPOSITORY, this::noSuchRepository);
     states.put(RELEASED_ARTIFACTS_SOME_BEHIND, this::releasedArtifactsSomeBehind);
     states.put(NO_RELEASED_ARTIFACTS, this::noReleasedArtifacts);
+    states.put(
+        AN_ARTIFACT_RELEASED_IN_SEVERAL_VERSIONS, this::anArtifactReleasedInSeveralVersions);
     states.put(AN_EXTERNAL_PACKAGE_OUR_RELEASES_EMBED, this::anExternalPackageOurReleasesEmbed);
   }
 
@@ -1390,6 +1403,65 @@ public class ProviderStates {
     emptyEstate();
     Map<String, String> params = new TreeMap<>();
     params.put("repoName", UNKNOWN_REPOSITORY);
+    return new Setup(params, List.of());
+  }
+
+  /**
+   * {@link #VERSIONED_ARTIFACT}, released by {@code contract-javalib} four times — one row per
+   * sbom status, newest first:
+   *
+   * <ul>
+   *   <li>2026.1104.1, PENDING: released, its document not read yet.
+   *   <li>2026.1101.2, INGESTED: read into the graph, so it has an {@code ingestedAt}.
+   *   <li>2026.1020.1, FAILED: qits-artifacts answered with something that is not a document, and
+   *       the sentence is its {@code sbomError}.
+   *   <li>2026.1001.1, MISSING: qits-artifacts holds no document for it, and no release announced
+   *       it — a manual ingest made the row — so it has no repository.
+   * </ul>
+   */
+  private Setup anArtifactReleasedInSeveralVersions() {
+    emptyEstate();
+    scannedIn(
+        PROJECT_ID,
+        PINNED_REPOSITORY,
+        "0c0a1d1e-0000-4000-8000-00000000e001",
+        RepositoryArchetype.LIBRARY);
+    store.upsertArtifact(
+        Ecosystem.MAVEN,
+        VERSIONED_ARTIFACT,
+        "2026.1104.1",
+        PINNED_REPOSITORY,
+        Instant.parse("2026-11-04T10:00:00Z"));
+    store.replaceGraph(
+        store.upsertArtifact(
+            Ecosystem.MAVEN,
+            VERSIONED_ARTIFACT,
+            "2026.1101.2",
+            PINNED_REPOSITORY,
+            Instant.parse("2026-11-01T10:00:00Z")),
+        List.of(
+            sbomComponent(
+                Ecosystem.MAVEN, "com.fasterxml.jackson.core:jackson-databind", "2.18.2", true)),
+        List.of(new ParsedSbom.Edge(-1, 0)),
+        Instant.parse("2026-11-01T10:05:00Z"));
+    store.markArtifactFailed(
+        store.upsertArtifact(
+            Ecosystem.MAVEN,
+            VERSIONED_ARTIFACT,
+            "2026.1020.1",
+            PINNED_REPOSITORY,
+            Instant.parse("2026-10-20T10:00:00Z")),
+        "the sbom answer is not a CycloneDX document");
+    store.markArtifactMissing(
+        store.upsertArtifact(
+            Ecosystem.MAVEN,
+            VERSIONED_ARTIFACT,
+            "2026.1001.1",
+            null,
+            Instant.parse("2026-10-01T10:00:00Z")));
+    Map<String, String> params = new TreeMap<>();
+    params.put("ecosystem", Ecosystem.MAVEN.wireName());
+    params.put("name", VERSIONED_ARTIFACT);
     return new Setup(params, List.of());
   }
 

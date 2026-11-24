@@ -666,6 +666,20 @@ class GoldenMasterRecordingTest {
               "/maintenance/api/dependencies/dependents",
               Map.of("ecosystem", "maven", "name", "eu.wohlben.qits:contract-core"),
               null),
+          // The landing app's maven and npm package pages (qits-2490): every version of one
+          // artifact with its sbom status, newest first, and an artifact nothing released.
+          Interaction.read(
+              ProviderStates.AN_ARTIFACT_RELEASED_IN_SEVERAL_VERSIONS,
+              "listArtifactVersions",
+              "/maintenance/api/artifacts/versions",
+              Map.of("ecosystem", "{ecosystem}", "name", "{name}"),
+              null),
+          Interaction.read(
+              ProviderStates.NO_RELEASED_ARTIFACTS,
+              "listArtifactVersions",
+              "/maintenance/api/artifacts/versions",
+              Map.of("ecosystem", "maven", "name", "eu.wohlben.qits:contract-core"),
+              null),
           // The landing app's mirror package page (qits-2488): who embeds and who pins left-pad.
           Interaction.read(
               ProviderStates.AN_EXTERNAL_PACKAGE_OUR_RELEASES_EMBED,

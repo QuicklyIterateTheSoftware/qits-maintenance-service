@@ -59,6 +59,10 @@ class AgentReadAccessTest {
   @Test
   void anAgentReadsTheArtifacts() {
     agent().get(BASE + "/artifacts").then().statusCode(200);
+    agent()
+        .get(BASE + "/artifacts/versions?ecosystem=maven&name=eu.wohlben.qits:qits-ci")
+        .then()
+        .statusCode(200);
   }
 
   @Test

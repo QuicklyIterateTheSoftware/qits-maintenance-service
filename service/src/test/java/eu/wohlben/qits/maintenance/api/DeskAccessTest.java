@@ -54,6 +54,10 @@ class DeskAccessTest {
     allowed(desk().get(BASE + "/repositories/qits-ci-service/dependents"));
     allowed(desk().get(BASE + "/repositories/qits-ci-service/downstream"));
     desk().get(BASE + "/artifacts").then().statusCode(200);
+    desk()
+        .get(BASE + "/artifacts/versions?ecosystem=maven&name=eu.wohlben.qits:qits-ci")
+        .then()
+        .statusCode(200);
     allowed(desk().get(BASE + "/scans/" + UUID.randomUUID()));
     allowed(desk().get(BASE + "/dependencies"));
     allowed(

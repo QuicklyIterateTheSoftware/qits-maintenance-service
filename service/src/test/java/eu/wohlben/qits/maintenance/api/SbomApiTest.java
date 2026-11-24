@@ -383,8 +383,7 @@ class SbomApiTest {
         store.artifact(UUID.fromString(id)).orElseThrow().sbomStatus,
         "nothing is stored for this coordinate, and that is not a failure");
 
-    // And the row can be asked for again: the manual route is the only thing that moves a terminal
-    // one, which is why it exists.
+    // And the row can be asked for again now, rather than at the daily check's re-read.
     given()
         .header("Authorization", SuiteBearers.platform())
         .contentType(ContentType.JSON)
@@ -417,6 +416,118 @@ class SbomApiTest {
         .then()
         .statusCode(400)
         .body("message", containsString("version"));
+  }
+
+  // --- GET /artifacts/versions -------------------------------------------------------------------
+
+  /**
+   * Every version of one artifact, newest release first, each with how far its document got — the
+   * read a package page finds the version to re-ingest from (qits-2490).
+   */
+  @Test
+  void everyVersionOfOneArtifactIsListedNewestFirstWithItsSbomStatus() {
+    UUID missing =
+        store.upsertArtifact(
+            Ecosystem.MAVEN, CI, "2026.801.1", Fixture.REPOSITORY, Instant.parse("2026-08-01T10:00:00Z"));
+    store.markArtifactMissing(missing);
+    released(
+        Ecosystem.MAVEN,
+        CI,
+        "2026.821.1",
+        Fixture.REPOSITORY,
+        Instant.parse("2026-08-21T10:00:00Z"),
+        List.of(component("c-db", Ecosystem.MAVEN, DATABIND, "2.18.2", true)),
+        List.of(new ParsedSbom.Edge(-1, 0)));
+    UUID failed =
+        store.upsertArtifact(
+            Ecosystem.MAVEN, CI, "2026.811.1", Fixture.REPOSITORY, Instant.parse("2026-08-11T10:00:00Z"));
+    store.markArtifactFailed(failed, "not a CycloneDX document");
+    // Another artifact and another type of the same name must not leak into the answer.
+    store.upsertArtifact(
+        Ecosystem.MAVEN, EVENTSTREAM, "2026.811.1", "qits-eventstream-javalib", Instant.now());
+    store.upsertArtifact(Ecosystem.NPM, CI, "2026.901.1", Fixture.REPOSITORY, Instant.now());
+    queue.awaitIdle(Duration.ofSeconds(30));
+
+    given()
+        .header("Authorization", SuiteBearers.operator())
+        .when()
+        .get(BASE + "/artifacts/versions?ecosystem=maven&name=" + CI)
+        .then()
+        .statusCode(200)
+        .body("size()", equalTo(3))
+        .body("version", equalTo(List.of("2026.821.1", "2026.811.1", "2026.801.1")))
+        .body("sbomStatus", equalTo(List.of("INGESTED", "FAILED", "MISSING")))
+        .body("[0].repository", equalTo(Fixture.REPOSITORY))
+        .body("[0].occurredAt", notNullValue())
+        .body("[0].ingestedAt", notNullValue())
+        .body("[0].sbomError", nullValue())
+        .body("[1].sbomError", equalTo("not a CycloneDX document"))
+        .body("[1].ingestedAt", nullValue())
+        .body("[2].sbomError", nullValue());
+  }
+
+  /** A daemon binary is keyed {@code daemon}, which the ingest accepts, so the listing must too. */
+  @Test
+  void aDaemonBinarysVersionsAreListedUnderItsArtifactType() {
+    store.upsertDaemonArtifact(
+        "qits-eventstream-daemon",
+        "2026.811.1",
+        "qits-eventstream-javalib",
+        Instant.parse("2026-08-11T10:00:00Z"));
+
+    given()
+        .header("Authorization", SuiteBearers.operator())
+        .when()
+        .get(BASE + "/artifacts/versions?ecosystem=DAEMON&name=qits-eventstream-daemon")
+        .then()
+        .statusCode(200)
+        .body("version", equalTo(List.of("2026.811.1")))
+        .body("[0].repository", equalTo("qits-eventstream-javalib"));
+  }
+
+  @Test
+  void anArtifactNothingReleasedAnswersWithAnEmptyListRatherThanAFourOhFour() {
+    given()
+        .header("Authorization", SuiteBearers.operator())
+        .when()
+        .get(BASE + "/artifacts/versions?ecosystem=maven&name=eu.wohlben.qits:never-released")
+        .then()
+        .statusCode(200)
+        .body("$", empty());
+  }
+
+  @Test
+  void aVersionListingNamingNoNameOrAnUnknownEcosystemIsRefused() {
+    given()
+        .header("Authorization", SuiteBearers.operator())
+        .when()
+        .get(BASE + "/artifacts/versions?ecosystem=pypi&name=" + CI)
+        .then()
+        .statusCode(400)
+        .body("message", containsString("maven, npm, docker or daemon"));
+    given()
+        .header("Authorization", SuiteBearers.operator())
+        .when()
+        .get(BASE + "/artifacts/versions?name=" + CI)
+        .then()
+        .statusCode(400)
+        .body("message", containsString("maven, npm, docker or daemon"));
+    given()
+        .header("Authorization", SuiteBearers.operator())
+        .queryParam("ecosystem", "maven")
+        .queryParam("name", " ")
+        .when()
+        .get(BASE + "/artifacts/versions")
+        .then()
+        .statusCode(400)
+        .body("message", containsString("name is required"));
+    given()
+        .header("Authorization", SuiteBearers.operator())
+        .when()
+        .get(BASE + "/artifacts/versions?ecosystem=maven")
+        .then()
+        .statusCode(400)
+        .body("message", containsString("name is required"));
   }
 
   // --- GET /repositories/{name}/dependents --------------------------------------------------------

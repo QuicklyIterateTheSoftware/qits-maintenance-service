@@ -1,0 +1,34 @@
+[
+  {
+    "version": "2026.1104.1",
+    "repository": "contract-javalib",
+    "occurredAt": "2026-01-01T00:00:00Z",
+    "sbomStatus": "PENDING",
+    "sbomError": null,
+    "ingestedAt": null
+  },
+  {
+    "version": "2026.1101.2",
+    "repository": "contract-javalib",
+    "occurredAt": "2026-01-01T00:00:00Z",
+    "sbomStatus": "INGESTED",
+    "sbomError": null,
+    "ingestedAt": "2026-01-01T00:00:00Z"
+  },
+  {
+    "version": "2026.1020.1",
+    "repository": "contract-javalib",
+    "occurredAt": "2026-01-01T00:00:00Z",
+    "sbomStatus": "FAILED",
+    "sbomError": "the sbom answer is not a CycloneDX document",
+    "ingestedAt": null
+  },
+  {
+    "version": "2026.1001.1",
+    "repository": null,
+    "occurredAt": "2026-01-01T00:00:00Z",
+    "sbomStatus": "MISSING",
+    "sbomError": null,
+    "ingestedAt": null
+  }
+]
