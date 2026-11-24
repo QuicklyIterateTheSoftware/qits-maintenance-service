@@ -17,9 +17,11 @@ import org.jboss.logging.Logger;
  * does not cover: a queue submission dropped while the process kept running.
  *
  * <p><b>It is not a retry of MISSING or FAILED.</b> Neither is swept, deliberately: a 404 is the
- * ordinary permanent answer for a release published before the SBOM route existed, and a released
- * version is immutable, so asking again asks about the same bytes. What moves either is {@code
- * POST /artifacts/ingest}, a person who knows something changed.
+ * ordinary answer for a release published before the SBOM route existed, and a released version is
+ * immutable, so asking every hour asks about the same bytes. Two other things move them: the daily
+ * SBOM check re-reads every MISSING or FAILED row whose version qits-artifacts now holds
+ * ({@code SbomCheckService}, qits-739), and {@code POST /artifacts/ingest} re-reads one now, for a
+ * person who knows something changed and will not wait for the night.
  *
  * <p><b>A no-op whenever nothing is pending</b>, which is nearly always: it is one indexed read of
  * {@code mt_artifact} by status and a return.

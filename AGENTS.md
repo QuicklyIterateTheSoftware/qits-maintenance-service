@@ -546,10 +546,13 @@ listener that fetched inline would hold a durable claim open across another serv
 a qits-artifacts that was slow would make one release an event redelivered for ever with this
 consumer's watermark stuck behind it.
 
-**404 is MISSING, it is TERMINAL, and that is not laziness.** The route is newer than most of what
-the platform has released and a released version is immutable, so a retry asks about the same bytes.
-The next release brings its own row; `POST /artifacts/ingest` is the manual move. `SbomSweepSchedule`
-and `RestartRecovery` re-queue **PENDING only**.
+**404 is MISSING, no timer of its own retries it, and that is not laziness.** The route is newer than
+most of what the platform has released and a released version is immutable, so a retry asks about the
+same bytes. The next release brings its own row; the daily SBOM check re-reads every MISSING or FAILED
+row whose version qits-artifacts now holds (qits-739); `POST /artifacts/ingest` is the move for *now*.
+`SbomSweepSchedule` and `RestartRecovery` re-queue **PENDING only**. `GET /artifacts/versions`
+(`listArtifactVersions`, qits-2490) lists one artifact's versions with their status, which is how a
+page finds the version to re-read.
 
 **`direct` is the ROOT's own `dependsOn` list and nothing else.** It is the only reason to read the
 document at all. A parser that marked every listed component direct would leave the whole
@@ -1084,9 +1087,10 @@ Each is a decision, not an omission:
   repository page beside the pins. What is still not here is doing anything about one: a manifest
   holds direct pins and only those have a line to edit, so a transitive upgrade means somebody
   adding a managed version, which is a decision about their own build.
-- **Retrying a MISSING sbom.** A released version is immutable and a 404 is the ordinary permanent
-  answer for anything published before qits-artifacts had that route. `POST /artifacts/ingest` is
-  the manual move and there is no schedule behind it.
+- **Retrying a MISSING sbom on a timer of its own.** A released version is immutable and a 404 is
+  the ordinary answer for anything published before qits-artifacts had that route. The daily SBOM
+  check re-reads MISSING and FAILED rows whose version qits-artifacts now holds (qits-739), and
+  `POST /artifacts/ingest` is the move for now; nothing retries more often than that.
 - **External base image tags.** `FROM eclipse-temurin:…` — ordering tags across vendors is a later
   decision, and the mirror would answer with an upstream's whole tag history with no rule to rank
   it by. `FROM qits/*` is in scope.

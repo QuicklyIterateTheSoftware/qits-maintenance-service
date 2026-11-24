@@ -469,11 +469,14 @@ returns; the document is fetched afterwards on the one worker thread. A listener
 would hold a bus claim open across another service's HTTP call, and a slow qits-artifacts would turn
 one release into an event redelivered for ever.
 
-**A 404 is MISSING, it is the ORDINARY answer, and nothing retries it.** The SBOM route is newer than
-most of what this platform has released, so most coordinates have no document — and a released
-version is immutable, so asking again tomorrow asks about the same bytes. What supplies an answer is
-the NEXT release of that artifact, which brings its own row; a person who knows a document has since
-been stored asks by hand with `POST /artifacts/ingest`.
+**A 404 is MISSING, it is the ORDINARY answer, and no timer of its own retries it.** The SBOM route
+is newer than most of what this platform has released, so most coordinates have no document — and a
+released version is immutable, so asking again every hour asks about the same bytes. What supplies an
+answer is the NEXT release of that artifact, which brings its own row; the daily SBOM check, which
+re-reads every MISSING or FAILED row whose version qits-artifacts now holds (qits-739); or a person
+who knows a document has since been stored and asks now with `POST /artifacts/ingest`.
+`GET /artifacts/versions?ecosystem=&name=` (`listArtifactVersions`) lists every released version of
+one artifact with its status, newest first, so a page can tell which version to re-read.
 
 **Direct is the root component's own `dependsOn` list and nothing else.** That is the whole value of
 reading the document: a direct component is something a manifest could hold a line for, and a
@@ -600,6 +603,9 @@ GET  /deployed-pacts?provider=<repository>         → {provider,
 GET  /artifacts                                   → [{ecosystem, name, repository, latest, version,
                                                       occurredAt, sbomStatus, dependentCount,
                                                       behindCount}]
+GET  /artifacts/versions?ecosystem=&name=         → [{version, repository, occurredAt, sbomStatus,
+                                                      sbomError, ingestedAt}]  newest first;
+                                                      [] unknown name; 400 unknown ecosystem/no name
 POST /artifacts/ingest {ecosystem,name,version}   → 202 {id}    400 unknown ecosystem
 GET  /repositories/{name}/dependents              → {repository,
                                                      artifacts:[{ecosystem, name,
