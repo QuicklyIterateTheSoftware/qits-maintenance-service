@@ -15,17 +15,20 @@ import org.eclipse.microprofile.openapi.annotations.Operation;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
 
 /**
- * The daily SBOM check's report, and the button beside its cron (qits-621 / qits-668).
+ * The daily SBOM check's report, and the button beside the clock (qits-621 / qits-668).
+ * qits-orchestrator is what presses it daily now, on its {@code sbom-check} kind's schedule (02:15
+ * UTC, qits-2490); this service no longer runs that cron itself.
  *
  * <p><b>{@code GET} is 404 until a check has run</b>, never an empty report: an empty list of
  * findings reads as "every artifact has an SBOM", which nobody has checked yet.
  *
  * <p><b>{@code POST /runs} RUNS the check and answers 202 once it has finished</b>, with the report
  * it stored. Unlike a scan it is bounded — one listing read per artifact name in qits-artifacts and
- * a few rows — and the person pressing it wants the answer, not a row to poll. 202 rather than 200
+ * a few rows — and the caller pressing it wants the answer, not a row to poll. 202 rather than 200
  * because the run is the side effect, and the report is also what {@code GET} serves from then on.
- * A run already going (the cron's) is waited for, then this one runs. A probe qits-artifacts could
- * not answer is a 502 with the sentence, and nothing is stored.
+ * A run already going (qits-orchestrator's daily one, or another caller's) is waited for, then this
+ * one runs. A probe qits-artifacts could not answer is a 502 with the sentence, and nothing is
+ * stored.
  */
 @Path("/sbom-check")
 @Produces(MediaType.APPLICATION_JSON)

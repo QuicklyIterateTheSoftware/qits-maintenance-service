@@ -430,11 +430,12 @@ where v1 waited up to six hours for a poll.
   EXISTS; an `mt_artifact` row says THIS release has contents worth reading, PENDING, picked up off
   the worker queue afterwards. The row is written whether or not the column moved — a catch-up frame
   is not the newest version and its contents are still unrecorded. See **The dependency graph**.
-- **The daily scans are the reconciliation belt, not the mechanism.** The internal cron moved from
-  every six hours to 00:30 daily when these landed. It still covers three things no listener can: an
-  event that was never published or was settled as poison, a repository added to the catalog (which
-  announces nothing here), and the window after a new consumer starts at the head of the log and
-  skips everything published before it.
+- **The daily scans are the reconciliation belt, not the mechanism.** qits-orchestrator runs them
+  now (qits-2490) — its `scan` kind at 00:30 UTC, INTERNAL then EXTERNAL, through `POST
+  /maintenance/api/scans` and `GET /scans/{id}` — rather than a cron inside this service. The daily
+  pass still covers three things no listener can: an event that was never published or was settled
+  as poison, a repository added to the catalog (which announces nothing here), and the window after
+  a new consumer starts at the head of the log and skips everything published before it.
 - **Delivery is durable, so a disconnect is a delay rather than a hole.** A claim and the handler run
   in one transaction and a watermark is paged forward from qits-events' log at startup and on a
   schedule. The failure rule is the seam's: a payload that will not parse, or one naming a repository
@@ -674,7 +675,9 @@ POST /sbom-check/runs                             → 202 the report above, once
                                                                 502 qits-artifacts could not be asked
 ```
 
-- **The SBOM check** (`sbomcheck/SbomCheckService`, daily at 02:15): every `mt_artifact` row of type
+- **The SBOM check** (`sbomcheck/SbomCheckService`, run daily at 02:15 UTC by qits-orchestrator's
+  `sbom-check` kind via `POST /maintenance/api/sbom-check/runs`, qits-2490): every `mt_artifact` row
+  of type
   maven, npm, docker or daemon, from the `artifacts` section (or from before sections), whose SBOM is
   MISSING, FAILED, or PENDING past `pending-grace`, whose version is still in qits-artifacts, and
   which names a project — no cut-off on age. `reason` is MISSING, FAILED or PENDING. A row with no
@@ -878,14 +881,10 @@ environment without a rebuild.
 | `qits.maintenance.internal.maven-groups` | `eu.wohlben.qits` | which maven groups this platform publishes |
 | `qits.maintenance.internal.npm-scopes` | `@qits` | which npm scopes it publishes |
 | `qits.maintenance.internal.image-prefixes` | `qits/` | which images it publishes |
-| `qits.maintenance.scan.enabled` | `true` | whether the CLOCK may scan |
-| `qits.maintenance.scan.internal.cron` | `0 30 0 * * ?` | the internal scan, 00:30 daily — the reconciliation belt behind the bus |
-| `qits.maintenance.scan.external.cron` | `0 0 1 * * ?` | the external scan, 01:00 daily |
 | `qits.maintenance.sbom.sweep-cron` | `0 5 * * * ?` | re-queue artifact rows still PENDING, hourly. It never retries MISSING or FAILED |
-| `qits.maintenance.sbom.check.cron` | `0 15 2 * * ?` | the daily SBOM check (`SbomCheckSchedule`) |
 | `qits.maintenance.sbom.check.pending-grace` | `PT24H` | how long a PENDING row is a queued fetch rather than a finding |
 | `qits.maintenance.sbom.check.file-tickets` | `true` | **shipped on**: a check run files, comments and drops MAINTENANCE tickets; off returns to report-only, where a run calls nothing in qits-projects |
-| `qits.maintenance.time-zone` | `UTC` | the zone both crons are read in |
+| `qits.maintenance.time-zone` | `UTC` | the zone the sbom sweep's cron and the bump dispatcher's quiet hours are read in |
 | `qits.maintenance.bump.enabled` | `true` | whether a bump may be written at all: the dispatcher and every automation run that would commit |
 | `qits.maintenance.bump.internal.auto` | `true` | whether the dispatcher opens main-only release requests for the repositories owed a bump and without a request |
 | `qits.maintenance.bump.poll-interval` | `15s` | how often an unfinished automation run is looked at — and how often a dispatch is considered |
@@ -900,6 +899,12 @@ environment without a rebuild.
 | `qits.maintenance.automations.packaged-recipes.project` / `.repository` | `qits` / `qits-ci-service` | where qits-ci's packaged release recipes live (qits-1178). `entity-diagram`, `screenshot-baselines` and qits-881's `cli-tapes` are answered DEFERRED and not run before QA, for a trigger that accepts `DEFERRED`, when the repository's QA names them under `check-outputs:`. That is read from the fold's `.config/qits/release.yml` (its own `release-request:` slot wins), else the repository's own recipe copy, else the packaged recipe read here at `main`. In doubt, the pre-run stays. The re-run door still runs them |
 | `qits.maintenance.automations.settle.budget` | `5s` | how long `POST /release-requests/{id}/automations` waits for its settle (qits-1258, `SettleGate`) before answering what is stored and UNKNOWN "settling" for the rest; the settle keeps running. Keep it well under qits-projects' 10 s |
 | `qits.maintenance.automations.settle.threads` | `4` | how many settles run at once, each of a different request (one per request at a time), on a pool of their own |
+
+**Moved to qits-orchestrator, now inert (qits-2490)**: `qits.maintenance.scan.enabled`,
+`qits.maintenance.scan.internal.cron`, `qits.maintenance.scan.external.cron` and
+`qits.maintenance.sbom.check.cron`. The clocks they drove are qits-orchestrator's `scan` (00:30 UTC)
+and `sbom-check` (02:15 UTC) kinds now, which call this service's doors on its own schedule. Nothing
+here reads these keys any more; remove them from the deployment's extras at the next edit.
 
 **The registry keys carry a PATH as well as a host**, because a registry is mounted under a prefix
 and the prefix names the repository row it serves. Moving a row is then a deployment's decision.
@@ -1047,7 +1052,8 @@ recorded for …`, which is the honest answer rather than a silent success.
   read that frame's payload and compare it with the same artifact's `mt_pin.name`.
 - **Every consumer starts at the HEAD of the log.** `maintenance-internal-latest`,
   `maintenance-branch-tracking` and `maintenance-release-finalized` were each new storage keys, so every release published before the deploy
-  is skipped. That is what the 00:30 scan is for; nothing has to be replayed by hand.
+  is skipped. That is what qits-orchestrator's 00:30 scan is for (qits-2490); nothing has to be
+  replayed by hand.
 
 ## Building and testing
 

@@ -35,7 +35,9 @@ import org.jboss.logging.Logger;
  * <b>The daily SBOM check</b> (qits-621 / qits-668): every released software artifact still in
  * qits-artifacts that has no usable bill of materials, reported — and, once {@code
  * qits.maintenance.sbom.check.file-tickets} is on, ticketed in its project and closed again when it
- * stops being true.
+ * stops being true. The daily clock is qits-orchestrator's own {@code sbom-check} kind now
+ * (qits-2490, {@code POST /maintenance/api/sbom-check/runs}); this service only runs what it is
+ * asked.
  *
  * <h2>What counts</h2>
  *
@@ -105,8 +107,8 @@ import org.jboss.logging.Logger;
  * <p><b>A ticket call that fails costs its own group, not the run</b>: the sentence goes into the
  * report's warnings and the next run tries again from what was recorded.
  *
- * <p><b>One run at a time</b>, the schedule's and the door's alike, behind one lock: two runs
- * filing the same group at once would be two tickets.
+ * <p><b>One run at a time</b>, qits-orchestrator's daily call and anybody else's alike, behind one
+ * lock: two runs filing the same group at once would be two tickets.
  */
 @ApplicationScoped
 public class SbomCheckService {

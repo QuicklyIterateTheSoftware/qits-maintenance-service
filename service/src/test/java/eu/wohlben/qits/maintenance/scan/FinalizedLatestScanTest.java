@@ -22,11 +22,12 @@ import org.junit.jupiter.api.Test;
  * <b>THE REGISTRY POLL IS THE SECOND DOOR, and it is gated like the bus</b> (qits-1472).
  *
  * <p>Every INTERNAL scan ends in {@code refreshLatest}, which asked qits-artifacts for the highest
- * PUBLISHED version and wrote it — the 00:30 cron, a manual scan, the main-push scan and the tag
- * scan every {@code SCMRelease} queues. A publish is in the registry long before its request
- * finalizes, so gating the listener alone left the poll to adopt the same unfinalized version a few
- * minutes later. {@link Fixture#scriptScan}'s registry lists {@code qits-eventstream} at {@code
- * 2026.811.1} and {@code 2026.821.3}; here only the first has finalized.
+ * PUBLISHED version and wrote it — qits-orchestrator's 00:30 scan (qits-2490), a manual scan, the
+ * main-push scan and the tag scan every {@code SCMRelease} queues. A publish is in the registry
+ * long before its request finalizes, so gating the listener alone left the poll to adopt the same
+ * unfinalized version a few minutes later. {@link Fixture#scriptScan}'s registry lists {@code
+ * qits-eventstream} at {@code 2026.811.1} and {@code 2026.821.3}; here only the first has
+ * finalized.
  */
 @QuarkusTest
 class FinalizedLatestScanTest {

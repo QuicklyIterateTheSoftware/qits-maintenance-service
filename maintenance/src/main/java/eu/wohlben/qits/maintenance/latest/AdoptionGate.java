@@ -16,10 +16,11 @@ import java.util.function.Predicate;
  * {@code mt_latest} on a publish — an artifact is adopted only once a release request of its
  * repository FINALIZED at or above its version — but the registry poll ({@code
  * ScanService.refreshLatest} → {@link LatestResolver#resolve}) asked qits-artifacts for the highest
- * PUBLISHED version and wrote it, at the end of every INTERNAL scan: the 00:30 cron, a manual scan,
- * the main-push scan and the tag scan every {@code SCMRelease} queues. A publish is in the registry
- * long before its request finalizes, and a request that goes OBSOLETE never does, so gating the
- * listener alone left the door open minutes later. The same holds for the shared-property target
+ * PUBLISHED version and wrote it, at the end of every INTERNAL scan: qits-orchestrator's 00:30 scan
+ * (qits-2490), a manual scan, the main-push scan and the tag scan every {@code SCMRelease} queues.
+ * A publish is in the registry long before its request finalizes, and a request that goes OBSOLETE
+ * never does, so gating the listener alone left the door open minutes later. The same holds for
+ * the shared-property target
  * ({@code PendingChanges.shared}), which reads {@link LatestResolver#published} rather than {@code
  * mt_latest}; both go through this predicate.
  *

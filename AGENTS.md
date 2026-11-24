@@ -579,8 +579,10 @@ was reported on, and both ends are this context's own.
 
 ## The daily SBOM check
 
-**`sbomcheck/SbomCheckService` (V14), on `schedule/SbomCheckSchedule` at 02:15, and SHIPPED ON**
-(`qits.maintenance.sbom.check.file-tickets=true`): a run computes which released artifact still in
+**`sbomcheck/SbomCheckService` (V14), run daily at 02:15 UTC by qits-orchestrator's `sbom-check`
+kind via `POST /maintenance/api/sbom-check/runs` (qits-2490; this service carries no clock of its
+own any more), and SHIPPED ON** (`qits.maintenance.sbom.check.file-tickets=true`): a run computes
+which released artifact still in
 qits-artifacts has no usable SBOM, stores the report in `mt_sbom_check_run`, files one MAINTENANCE
 ticket per `(project, ecosystem, name)`, and drops it again once every listed version is INGESTED or
 collected — the semantics of qits-projects' `TicketUnattendedGateTickets`, which is the precedent.
@@ -911,11 +913,13 @@ profile has to state one either.
   `clean-at-start` runs per Quarkus start, not per test, and an active bump row holds its branch's
   lock: without the reset the second test of a class is answered 409 by the first test's leftovers.
   The drain first, or the delete lands between a running task's read and its write.
-- **The scheduler is off in the suite** (`quarkus.scheduler.enabled=false`). The crons would fire
-  once a day for nobody's reason; the bump sweep is an INTERVAL and would fire, racing every test
-  that drives a bump by hand. **The story catalogue is the one exception and it is deliberate**: a
-  bump is closed by the sweep and by nothing else, so `StoryProfile` turns the scheduler back on and
-  removes every other timer at its own key. See "The userflows".
+- **The scheduler is off in the suite** (`quarkus.scheduler.enabled=false`). The sbom sweep cron
+  would fire once an hour for nobody's reason; the bump sweep is an INTERVAL and would fire, racing
+  every test that drives a bump by hand. (The manifest scan and the daily SBOM check carry no cron
+  here at all any more — qits-orchestrator holds both, qits-2490.) **The story catalogue is the one
+  exception and it is deliberate**: a bump is closed by the sweep and by nothing else, so
+  `StoryProfile` turns the scheduler back on and removes every other timer at its own key. See "The
+  userflows".
 - **No test uses forward-auth (epic qits-543, qits-1365).** `X-Qits-User` / `X-Qits-Roles` and the
   `%test` dev user leave qits-auth-core with qits-1338, and the suite already runs without them: the
   test config blanks the dev user and renames the forward headers (`%test.qits.auth.forward.*` in
@@ -1030,11 +1034,12 @@ reactor and every reading story, and `qits-eventstream` is the second repository
 read.
 
 **The clock.** `StoryProfile` turns the scheduler back **on** and then removes every timer a story
-could trip over at its own shipped key — both scan crons are `off` (the scheduler's own value for
-"do not register this trigger"), `scan.enabled=false`, the sbom timers `off`, and
-`bump.internal.auto=false` so the dispatcher opens nothing mid-story. No story drives a bump since
-the group door went; the dispatcher's coverage is `schedule/BumpDispatchTest`, and the automations'
-`automation/*Test`.
+could trip over at its own shipped key — the sbom sweep is `off` (the scheduler's own value for "do
+not register this trigger") and `bump.internal.auto=false` so the dispatcher opens nothing
+mid-story. The scan and the daily SBOM check carry no cron here to turn off: qits-orchestrator holds
+both clocks now (qits-2490) and this process is only ever asked through the door. No story drives a
+bump since the group door went; the dispatcher's coverage is `schedule/BumpDispatchTest`, and the
+automations' `automation/*Test`.
 
 **What the catalogue does not show, because this service does not do it.** There is no story of a
 commit being made, a file being written or a ref being pushed: this service decides, a CI step

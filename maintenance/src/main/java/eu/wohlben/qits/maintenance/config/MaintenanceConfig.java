@@ -25,9 +25,6 @@ public class MaintenanceConfig {
   @ConfigProperty(name = "qits.maintenance.environment")
   String environment;
 
-  @ConfigProperty(name = "qits.maintenance.scan.enabled")
-  boolean scanEnabled;
-
   @ConfigProperty(name = "qits.maintenance.bump.enabled")
   boolean bumpEnabled;
 
@@ -86,11 +83,6 @@ public class MaintenanceConfig {
   /** Which environment's qits-ci applies a bump. Recorded on every bump row. */
   public String environment() {
     return environment;
-  }
-
-  /** Whether the CLOCK may start a scan. A manual scan ignores it — a person is the trigger. */
-  public boolean scanEnabled() {
-    return scanEnabled;
   }
 
   /**

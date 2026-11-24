@@ -12,7 +12,12 @@ public enum ScanTrigger {
   /** The button, or a machine posting to the route. */
   MANUAL,
 
-  /** One of the two crons. */
+  /**
+   * A row value kept for history only. It used to mean one of this service's own two crons; since
+   * qits-2490 those crons are qits-orchestrator's, and its calls to {@code POST
+   * /maintenance/api/scans} record {@link #MANUAL} like any other caller of the door — nothing
+   * writes this value any more.
+   */
   SCHEDULED,
 
   /**

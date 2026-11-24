@@ -32,6 +32,12 @@ import org.jboss.logging.Logger;
  * A scan: read the catalog, re-read every repository's manifests, and refresh the latest versions
  * the scope covers. That is the whole of it — it writes an inventory and asks for nothing.
  *
+ * <p><b>The clock that drives this is qits-orchestrator's, not this service's</b> (qits-2490): its
+ * {@code scan} kind calls {@code POST /maintenance/api/scans} then polls {@code GET /scans/{id}},
+ * INTERNAL then EXTERNAL, at 00:30 UTC. {@link ScanTrigger#SCHEDULED} is kept as a row value for
+ * history; nothing writes it any more — a caller posting the door, qits-orchestrator included,
+ * records {@link ScanTrigger#MANUAL}.
+ *
  * <p><b>The manifests are ALWAYS re-read, whatever the scope.</b> That is one git-host call per
  * repository plus a handful of blobs, and it is what keeps the inventory honest: a scope that
  * skipped it would report pending changes against pins somebody removed yesterday. The scope
