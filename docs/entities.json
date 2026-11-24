@@ -41,6 +41,12 @@
           "site" : "ArtifactGraph.artifacts()"
         },
         {
+          "type" : "eu.wohlben.qits.maintenance.dto.ArtifactVersionDto",
+          "kind" : "assembler",
+          "via" : null,
+          "site" : "ArtifactGraph.versions(String, String)"
+        },
+        {
           "type" : "eu.wohlben.qits.maintenance.dto.DependentDto",
           "kind" : "assembler",
           "via" : null,
@@ -119,6 +125,14 @@
           "dto" : "eu.wohlben.qits.maintenance.dto.SbomCheckReportDto",
           "kind" : "returns",
           "cardinality" : "single"
+        },
+        {
+          "operationId" : "listArtifactVersions",
+          "method" : "GET",
+          "path" : "/artifacts/versions",
+          "dto" : "eu.wohlben.qits.maintenance.dto.ArtifactVersionDto",
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listArtifacts",
@@ -1417,6 +1431,12 @@
           "site" : "ArtifactGraph.artifacts()"
         },
         {
+          "type" : "eu.wohlben.qits.maintenance.dto.ArtifactVersionDto",
+          "kind" : "assembler",
+          "via" : null,
+          "site" : "ArtifactGraph.versions(String, String)"
+        },
+        {
           "type" : "eu.wohlben.qits.maintenance.dto.BumpDto",
           "kind" : "assembler",
           "via" : null,
@@ -1673,6 +1693,14 @@
           "dto" : "eu.wohlben.qits.maintenance.dto.ScanDto",
           "kind" : "returns",
           "cardinality" : "single"
+        },
+        {
+          "operationId" : "listArtifactVersions",
+          "method" : "GET",
+          "path" : "/artifacts/versions",
+          "dto" : "eu.wohlben.qits.maintenance.dto.ArtifactVersionDto",
+          "kind" : "returns",
+          "cardinality" : "collection"
         },
         {
           "operationId" : "listArtifacts",

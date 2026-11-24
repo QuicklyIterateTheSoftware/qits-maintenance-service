@@ -2,6 +2,7 @@ package eu.wohlben.qits.maintenance.api;
 
 import eu.wohlben.qits.maintenance.control.ArtifactGraph;
 import eu.wohlben.qits.maintenance.dto.ArtifactDto;
+import eu.wohlben.qits.maintenance.dto.ArtifactVersionDto;
 import eu.wohlben.qits.maintenance.error.BadRequestException;
 import eu.wohlben.qits.maintenance.sbom.SbomClient;
 import eu.wohlben.qits.maintenance.sbom.SbomIngestService;
@@ -12,6 +13,7 @@ import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.time.Instant;
@@ -64,14 +66,47 @@ public class ArtifactController {
   }
 
   /**
-   * Reads (or re-reads) one released artifact's bill of materials.
+   * Every released version of one artifact, newest release first, with how far each one's bill of
+   * materials got (qits-2490).
    *
-   * <p><b>This is the only thing that moves a MISSING or a FAILED row, and it exists because both
-   * are terminal by design.</b> A 404 from qits-artifacts is the ordinary permanent answer for
-   * anything released before the SBOM route existed, and a released version is immutable — so
-   * nothing retries either on a schedule. What this route is for is the case a schedule cannot
-   * know about: somebody stored a document for an old release, or fixed the producer, and wants the
-   * graph now rather than at the next release.
+   * <p>{@link #artifacts} answers the newest version of each artifact only, so it cannot say WHICH
+   * version is MISSING or FAILED — and that is the version {@link #ingest} is asked about. The name
+   * is in {@code mt_pin}'s spelling, exactly as the ingest takes it; an artifact nothing released
+   * answers an empty list rather than a 404, as the dependents door does.
+   */
+  @GET
+  @Path("/versions")
+  @Operation(
+      operationId = "listArtifactVersions",
+      summary = "Every released version of one artifact, with its sbom status")
+  @APIResponse(responseCode = "200", description = "The versions, newest release first")
+  @APIResponse(responseCode = "400", description = "Unknown ecosystem, or no name")
+  @RolesAllowed({"qits:admin", "qits:admin-agent", "qits:desk-admin", "qits:desk", "qits:system", "qits:agent"})
+  public List<ArtifactVersionDto> versions(
+      @QueryParam("ecosystem") String ecosystem, @QueryParam("name") String name) {
+    // The ingest's own test and sentence: a daemon binary's rows are keyed `daemon`, which is not
+    // an Ecosystem, and a page asking about one must not be refused where the re-read is accepted.
+    if (!SbomClient.addressable(ecosystem)) {
+      throw new BadRequestException(
+          "ecosystem must be maven, npm, docker or daemon, not '" + ecosystem + "'");
+    }
+    String artifact = trimmed(name);
+    if (artifact == null) {
+      throw new BadRequestException("name is required");
+    }
+    return graph.versions(ecosystem.trim().toLowerCase(Locale.ROOT), artifact);
+  }
+
+  /**
+   * Reads (or re-reads) one released artifact's bill of materials NOW.
+   *
+   * <p><b>The immediate path, beside a nightly one.</b> A 404 from qits-artifacts is the ordinary
+   * answer for anything released before the SBOM route existed, and a released version is
+   * immutable, so no timer of its own retries a MISSING or a FAILED row. The daily SBOM check does
+   * re-read both (qits-739): every MISSING or FAILED row whose version qits-artifacts now holds is
+   * fetched again before the check counts it ({@code SbomCheckService}). This route is for not
+   * waiting until then — somebody stored a document for an old release, or fixed the producer, and
+   * wants the graph now.
    *
    * <p><b>202 and no waiting</b>, like every other write here: the fetch and the parse happen on the
    * one worker thread. Creating the row is the whole of the request.

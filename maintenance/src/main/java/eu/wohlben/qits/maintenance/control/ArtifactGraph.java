@@ -3,6 +3,7 @@ package eu.wohlben.qits.maintenance.control;
 import eu.wohlben.qits.bootstrap.graph.Coordinate;
 import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.maintenance.dto.ArtifactDto;
+import eu.wohlben.qits.maintenance.dto.ArtifactVersionDto;
 import eu.wohlben.qits.maintenance.dto.DependentDto;
 import eu.wohlben.qits.maintenance.dto.DependentsDto;
 import eu.wohlben.qits.maintenance.dto.RepositoryDependentsDto;
@@ -151,6 +152,37 @@ public class ArtifactGraph {
               behindCount));
     }
     return List.copyOf(listing);
+  }
+
+  /**
+   * Every released version of one artifact, newest release first, with how far each one's bill of
+   * materials got (qits-2490).
+   *
+   * <p>The one read here that is NOT the newest per name: a package page lists versions, and the
+   * version whose document is MISSING or FAILED is usually an older one than {@link #artifacts}
+   * shows. An artifact nothing ever released answers empty, never an error.
+   *
+   * @param type the artifact's stored type — {@code maven}, {@code npm}, {@code docker} or {@code
+   *     daemon}, lower case, exactly as {@code mt_artifact.ecosystem} holds it
+   * @param name the artifact in {@code mt_pin}'s spelling
+   */
+  public List<ArtifactVersionDto> versions(String type, String name) {
+    List<MtArtifact> rows = store.artifactVersions(type, name);
+    if (rows.isEmpty()) {
+      return List.of();
+    }
+    RepositoryNames names = names();
+    return rows.stream()
+        .map(
+            row ->
+                new ArtifactVersionDto(
+                    row.version,
+                    names.of(row.repository),
+                    row.occurredAt,
+                    row.sbomStatus,
+                    row.sbomError,
+                    row.ingestedAt))
+        .toList();
   }
 
   // --- what one repository's releases contain ---------------------------------------------------

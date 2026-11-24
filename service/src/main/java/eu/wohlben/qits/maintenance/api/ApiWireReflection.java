@@ -2,6 +2,7 @@ package eu.wohlben.qits.maintenance.api;
 
 import eu.wohlben.qits.maintenance.dto.AdoptionJourneyDto;
 import eu.wohlben.qits.maintenance.dto.ArtifactDto;
+import eu.wohlben.qits.maintenance.dto.ArtifactVersionDto;
 import eu.wohlben.qits.maintenance.dto.AutomationKindsDto;
 import eu.wohlben.qits.maintenance.dto.BumpDto;
 import eu.wohlben.qits.maintenance.dto.BumpStandingDto;
@@ -74,6 +75,8 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
       // which of these the build-time analysis happens to find is an implementation detail no test
       // guards, and the failure mode is a 500 in the binary while the JVM suite stays green.
       ArtifactDto.class,
+      // Every version of one artifact with its sbom status (qits-2490), the package pages' read.
+      ArtifactVersionDto.class,
       DependentsDto.class,
       DependentDto.class,
       RepositoryDependentsDto.class,

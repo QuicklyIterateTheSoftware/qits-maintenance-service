@@ -3104,6 +3104,31 @@ public class MaintenanceStore implements PanacheRepositoryBase<MtRepository, Str
   }
 
   /**
+   * Every released version of ONE artifact, newest release first — what {@code
+   * listArtifactVersions} answers (qits-2490).
+   *
+   * <p>One row per version by {@code uq_mt_artifact_identity}, and the read is the one {@code
+   * idx_mt_artifact_name} exists for: {@code (ecosystem, name, occurred_at desc)}. The version breaks
+   * a tie on {@code occurred_at} so two rows released in the same instant answer in one order.
+   *
+   * @param ecosystem the stored type — {@code maven}, {@code npm}, {@code docker} or {@code daemon}
+   * @param name the artifact in {@code mt_pin}'s spelling
+   */
+  @ActivateRequestContext
+  public List<MtArtifact> artifactVersions(String ecosystem, String name) {
+    return DbRetry.inNewTx(
+        "read every version of one artifact",
+        () ->
+            MtArtifact.find(
+                    "ecosystem = ?1 and name = ?2",
+                    Sort.by("occurredAt", Sort.Direction.Descending)
+                        .and("version", Sort.Direction.Descending),
+                    ecosystem,
+                    name)
+                .list());
+  }
+
+  /**
    * Every artifact one repository has released, newest first.
    *
    * <p>A pure delegate — the transaction is the one the overload below opens, and opening a second

@@ -96,6 +96,21 @@ components:
           type: string
         via:
           type: string
+    ArtifactVersionDto:
+      type: object
+      properties:
+        version:
+          type: string
+        repository:
+          type: string
+        occurredAt:
+          $ref: "#/components/schemas/Instant"
+        sbomStatus:
+          type: string
+        sbomError:
+          type: string
+        ingestedAt:
+          $ref: "#/components/schemas/Instant"
     AutomationDto:
       type: object
       properties:
@@ -850,6 +865,44 @@ paths:
         - qits:desk-admin
         - qits:desk
         - qits:system
+  /maintenance/api/artifacts/versions:
+    get:
+      summary: "Every released version of one artifact, with its sbom status"
+      operationId: listArtifactVersions
+      parameters:
+      - name: ecosystem
+        in: query
+        schema:
+          type: string
+      - name: name
+        in: query
+        schema:
+          type: string
+      responses:
+        "200":
+          description: "The versions, newest release first"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ArtifactVersionDto"
+        "400":
+          description: "Unknown ecosystem, or no name"
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      tags:
+      - Artifact Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+        - qits:admin-agent
+        - qits:desk-admin
+        - qits:desk
+        - qits:system
+        - qits:agent
   /maintenance/api/automations/kinds:
     get:
       summary: Every release-request automation kind this build offers
