@@ -85,7 +85,7 @@
              Test scope; qits-maintenance bumps it when the consumer releases a changed pact. -->
         <qits.projects-service-pacts-qits-maintenance-service.version>2026.1107.45933</qits.projects-service-pacts-qits-maintenance-service.version>
         <qits.artifacts-service-pacts-qits-maintenance-service.version>2026.1018.153037</qits.artifacts-service-pacts-qits-maintenance-service.version>
-        <qits.orchestrator-service-pacts-qits-maintenance-service.version>2026.1124.125326</qits.orchestrator-service-pacts-qits-maintenance-service.version>
+        <qits.orchestrator-service-pacts-qits-maintenance-service.version>2026.1124.142159</qits.orchestrator-service-pacts-qits-maintenance-service.version>
         <qits.platform-access-monorepo-pacts-qits-maintenance-service.version>2026.1103.101116</qits.platform-access-monorepo-pacts-qits-maintenance-service.version>
         <qits.landing-app-pacts-qits-maintenance-service.version>2026.1124.121416</qits.landing-app-pacts-qits-maintenance-service.version>
         <!-- THE PLATFORM'S OWN MAVEN REPOSITORY, and this repo's artifacts from it: qits-db-core
