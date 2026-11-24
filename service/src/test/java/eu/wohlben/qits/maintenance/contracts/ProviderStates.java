@@ -114,6 +114,15 @@ public class ProviderStates {
       "a release request this service opened";
   public static final String A_STORED_SBOM_CHECK_REPORT = "a stored SBOM check report";
   public static final String A_FINISHED_SCAN = "a finished scan";
+
+  /**
+   * The scan button's other shape (qits-2490): the orchestrator's scan process requests
+   * whole-catalogue scans, {@code repository} absent rather than naming one, so {@code
+   * requestScan}'s body here carries only {@code scope}. {@link #A_FINISHED_SCAN} keeps its
+   * {@code repository}, since the old frontend's scan button still names one.
+   */
+  public static final String A_CATALOGUE_WIDE_SCAN = "a catalogue-wide scan";
+
   public static final String DEPENDENCIES_OF_A_PROJECT_SOME_BEHIND =
       "dependencies of a project, some behind";
 
@@ -331,6 +340,7 @@ public class ProviderStates {
     states.put(A_RELEASE_REQUEST_THIS_SERVICE_OPENED, this::releaseRequestThisServiceOpened);
     states.put(A_STORED_SBOM_CHECK_REPORT, this::storedSbomCheckReport);
     states.put(A_FINISHED_SCAN, this::finishedScan);
+    states.put(A_CATALOGUE_WIDE_SCAN, this::catalogueWideScan);
     states.put(DEPENDENCIES_OF_A_PROJECT_SOME_BEHIND, this::dependenciesOfAProjectSomeBehind);
     states.put(
         EXTERNAL_DEPENDENCIES_OF_A_PROJECT_SOME_BEHIND, this::dependenciesOfAProjectSomeBehind);
@@ -949,6 +959,24 @@ public class ProviderStates {
     store.scanStatus(scan, ScanStatus.SUCCEEDED, null, SCANNED.plusSeconds(30));
     Map<String, String> params = new TreeMap<>();
     params.put("repoName", REPOSITORY);
+    params.put("scanId", scan.toString());
+    return new Setup(params, List.of());
+  }
+
+  /**
+   * One manual INTERNAL scan of the whole catalogue that SUCCEEDED, no repository named: {@code
+   * getScan} answers it under {@code scanId} alone. {@code requestScan}'s recording here queues
+   * another whole-catalogue scan, which runs in the background and {@link #cleanUp()} waits for —
+   * same as {@link #finishedScan()}'s, it never reaches a real repository: the estate is empty and
+   * {@code /projects/api/repositories} is never scripted in this state, so {@code
+   * ScanService#scan}'s catalog read fails at once and the row closes FAILED straight away rather
+   * than running a real catalogue scan that could flake the test.
+   */
+  private Setup catalogueWideScan() {
+    emptyEstate();
+    UUID scan = store.openScan(ScanScope.INTERNAL, null, "MANUAL", SCANNED);
+    store.scanStatus(scan, ScanStatus.SUCCEEDED, null, SCANNED.plusSeconds(30));
+    Map<String, String> params = new TreeMap<>();
     params.put("scanId", scan.toString());
     return new Setup(params, List.of());
   }

@@ -471,6 +471,20 @@ class GoldenMasterRecordingTest {
               "/maintenance/api/scans/{scanId}",
               Map.of(),
               null),
+          // The orchestrator's scan process (qits-2490): it requests whole-catalogue scans, with
+          // no repository named.
+          Interaction.write(
+              ProviderStates.A_CATALOGUE_WIDE_SCAN,
+              "requestScan",
+              "/maintenance/api/scans",
+              202,
+              "{\"scope\":\"INTERNAL\"}"),
+          Interaction.read(
+              ProviderStates.A_CATALOGUE_WIDE_SCAN,
+              "getScan",
+              "/maintenance/api/scans/{scanId}",
+              Map.of(),
+              null),
           // The landing app's maintenance page (qits-2317): one project's repositories and the
           // dependencies they pin, of each kind; one row per name. The EXTERNAL read is kept under
           // a state of its own, since a state records one answer per operation.

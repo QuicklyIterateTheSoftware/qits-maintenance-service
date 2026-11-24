@@ -35,6 +35,52 @@
       ]
     },
     {
+      "name": "a catalogue-wide scan",
+      "slug": "a-catalogue-wide-scan",
+      "params": {
+        "scanId": "00000000-0000-4000-8000-000000000001"
+      },
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "getScan",
+          "method": "GET",
+          "path": "/maintenance/api/scans/{scanId}",
+          "status": 200,
+          "file": "a-catalogue-wide-scan/getScan.json",
+          "frozen": {
+            "ids": [
+              "$.id"
+            ],
+            "instants": [
+              "$.startedAt",
+              "$.finishedAt"
+            ],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        },
+        {
+          "operationId": "requestScan",
+          "method": "POST",
+          "path": "/maintenance/api/scans",
+          "body": {
+            "scope": "INTERNAL"
+          },
+          "status": 202,
+          "file": "a-catalogue-wide-scan/requestScan.json",
+          "frozen": {
+            "ids": [
+              "$.id"
+            ],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
       "name": "a failed bump",
       "slug": "a-failed-bump",
       "params": {

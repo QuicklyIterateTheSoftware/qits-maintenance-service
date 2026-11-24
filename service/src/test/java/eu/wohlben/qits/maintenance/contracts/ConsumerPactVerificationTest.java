@@ -252,6 +252,11 @@ class ConsumerPactVerificationTest {
     return states.params(ProviderStates.A_FINISHED_SCAN);
   }
 
+  @State(ProviderStates.A_CATALOGUE_WIDE_SCAN)
+  Map<String, String> aCatalogueWideScan() {
+    return states.params(ProviderStates.A_CATALOGUE_WIDE_SCAN);
+  }
+
   @State(ProviderStates.DEPENDENCIES_OF_A_PROJECT_SOME_BEHIND)
   Map<String, String> dependenciesOfAProjectSomeBehind() {
     return states.params(ProviderStates.DEPENDENCIES_OF_A_PROJECT_SOME_BEHIND);
