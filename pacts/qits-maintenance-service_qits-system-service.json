@@ -40,12 +40,14 @@
               "name": "lab",
               "quarantined": false,
               "reservations": {
+                "agent": 0,
                 "ci": 2,
                 "desk": 1,
                 "workspace": 2
               },
               "slotsTotal": 6,
               "used": {
+                "agent": 0,
                 "ci": 1,
                 "desk": 0,
                 "workspace": 1
@@ -95,6 +97,14 @@
                 }
               ]
             },
+            "$[*].reservations.agent": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "number"
+                }
+              ]
+            },
             "$[*].reservations.ci": {
               "combine": "AND",
               "matchers": [
@@ -120,6 +130,14 @@
               ]
             },
             "$[*].slotsTotal": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "number"
+                }
+              ]
+            },
+            "$[*].used.agent": {
               "combine": "AND",
               "matchers": [
                 {
@@ -205,12 +223,14 @@
               "name": "lab",
               "quarantined": false,
               "reservations": {
+                "agent": 0,
                 "ci": 2,
                 "desk": 1,
                 "workspace": 2
               },
               "slotsTotal": 6,
               "used": {
+                "agent": 0,
                 "ci": 0,
                 "desk": 0,
                 "workspace": 0
@@ -260,6 +280,14 @@
                 }
               ]
             },
+            "$[*].reservations.agent": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "number"
+                }
+              ]
+            },
             "$[*].reservations.ci": {
               "combine": "AND",
               "matchers": [
@@ -285,6 +313,14 @@
               ]
             },
             "$[*].slotsTotal": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "number"
+                }
+              ]
+            },
+            "$[*].used.agent": {
               "combine": "AND",
               "matchers": [
                 {
