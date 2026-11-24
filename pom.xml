@@ -87,7 +87,7 @@
         <qits.artifacts-service-pacts-qits-maintenance-service.version>2026.1018.153037</qits.artifacts-service-pacts-qits-maintenance-service.version>
         <qits.orchestrator-service-pacts-qits-maintenance-service.version>2026.1117.21148</qits.orchestrator-service-pacts-qits-maintenance-service.version>
         <qits.platform-access-monorepo-pacts-qits-maintenance-service.version>2026.1103.101116</qits.platform-access-monorepo-pacts-qits-maintenance-service.version>
-        <qits.landing-app-pacts-qits-maintenance-service.version>2026.1123.90130</qits.landing-app-pacts-qits-maintenance-service.version>
+        <qits.landing-app-pacts-qits-maintenance-service.version>2026.1124.121416</qits.landing-app-pacts-qits-maintenance-service.version>
         <!-- THE PLATFORM'S OWN MAVEN REPOSITORY, and this repo's artifacts from it: qits-db-core
              (PatientPgDriver, which the datasource opens every connection through, and
              DbRetry.inNewTx, which every write path runs in), qits-auth-core (the forward-auth
