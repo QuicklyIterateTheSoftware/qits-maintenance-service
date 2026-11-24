@@ -22,7 +22,9 @@ import org.eclipse.microprofile.openapi.annotations.Operation;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
 
 /**
- * Re-read the manifests and refresh the latest versions — the button beside the two crons.
+ * Re-read the manifests and refresh the latest versions — the button beside the clock.
+ * qits-orchestrator presses it too, on its own {@code scan} kind's schedule (00:30 UTC, INTERNAL
+ * then EXTERNAL, qits-2490); this service no longer runs either cron itself.
  *
  * <p><b>202 and no waiting.</b> A scan of the whole catalog is one git-host read per repository
  * plus a registry lookup per dependency; it is minutes, and an HTTP request is the wrong place to

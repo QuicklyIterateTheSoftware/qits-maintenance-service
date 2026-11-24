@@ -87,10 +87,9 @@ import java.util.Map;
  * background work that can draw an arrow is work a story is waiting for:
  *
  * <ul>
- *   <li>{@code scan.internal.cron} and {@code scan.external.cron} are set to {@code off}, which the
- *       scheduler's own {@code SchedulerUtils.isOff} understands — the trigger is not registered at
- *       all, rather than registered and skipped. {@code scan.enabled=false} says the same thing a
- *       second time, from the service's own side.
+ *   <li>The scan and the daily SBOM check carry no cron of their own any more — qits-orchestrator
+ *       holds both clocks now (qits-2490) — so there is no trigger here to turn off, only the
+ *       {@code sbom.sweep-cron} below.
  *   <li>{@code bump.poll-interval} is a second rather than the shipped fifteen. The sweep is a no-op
  *       whenever no bump is active — it reads the store and queues nothing — so the only stories it
  *       can reach are the two that are holding a bump open on purpose.
@@ -201,17 +200,14 @@ public class StoryProfile extends PackagedSurfaceIT.PackagedUnderTarget {
     overrides.put("qits.maintenance.call-timeout", "PT5S");
 
     // The clock. See the class comment: the sweep is what closes a bump, so the scheduler is on and
-    // everything else it would run is removed at the key that removes it.
+    // everything else it would run is removed at the key that removes it. The scan and the daily
+    // SBOM check are qits-orchestrator's clocks now (qits-2490), so there is no cron of either left
+    // here to silence.
     overrides.put("quarkus.scheduler.enabled", "true");
-    overrides.put("qits.maintenance.scan.enabled", "false");
-    overrides.put("qits.maintenance.scan.internal.cron", "off");
-    overrides.put("qits.maintenance.scan.external.cron", "off");
-    // The sbom sweep is the third timer and it goes the same way as the two scans: no story drives
-    // an ingest, and a sweep firing on the hour mid-catalogue would draw an artifacts arrow into
-    // whichever story happened to be draining.
+    // The sbom sweep is the one timer left and it goes the same way the two scans and the sbom
+    // check used to: no story drives an ingest, and a sweep firing on the hour mid-catalogue would
+    // draw an artifacts arrow into whichever story happened to be draining.
     overrides.put("qits.maintenance.sbom.sweep-cron", "off");
-    // The daily SBOM check probes qits-artifacts and would draw its arrows into a story too.
-    overrides.put("qits.maintenance.sbom.check.cron", "off");
     overrides.put("qits.maintenance.bump.poll-interval", "1s");
     // AND THE DISPATCHER IS OFF, at the shipped key that turns the clock's half of bumping off.
     // It used to be silent here by accident: it did nothing at all until a 02:00 cron opened a
