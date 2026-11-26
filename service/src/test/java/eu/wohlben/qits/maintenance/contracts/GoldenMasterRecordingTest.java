@@ -347,6 +347,14 @@ class GoldenMasterRecordingTest {
               "/maintenance/api/deployed-pacts",
               Map.of("provider", "{provider}"),
               null),
+          // What those pacts ask of the provider (qits-2702): qits-toggles' retirement run reads
+          // which slugs a deployed consumer still evaluates.
+          Interaction.read(
+              ProviderStates.A_PROVIDER_WHOSE_DEPLOYED_CONSUMERS_CALL_IT,
+              "listDeployedPactInteractions",
+              "/maintenance/api/deployed-pacts/interactions",
+              Map.of("provider", "{provider}"),
+              null),
           // Every other operation (qits-1930): the landing app SDK, and qits-maintenance-frontend
           // through its MaintenanceApi.
           // The adoption journey of one release (MaintenanceApi.adoptionByRelease).

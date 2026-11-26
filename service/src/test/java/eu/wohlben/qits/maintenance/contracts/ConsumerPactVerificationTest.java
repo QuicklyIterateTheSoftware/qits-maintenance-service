@@ -232,6 +232,11 @@ class ConsumerPactVerificationTest {
     return states.params(ProviderStates.A_PROVIDER_WHOSE_DEPLOYED_CONSUMERS_PUBLISH_PACTS);
   }
 
+  @State(ProviderStates.A_PROVIDER_WHOSE_DEPLOYED_CONSUMERS_CALL_IT)
+  Map<String, String> aProviderWhoseDeployedConsumersCallIt() {
+    return states.params(ProviderStates.A_PROVIDER_WHOSE_DEPLOYED_CONSUMERS_CALL_IT);
+  }
+
   @State(ProviderStates.BUMPS_OWED_TO_A_REPOSITORY)
   Map<String, String> bumpsOwedToARepository() {
     return states.params(ProviderStates.BUMPS_OWED_TO_A_REPOSITORY);

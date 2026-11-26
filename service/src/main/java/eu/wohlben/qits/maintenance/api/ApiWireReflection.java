@@ -15,6 +15,7 @@ import eu.wohlben.qits.maintenance.dto.FailureDto;
 import eu.wohlben.qits.maintenance.dto.GroupDto;
 import eu.wohlben.qits.maintenance.dto.ImagePinDto;
 import eu.wohlben.qits.maintenance.dto.PinDto;
+import eu.wohlben.qits.maintenance.dto.DeployedPactInteractionsDto;
 import eu.wohlben.qits.maintenance.dto.DeployedPactsDto;
 import eu.wohlben.qits.maintenance.dto.PinSourceDto;
 import eu.wohlben.qits.maintenance.dto.ReleaseRequestAutomationsDto;
@@ -93,6 +94,11 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
       // deployed-pacts` in CI, where a 500 fails every provider's release.
       DeployedPactsDto.class,
       DeployedPactsDto.DeployedPactDto.class,
+      // What those pacts ask of the provider (qits-2702); read by qits-toggles' retirement run.
+      DeployedPactInteractionsDto.class,
+      DeployedPactInteractionsDto.ConsumerPactDto.class,
+      DeployedPactInteractionsDto.InteractionDto.class,
+      DeployedPactInteractionsDto.ProviderStateDto.class,
       // BumpDto grew `releaseRequestId` with the release door, and the bump detail page reads it.
       BumpDto.class,
       PendingBumpsDto.class,

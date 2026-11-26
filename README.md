@@ -601,6 +601,15 @@ GET  /deployed-pacts?provider=<repository>         → {provider,
                                                              deployedVersions:[…]}]}
                                                                 400 no provider
                                                                 503 the deployer did not answer
+GET  /deployed-pacts/interactions?provider=<repo>  → {provider,
+                                                     pacts:[{consumerRepository, pactVersion,
+                                                             deployedVersions:[…],
+                                                             interactions:[{method, path,
+                                                               operationId, providerStates:
+                                                               [{name, params}]}]}]}
+                                                                400 no provider
+                                                                502 a pact jar could not be read
+                                                                503 the deployer did not answer
 GET  /artifacts                                   → [{ecosystem, name, repository, latest, version,
                                                       occurredAt, sbomStatus, dependentCount,
                                                       behindCount}]
@@ -761,6 +770,17 @@ POST /sbom-check/runs                             → 202 the report above, once
   (consumer, pact version), ordered by both; `deployedVersions` newest first. A provider with no
   pact rows answers an empty list without asking the deployer; otherwise the deployer's silence is
   a 503, as on `/pins`. The logic is `control/DeployedPacts`.
+- **`/deployed-pacts/interactions` is what those consumers actually call** (qits-2702), read by
+  qits-toggles' retirement run (qits-2696) to tell a toggle some serving consumer still evaluates
+  from one nobody does. It is `/deployed-pacts`' rows, minus every consumer that no longer declares a
+  pact on the provider (`mt_pact_edge`, its latest scan of `contracts.pacts`) — otherwise a consumer
+  that dropped the provider would count as calling it for ever through its last jar — each with the
+  HTTP interactions of its jar's top-level `pacts/*_<provider>.json` files (`control/PactJars`, off
+  the hosted maven repository through `PeerClient.getBytes`, the same files `qits artifacts fetch
+  deployed-pacts` keeps): method, concrete path, the `qits-call` operationId and the provider states.
+  It FAILS CLOSED: a jar that is missing, unreachable, not a jar or without a pact on the provider is
+  a 502 naming the coordinate, never a shorter list. A read jar is cached by coordinate (bounded,
+  per process): a released jar never changes. The logic is `control/DeployedPactInteractions`.
 - **The docker rows include the images a pom pins WITHOUT SPELLING THEM OUT, and `via` is how you
   tell.** Container image versions are maven pins now — qits-workspaces pins
   `qits-workspace-daemon-protocol` and `qits-workspace-editor-image`, qits-projects pins

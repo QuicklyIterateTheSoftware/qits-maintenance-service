@@ -44,6 +44,11 @@ public final class RecordingPeerClient extends PeerClient {
     return new PeerAnswer(404, "", null, Map.of(), null);
   }
 
+  @Override
+  public PeerBytes sendForBytes(String url) {
+    return new PeerBytes(url, 404, new byte[0], null);
+  }
+
   /** Every call so far, in order. */
   public List<Recorded> recorded() {
     synchronized (recorded) {

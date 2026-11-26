@@ -102,6 +102,55 @@ public class PeerClient {
   }
 
   /**
+   * A GET whose body is BINARY, kept as bytes (qits-2702: a consumer pact jar off the hosted maven
+   * repository). {@link #get} decodes every body as UTF-8, which corrupts a zip.
+   *
+   * <p>The same seam as {@link #get}: a fake peer overrides this one too.
+   */
+  public PeerBytes getBytes(PeerTarget target, String path) {
+    return sendForBytes(url(target, path));
+  }
+
+  /** {@link #send} for a GET whose body is kept as bytes; nothing throws here either. */
+  public PeerBytes sendForBytes(String url) {
+    Optional<String> token = tokens.token();
+    if (token.isEmpty()) {
+      return new PeerBytes(
+          url,
+          null,
+          null,
+          "no bearer: the qits oidc client (quarkus.oidc-client.qits) is not configured or could"
+              + " not mint one; "
+              + url
+              + " was not called");
+    }
+    HttpRequest request =
+        HttpRequest.newBuilder(URI.create(url))
+            .timeout(callTimeout)
+            .header("Authorization", "Bearer " + token.get())
+            .GET()
+            .build();
+    try {
+      HttpResponse<byte[]> response =
+          client().send(request, HttpResponse.BodyHandlers.ofByteArray());
+      byte[] body = response.body();
+      if (body != null && body.length > RESPONSE_LIMIT_BYTES) {
+        return new PeerBytes(
+            url,
+            response.statusCode(),
+            null,
+            url + " answered more than " + RESPONSE_LIMIT_BYTES + " bytes");
+      }
+      return new PeerBytes(url, response.statusCode(), body, null);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      return new PeerBytes(url, null, null, url + " was interrupted");
+    } catch (Exception e) {
+      return new PeerBytes(url, null, null, url + " could not be called: " + e);
+    }
+  }
+
+  /**
    * Sends one call and turns everything that can happen into an answer.
    *
    * <p>Takes no {@link PeerTarget} any more: every peer takes the same bearer now (C4), so there is

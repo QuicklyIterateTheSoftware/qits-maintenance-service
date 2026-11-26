@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.maintenance.bump.changelog.ChangelogClient;
+import eu.wohlben.qits.maintenance.control.PactJars;
 import eu.wohlben.qits.maintenance.error.SbomCheckFailedException;
 import eu.wohlben.qits.maintenance.latest.LatestLookup;
 import eu.wohlben.qits.maintenance.model.PinKind;
@@ -41,6 +42,8 @@ final class ArtifactsContract {
   static final String A_DAEMON_WITH_TWO_VERSIONS = "a daemon with two versions";
   static final String A_MAVEN_ARTIFACT_PUBLISHED = "a maven artifact published at a version";
   static final String NO_MAVEN_ARTIFACT_PUBLISHED = "no maven artifact published at the version";
+  static final String A_MAVEN_JAR_PUBLISHED = "a maven jar published at a version";
+  static final String NO_MAVEN_JAR_PUBLISHED = "no maven jar published at the version";
   static final String AN_NPM_PACKAGE_PUBLISHED = "an npm package published at a version";
   static final String NO_NPM_PACKAGE = "no npm package with the given name";
   static final String AN_IMAGE_PUSHED = "an image pushed under a tag";
@@ -48,9 +51,12 @@ final class ArtifactsContract {
 
   private static final Trigger SCAN = Trigger.schedule("ScanService.run");
   private static final Trigger PROBE = Trigger.schedule("SbomCheckService.probe");
+  private static final Trigger PACT_READ = Trigger.operation("listDeployedPactInteractions");
 
   /** The operations qits-artifacts' registry mounts would be recorded under. */
   static final String GET_MAVEN_METADATA = "getMavenMetadata";
+
+  static final String GET_MAVEN_FILE = "getMavenFile";
 
   static final String GET_NPM_PACKUMENT = "getNpmPackument";
   static final String LIST_IMAGE_TAGS = "listImageTags";
@@ -157,6 +163,37 @@ final class ArtifactsContract {
           new PeerRow(
               GoldenInteraction.of(PROBE, NO_MAVEN_ARTIFACT_PUBLISHED, GET_MAVEN_METADATA),
               (peers, p) -> assertTrue(peers.presence().versions("maven", p.get("name", MAVEN_NAME)).isEmpty())),
+          // A consumer pact jar (qits-2702, GET /deployed-pacts/interactions). The jar is binary,
+          // so the 200 is bound by its status alone and the mock answers it without the bytes:
+          // the row asserts the client took the 200 and found no jar in it — never a failed
+          // request — and that a 404 is MISSING.
+          new PeerRow(
+              GoldenInteraction.of(PACT_READ, A_MAVEN_JAR_PUBLISHED, GET_MAVEN_FILE),
+              (peers, p) -> {
+                PactJars.Result result =
+                    peers
+                        .pactJars()
+                        .interactions(
+                            p.get("groupPath", "eu/wohlben/qits").replace('/', '.'),
+                            p.get("artifact"),
+                            p.get("version", "2100.1.0"),
+                            "contract-provider-service");
+                assertEquals(PactJars.Outcome.FAILED, result.outcome(), result.reason());
+                assertTrue(result.reason().startsWith("not a readable pact jar"), result.reason());
+              }),
+          new PeerRow(
+              GoldenInteraction.of(PACT_READ, NO_MAVEN_JAR_PUBLISHED, GET_MAVEN_FILE),
+              (peers, p) ->
+                  assertEquals(
+                      PactJars.Outcome.MISSING,
+                      peers
+                          .pactJars()
+                          .interactions(
+                              p.get("groupPath", "eu/wohlben/qits").replace('/', '.'),
+                              p.get("artifact"),
+                              p.get("version", "2100.1.0"),
+                              "contract-provider-service")
+                          .outcome())),
           new PeerRow(
               GoldenInteraction.of(SCAN, AN_NPM_PACKAGE_PUBLISHED, GET_NPM_PACKUMENT)
                   .consumes("versions", "dist-tags.latest"),

@@ -251,6 +251,21 @@ components:
           type: string
         location:
           type: string
+    ConsumerPactDto:
+      type: object
+      properties:
+        consumerRepository:
+          type: string
+        pactVersion:
+          type: string
+        deployedVersions:
+          type: array
+          items:
+            type: string
+        interactions:
+          type: array
+          items:
+            $ref: "#/components/schemas/InteractionDto"
     DependencyDto:
       type: object
       properties:
@@ -326,6 +341,15 @@ components:
           type: array
           items:
             type: string
+    DeployedPactInteractionsDto:
+      type: object
+      properties:
+        provider:
+          type: string
+        pacts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConsumerPactDto"
     DeployedPactsDto:
       type: object
       properties:
@@ -429,6 +453,19 @@ components:
       format: date-time
       examples:
       - 2022-03-10T16:15:50Z
+    InteractionDto:
+      type: object
+      properties:
+        method:
+          type: string
+        path:
+          type: string
+        operationId:
+          type: string
+        providerStates:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProviderStateDto"
     KindDto:
       type: object
       properties:
@@ -498,6 +535,15 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ArtifactPinDto"
+    ProviderStateDto:
+      type: object
+      properties:
+        name:
+          type: string
+        params:
+          type: object
+          additionalProperties:
+            type: string
     ReleaseRequestAutomationsDto:
       type: object
       properties:
@@ -1172,6 +1218,44 @@ paths:
         - qits:system
         - qits:agent
         - qits:ci-run
+  /maintenance/api/deployed-pacts/interactions:
+    get:
+      summary: "The interactions each deployed consumer's pact holds against a provider,\
+        \ consumers that no longer declare the pact left out"
+      operationId: listDeployedPactInteractions
+      parameters:
+      - name: provider
+        in: query
+        schema:
+          type: string
+      responses:
+        "200":
+          description: The pacts; empty for an unknown provider
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeployedPactInteractionsDto"
+        "400":
+          description: No provider named
+        "502":
+          description: A deployed consumer's pact jar could not be read
+        "503":
+          description: The deployed versions could not be read from qits-deployments
+        "401":
+          description: Not Authorized
+        "403":
+          description: Not Allowed
+      tags:
+      - Deployed Pacts Controller
+      security:
+      - SecurityScheme:
+        - qits:admin
+        - qits:admin-agent
+        - qits:desk-admin
+        - qits:desk
+        - qits:system
+        - qits:agent
+        - qits:ci-run
   /maintenance/api/pins:
     get:
       summary: Every internal artifact version the platform's manifests still pin
@@ -1624,4 +1708,4 @@ paths:
         - qits:agent
 info:
   title: qits-platform-maintenance API
-  version: 2026.1108.40035
+  version: 2026.1125.194603

@@ -6,6 +6,7 @@ import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.bootstrap.graph.manifest.ParsedPin;
 import eu.wohlben.qits.maintenance.api.Fixture;
 import eu.wohlben.qits.maintenance.api.InventoryReset;
+import eu.wohlben.qits.maintenance.api.PactJarFixture;
 import eu.wohlben.qits.maintenance.automation.AutomationService;
 import eu.wohlben.qits.maintenance.automation.ReleaseRequestAutomation;
 import eu.wohlben.qits.maintenance.automation.ScreenshotBaselinesAutomation;
@@ -109,6 +110,14 @@ public class ProviderStates {
   public static final String THE_AUTOMATION_KINDS_CATALOGUE = "the automation kinds catalogue";
   public static final String A_PROVIDER_WHOSE_DEPLOYED_CONSUMERS_PUBLISH_PACTS =
       "a provider whose deployed consumers publish pacts";
+  /**
+   * {@link #A_PROVIDER_WHOSE_DEPLOYED_CONSUMERS_PUBLISH_PACTS} as {@code
+   * listDeployedPactInteractions} reads it (qits-2702): one deployed consumer that declares the pact,
+   * its jar holding one interaction, and one that no longer declares it, left out.
+   */
+  public static final String A_PROVIDER_WHOSE_DEPLOYED_CONSUMERS_CALL_IT =
+      "a provider whose deployed consumers call it";
+
   public static final String BUMPS_OWED_TO_A_REPOSITORY = "bumps owed to a repository";
   public static final String A_RELEASE_REQUEST_THIS_SERVICE_OPENED =
       "a release request this service opened";
@@ -336,6 +345,7 @@ public class ProviderStates {
     states.put(THE_AUTOMATION_KINDS_CATALOGUE, ProviderStates::automationKindsCatalogue);
     states.put(
         A_PROVIDER_WHOSE_DEPLOYED_CONSUMERS_PUBLISH_PACTS, this::deployedConsumersPublishingPacts);
+    states.put(A_PROVIDER_WHOSE_DEPLOYED_CONSUMERS_CALL_IT, this::deployedConsumersCallingIt);
     states.put(BUMPS_OWED_TO_A_REPOSITORY, this::bumpsOwedToARepository);
     states.put(A_RELEASE_REQUEST_THIS_SERVICE_OPENED, this::releaseRequestThisServiceOpened);
     states.put(A_STORED_SBOM_CHECK_REPORT, this::storedSbomCheckReport);
@@ -844,6 +854,54 @@ public class ProviderStates {
         FakePeers.Scripted.ok(
             "{\"pins\":[{\"applicationName\":\"contract-service\",\"shas\":"
                 + "[\"2026.1030.204903\",\"2026.1030.192107\",\"2026.1029.90000\"]}]}"));
+    Map<String, String> params = new TreeMap<>();
+    params.put("provider", provider);
+    return new Setup(params, List.of());
+  }
+
+  /**
+   * {@code contract-service} deployed at {@code 2026.1030.204903} and declaring a pact on {@code
+   * contract-provider-service}, whose jar at {@code 2026.1030.200000} asks one path; and {@code
+   * contract-javalib}, deployed with a pact jar too, which no longer declares it.
+   */
+  private Setup deployedConsumersCallingIt() {
+    emptyEstate();
+    String provider = "contract-provider-service";
+    String pactVersion = "2026.1030.200000";
+    for (String consumer : List.of(REPOSITORY, PINNED_REPOSITORY)) {
+      store.upsertArtifact(
+          Ecosystem.DOCKER, "qits/" + consumer, "2026.1030.204903", consumer, SCANNED);
+      store.upsertArtifact(
+          Ecosystem.MAVEN,
+          "eu.wohlben.qits:" + consumer + "-pacts-" + provider,
+          pactVersion,
+          consumer,
+          SCANNED);
+    }
+    store.replacePactEdges(REPOSITORY, List.of(provider));
+    store.replacePactEdges(PINNED_REPOSITORY, List.of("contract-other-service"));
+    String artifactId = REPOSITORY + "-pacts-" + provider;
+    peers.answerBytes(
+        PeerTarget.MAVEN_REGISTRY,
+        PactJarFixture.path(artifactId, pactVersion),
+        PactJarFixture.jar(
+            Map.of(
+                "pacts/" + REPOSITORY + "_" + provider + ".json",
+                PactJarFixture.pact(
+                    REPOSITORY,
+                    provider,
+                    Map.of(
+                        "/contract/api/things/thing-1",
+                        new String[] {"getThing", "a thing", "thingId", "thing-1"})))));
+    peers.answer(
+        PeerTarget.DEPLOYMENTS,
+        "/deployments/api/pins",
+        FakePeers.Scripted.ok(
+            "{\"pins\":[{\"applicationName\":\""
+                + REPOSITORY
+                + "\",\"shas\":[\"2026.1030.204903\"]},{\"applicationName\":\""
+                + PINNED_REPOSITORY
+                + "\",\"shas\":[\"2026.1030.204903\"]}]}"));
     Map<String, String> params = new TreeMap<>();
     params.put("provider", provider);
     return new Setup(params, List.of());

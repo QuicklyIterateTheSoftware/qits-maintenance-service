@@ -1,6 +1,8 @@
 package eu.wohlben.qits.maintenance.api;
 
+import eu.wohlben.qits.maintenance.control.DeployedPactInteractions;
 import eu.wohlben.qits.maintenance.control.DeployedPacts;
+import eu.wohlben.qits.maintenance.dto.DeployedPactInteractionsDto;
 import eu.wohlben.qits.maintenance.dto.DeployedPactsDto;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
@@ -25,12 +27,18 @@ import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
  *
  * <p><b>503 when qits-deployments cannot answer</b>, as {@code GET /pins} does: a gate told "no
  * consumer serves" when the truth is "nobody could ask" would skip the verification it exists for.
+ *
+ * <p><b>{@code /interactions}</b> (qits-2702) is the same rows with what each pact jar asks of the
+ * provider, leaving out a consumer that no longer declares the pact; the computation and its 502 are
+ * {@code DeployedPactInteractions}'s. Same roles: it says nothing the jars do not.
  */
 @Path("/deployed-pacts")
 @Produces(MediaType.APPLICATION_JSON)
 public class DeployedPactsController {
 
   @Inject DeployedPacts pacts;
+
+  @Inject DeployedPactInteractions interactions;
 
   @GET
   @Operation(
@@ -52,5 +60,32 @@ public class DeployedPactsController {
   })
   public DeployedPactsDto deployedPacts(@QueryParam("provider") String provider) {
     return pacts.of(provider);
+  }
+
+  @GET
+  @Path("/interactions")
+  @Operation(
+      operationId = "listDeployedPactInteractions",
+      summary =
+          "The interactions each deployed consumer's pact holds against a provider, consumers that"
+              + " no longer declare the pact left out")
+  @APIResponse(responseCode = "200", description = "The pacts; empty for an unknown provider")
+  @APIResponse(responseCode = "400", description = "No provider named")
+  @APIResponse(responseCode = "502", description = "A deployed consumer's pact jar could not be read")
+  @APIResponse(
+      responseCode = "503",
+      description = "The deployed versions could not be read from qits-deployments")
+  @RolesAllowed({
+    "qits:admin",
+    "qits:admin-agent",
+    "qits:desk-admin",
+    "qits:desk",
+    "qits:system",
+    "qits:agent",
+    "qits:ci-run"
+  })
+  public DeployedPactInteractionsDto deployedPactInteractions(
+      @QueryParam("provider") String provider) {
+    return interactions.of(provider);
   }
 }

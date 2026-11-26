@@ -1,0 +1,27 @@
+{
+  "provider": "contract-provider-service",
+  "pacts": [
+    {
+      "consumerRepository": "contract-service",
+      "pactVersion": "2026.1030.200000",
+      "deployedVersions": [
+        "2026.1030.204903"
+      ],
+      "interactions": [
+        {
+          "method": "GET",
+          "path": "/contract/api/things/thing-1",
+          "operationId": "getThing",
+          "providerStates": [
+            {
+              "name": "a thing",
+              "params": {
+                "thingId": "thing-1"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

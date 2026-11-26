@@ -64,6 +64,9 @@ public class FakePeers extends PeerClient {
 
   private final Map<String, Scripted> script = new ConcurrentHashMap<>();
 
+  /** Binary answers ({@link #getBytes}), by the same key; an unscripted one is a 404. */
+  private final Map<String, byte[]> binaries = new ConcurrentHashMap<>();
+
   /** What runs when a call reaches a path, before it is answered — see {@link #onCall}. */
   private final Map<String, Runnable> effects = new ConcurrentHashMap<>();
 
@@ -79,6 +82,7 @@ public class FakePeers extends PeerClient {
 
   public void reset() {
     script.clear();
+    binaries.clear();
     effects.clear();
     calls.clear();
     gate = null;
@@ -91,6 +95,11 @@ public class FakePeers extends PeerClient {
   /** Scripts one answer. */
   public void answer(PeerTarget target, String path, Scripted scripted) {
     script.put(key(target, path), scripted);
+  }
+
+  /** Scripts one binary 200 — a pact jar on the hosted maven repository (qits-2702). */
+  public void answerBytes(PeerTarget target, String path, byte[] body) {
+    binaries.put(key(target, path), body);
   }
 
   /**
@@ -179,6 +188,31 @@ public class FakePeers extends PeerClient {
   @Override
   public PeerExchange delete(PeerTarget target, String path) {
     return exchange(target, new PeerCall("DELETE", url(target, path), null), "DELETE " + path);
+  }
+
+  @Override
+  public PeerBytes getBytes(PeerTarget target, String path) {
+    String url = url(target, path);
+    calls.add(new PeerCall("GET", url, null));
+    byte[] body = binaries.get(key(target, path));
+    if (body != null) {
+      return new PeerBytes(url, 200, body, null);
+    }
+    // A text script answers too, so a test can script a refusal the way it scripts any other.
+    Scripted scripted = script.get(key(target, path));
+    if (scripted == null) {
+      return new PeerBytes(url, 404, new byte[0], null);
+    }
+    if (scripted.transportError() != null) {
+      return new PeerBytes(url, null, null, scripted.transportError());
+    }
+    return new PeerBytes(
+        url,
+        scripted.status(),
+        scripted.body() == null
+            ? new byte[0]
+            : scripted.body().getBytes(java.nio.charset.StandardCharsets.UTF_8),
+        null);
   }
 
   private PeerExchange exchange(PeerTarget target, PeerCall call, String path) {

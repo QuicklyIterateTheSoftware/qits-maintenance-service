@@ -160,6 +160,32 @@
       ]
     },
     {
+      "name": "a provider whose deployed consumers call it",
+      "slug": "a-provider-whose-deployed-consumers-call-it",
+      "params": {
+        "provider": "contract-provider-service"
+      },
+      "dependsOn": [],
+      "operations": [
+        {
+          "operationId": "listDeployedPactInteractions",
+          "method": "GET",
+          "path": "/maintenance/api/deployed-pacts/interactions",
+          "query": {
+            "provider": "{provider}"
+          },
+          "status": 200,
+          "file": "a-provider-whose-deployed-consumers-call-it/listDeployedPactInteractions.json",
+          "frozen": {
+            "ids": [],
+            "instants": [],
+            "strings": [],
+            "listFilteredTo": null
+          }
+        }
+      ]
+    },
+    {
       "name": "a provider whose deployed consumers publish pacts",
       "slug": "a-provider-whose-deployed-consumers-publish-pacts",
       "params": {

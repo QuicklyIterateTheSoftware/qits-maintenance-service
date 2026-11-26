@@ -4,6 +4,7 @@ import eu.wohlben.qits.maintenance.bump.CiClient;
 import eu.wohlben.qits.maintenance.bump.SystemClient;
 import eu.wohlben.qits.maintenance.bump.changelog.ChangelogClient;
 import eu.wohlben.qits.maintenance.control.DeployedVersions;
+import eu.wohlben.qits.maintenance.control.PactJars;
 import eu.wohlben.qits.maintenance.githost.GitHostReader;
 import eu.wohlben.qits.maintenance.githost.GitHostRefs;
 import eu.wohlben.qits.maintenance.latest.LatestResolver;
@@ -67,7 +68,8 @@ record PeerRow(GoldenInteraction interaction, Call call, List<GoldenInteraction>
       LatestResolver latest,
       ArtifactPresence presence,
       GitHostRefs refs,
-      GitHostReader git) {
+      GitHostReader git,
+      PactJars pactJars) {
 
     static Peers over(PeerClient peers) {
       return new Peers(
@@ -79,7 +81,8 @@ record PeerRow(GoldenInteraction interaction, Call call, List<GoldenInteraction>
           Clients.wire(OpenAdoptionGate.on(new LatestResolver()), peers),
           Clients.wire(new ArtifactPresence(), peers),
           Clients.wire(new GitHostRefs(), peers),
-          Clients.wire(new GitHostReader(), peers));
+          Clients.wire(new GitHostReader(), peers),
+          Clients.wire(new PactJars(), peers));
     }
   }
 

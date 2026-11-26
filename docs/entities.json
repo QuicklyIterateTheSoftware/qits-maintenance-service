@@ -1491,6 +1491,24 @@
           "site" : "ArtifactGraph.dependents(Ecosystem, String, boolean)"
         },
         {
+          "type" : "eu.wohlben.qits.maintenance.dto.DeployedPactInteractionsDto",
+          "kind" : "assembler",
+          "via" : null,
+          "site" : "DeployedPactInteractions.of(String)"
+        },
+        {
+          "type" : "eu.wohlben.qits.maintenance.dto.DeployedPactInteractionsDto$ConsumerPactDto",
+          "kind" : "assembler",
+          "via" : null,
+          "site" : "DeployedPactInteractions.of(String)"
+        },
+        {
+          "type" : "eu.wohlben.qits.maintenance.dto.DeployedPactInteractionsDto$InteractionDto",
+          "kind" : "via",
+          "via" : "eu.wohlben.qits.maintenance.dto.DeployedPactInteractionsDto$ConsumerPactDto",
+          "site" : "ConsumerPactDto.interactions()"
+        },
+        {
           "type" : "eu.wohlben.qits.maintenance.dto.DownstreamDto",
           "kind" : "via",
           "via" : "eu.wohlben.qits.maintenance.adoption.DownstreamResolver$Closure",
@@ -1739,6 +1757,14 @@
           "method" : "GET",
           "path" : "/pins",
           "dto" : "eu.wohlben.qits.maintenance.dto.PinSourceDto",
+          "kind" : "returns",
+          "cardinality" : "single"
+        },
+        {
+          "operationId" : "listDeployedPactInteractions",
+          "method" : "GET",
+          "path" : "/deployed-pacts/interactions",
+          "dto" : "eu.wohlben.qits.maintenance.dto.DeployedPactInteractionsDto",
           "kind" : "returns",
           "cardinality" : "single"
         },
